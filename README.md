@@ -68,4 +68,4 @@ docker-compose -f docker-compose.dev.yml up --build
 
 元のリポジトリのライセンス情報を参照してください。
 
-Original work © komura-c, modified version [PCM8](https://github.com/kuwa2005/music-waves-visualizer)
+Original work © komura-c, modified version [KURAGASHI](https://github.com/kuwa2005/music-waves-visualizer)

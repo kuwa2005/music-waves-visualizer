@@ -988,7 +988,7 @@ const Home: NextPage = () => {
             rel="noopener noreferrer"
             className={styles.footer__link}
           >
-            PCM8
+            KURAGASHI
           </a>
         </p>
       </footer>
