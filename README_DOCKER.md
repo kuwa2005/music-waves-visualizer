@@ -2,62 +2,54 @@
 
 このプロジェクトをDockerで実行する方法です。
 
+詳細な要件とトラブルシューティングは [サーバー要件(local docker)用.md](./サーバー要件(local%20docker)用.md) を参照してください。
+
 ## 前提条件
 
 - Docker Desktop（またはDocker Engine + Docker Compose）がインストールされていること
 
-## 本番モードで実行
+## クイックスタート
 
-ビルドして本番モードで実行：
+### 本番モード
 
 ```bash
-# イメージをビルドして起動
 docker-compose up --build
+```
 
-# バックグラウンドで実行
-docker-compose up -d --build
+### 開発モード
 
-# 停止
-docker-compose down
+```bash
+docker-compose -f docker-compose.dev.yml up --build
 ```
 
 ブラウザで http://localhost:3000 にアクセス
 
-## 開発モードで実行
+## 基本的なコマンド
 
-ホットリロード対応の開発モード：
+### 起動
 
 ```bash
-# 開発モードで起動
-docker-compose -f docker-compose.dev.yml up --build
+# 本番モード（バックグラウンド）
+docker-compose up -d --build
 
-# バックグラウンドで実行
+# 開発モード（バックグラウンド）
 docker-compose -f docker-compose.dev.yml up -d --build
+```
 
-# 停止
+### 停止
+
+```bash
+# 本番モード
+docker-compose down
+
+# 開発モード
 docker-compose -f docker-compose.dev.yml down
 ```
 
-## 個別コマンド
-
-### イメージのビルド
+### ログ確認
 
 ```bash
-# 本番用
-docker build -t music-waves-visualizer .
-
-# 開発用
-docker build -f Dockerfile.dev -t music-waves-visualizer-dev .
-```
-
-### コンテナの実行
-
-```bash
-# 本番用
-docker run -p 3000:3000 music-waves-visualizer
-
-# 開発用
-docker run -p 3000:3000 -v $(pwd):/app -v /app/node_modules music-waves-visualizer-dev
+docker-compose logs -f
 ```
 
 ## トラブルシューティング
@@ -77,12 +69,6 @@ ports:
 docker-compose build --no-cache
 ```
 
-### ログの確認
-
-```bash
-docker-compose logs -f
-```
-
 ### コンテナ内でコマンドを実行
 
 ```bash
@@ -93,5 +79,5 @@ docker-compose exec app sh
 
 - 開発モードでは、コードの変更が自動的に反映されます（ホットリロード）
 - 本番モードでは、変更を反映するには再ビルドが必要です
-- `.env`ファイルがある場合は、`docker-compose.yml`の`environment`セクションに追加してください
+- 詳細な設定やトラブルシューティングは [サーバー要件(local docker)用.md](./サーバー要件(local%20docker)用.md) を参照してください
 

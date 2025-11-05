@@ -591,10 +591,9 @@ const Home: NextPage = () => {
     <>
       <main>
         <div className={styles.heading}>
-          <h1 className={styles.heading__title}>Music Waves Visualizer</h1>
+          <h1 className={styles.heading__title}>Music Waves Visualizer(改)</h1>
           <div className={styles.heading__text}>
-            <p>画像と音楽を読み込んで音声波形動画を作成するWebページです。</p>
-            <p>※iOS, Android未確認です。動画はmp4形式で出力されます。</p>
+            <p>画像と音楽を読み込んで音声波形動画を作成するWebページです。動画はmp4形式で出力されます。</p>
           </div>
         </div>
 
@@ -606,47 +605,73 @@ const Home: NextPage = () => {
           <Typography variant="body2" sx={{ mb: 2, fontWeight: 500 }}>
             ファイルをドラッグ&ドロップ（複数ファイル対応）
           </Typography>
-          <Box sx={{ display: "flex", gap: 2, alignItems: "center", justifyContent: "center", flexWrap: "wrap" }}>
-            <Button
-              variant="outlined"
-              component="label"
-              startIcon={<PhotoLibrary />}
-              size="medium"
-            >
-              画像ファイルを選ぶ
-              <input
-                type="file"
-                accept="image/*,video/*"
-                onChange={imageLoad}
-                hidden
-              />
-            </Button>
-            {imageFileName && (
-              <Typography variant="body2" color="textSecondary" sx={{ maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {imageFileName}
+          <Box sx={{ display: "flex", flexDirection: "column", gap: 2, alignItems: "stretch" }}>
+            <Box sx={{ display: "flex", gap: 2, alignItems: "center", justifyContent: "center", width: "100%" }}>
+              <Button
+                variant="outlined"
+                component="label"
+                startIcon={<PhotoLibrary />}
+                size="medium"
+                sx={{ flexShrink: 0 }}
+              >
+                画像を選ぶ
+                <input
+                  type="file"
+                  accept="image/*,video/*"
+                  onChange={imageLoad}
+                  hidden
+                />
+              </Button>
+              <Typography 
+                variant="body2" 
+                color="textSecondary" 
+                sx={{ 
+                  minWidth: 200,
+                  maxWidth: "100%",
+                  overflow: "hidden", 
+                  textOverflow: "ellipsis", 
+                  whiteSpace: "nowrap",
+                  flex: 1,
+                  textAlign: "left"
+                }}
+              >
+                {imageFileName || "未選択"}
               </Typography>
-            )}
-            <Button
-              variant="outlined"
-              component="label"
-              startIcon={<LibraryMusic />}
-              size="medium"
-            >
-              音楽ファイルを選ぶ
-              <input
-                type="file"
-                accept="audio/*,video/*"
-                onChange={audioLoad}
-                hidden
-              />
-            </Button>
-            {audioFileName && (
-              <Typography variant="body2" color="textSecondary" sx={{ maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {audioFileName}
+            </Box>
+            <Box sx={{ display: "flex", gap: 2, alignItems: "center", justifyContent: "center", width: "100%" }}>
+              <Button
+                variant="outlined"
+                component="label"
+                startIcon={<LibraryMusic />}
+                size="medium"
+                sx={{ flexShrink: 0 }}
+              >
+                音楽ファイルを選ぶ
+                <input
+                  type="file"
+                  accept="audio/*,video/*"
+                  onChange={audioLoad}
+                  hidden
+                />
+              </Button>
+              <Typography 
+                variant="body2" 
+                color="textSecondary" 
+                sx={{ 
+                  minWidth: 200,
+                  maxWidth: "100%",
+                  overflow: "hidden", 
+                  textOverflow: "ellipsis", 
+                  whiteSpace: "nowrap",
+                  flex: 1,
+                  textAlign: "left"
+                }}
+              >
+                {audioFileName || "未選択"}
               </Typography>
-            )}
+            </Box>
           </Box>
-          <Typography variant="caption" color="textSecondary" sx={{ mt: 1, display: "block" }}>
+          <Typography variant="caption" color="textSecondary" sx={{ mt: 2, display: "block" }}>
             画像ファイルと音楽ファイルを自動判定します。MP4は音楽ファイルとして扱われます。
           </Typography>
         </div>
@@ -725,7 +750,7 @@ const Home: NextPage = () => {
                 onClick={onRecordMovie}
                 size="medium"
               >
-                動画を録画
+                動画を生成
               </Button>
             </Box>
           </div>
@@ -947,7 +972,7 @@ const Home: NextPage = () => {
 
       <footer className={styles.footer}>
         <p>
-          ©{" "}
+          Original work ©{" "}
           <a
             href="https://tech-blog.voicy.jp/entry/2022/12/11/235929"
             target="_blank"
@@ -955,6 +980,15 @@ const Home: NextPage = () => {
             className={styles.footer__link}
           >
             komura-c
+          </a>
+          , modified version{" "}
+          <a
+            href="https://github.com/kuwa2005/music-waves-visualizer"
+            target="_blank"
+            rel="noopener noreferrer"
+            className={styles.footer__link}
+          >
+            PCM8
           </a>
         </p>
       </footer>
