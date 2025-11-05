@@ -1,12 +1,12 @@
-# Music Waves Visualizer
+# Music Waves Visualizer(改)
 
 画像と音楽ファイルを読み込んで、音声波形を可視化した動画を作成するWebアプリケーションです。
 
-## デモ
+## デモ（オリジナル版）
 
 https://music-waves-visualizer.vercel.app/
 
-### 実行イメージ
+### Music Waves Visualizer(改) 実行イメージ
 
 <a href="./Image.jpg" target="_blank">
   <img src="./Image.jpg" alt="Music Waves Visualizer 実行イメージ" width="600" style="max-width: 100%; height: auto;">
