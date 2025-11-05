@@ -1,0 +1,17 @@
+# 開発環境用のDockerfile
+FROM node:18-alpine
+
+WORKDIR /app
+
+# 依存関係のインストール
+COPY package.json package-lock.json* ./
+RUN npm ci
+
+# アプリケーションコードをコピー
+COPY . .
+
+# 開発サーバーを起動
+EXPOSE 3000
+
+CMD ["npm", "run", "dev"]
+
