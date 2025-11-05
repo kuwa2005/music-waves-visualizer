@@ -6,6 +6,14 @@
 
 https://music-waves-visualizer.vercel.app/
 
+### 実行イメージ
+
+<a href="./Image.jpg" target="_blank">
+  <img src="./Image.jpg" alt="Music Waves Visualizer 実行イメージ" width="600" style="max-width: 100%; height: auto;">
+</a>
+
+*画像をクリックすると原寸大で表示されます*
+
 ## 主な機能
 
 - **ファイル読み込み**: ドラッグ&ドロップまたはボタンから画像・音楽ファイルを読み込み
