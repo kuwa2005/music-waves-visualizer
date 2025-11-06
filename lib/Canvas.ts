@@ -5,6 +5,123 @@ export type ModeAdjustments = {
   offsetY: number;
 };
 
+// FPS測定用の変数
+let fpsCounter = 0;
+let fpsLastTime = performance.now();
+let currentFPS = 0;
+
+// FPSを取得
+export function getFPS(): number {
+  return currentFPS;
+}
+
+// FPSをリセット
+export function resetFPS(): void {
+  fpsCounter = 0;
+  fpsLastTime = performance.now();
+  currentFPS = 0;
+}
+
+// オフスクリーンキャンバスのキャッシュ（画像処理の最適化）
+interface ImageCache {
+  canvas: HTMLCanvasElement;
+  imageHash: string;
+  canvasWidth: number;
+  canvasHeight: number;
+}
+
+let imageCache: ImageCache | null = null;
+
+// 画像のハッシュを生成（簡易版）
+function getImageHash(image: HTMLImageElement, canvasWidth: number, canvasHeight: number): string {
+  return `${image.src}-${image.width}-${image.height}-${canvasWidth}-${canvasHeight}`;
+}
+
+// キャッシュをクリア（キャンバスサイズ変更時などに使用）
+export function clearImageCache(): void {
+  imageCache = null;
+}
+
+// オフスクリーンキャンバスに画像を描画（画像が変更された時のみ実行）
+function drawImageToOffscreen(
+  image: HTMLImageElement,
+  canvasWidth: number,
+  canvasHeight: number
+): HTMLCanvasElement {
+  const hash = getImageHash(image, canvasWidth, canvasHeight);
+  
+  // キャッシュが有効な場合は再利用
+  if (imageCache && imageCache.imageHash === hash && 
+      imageCache.canvasWidth === canvasWidth && 
+      imageCache.canvasHeight === canvasHeight) {
+    return imageCache.canvas;
+  }
+
+  // 新しいオフスクリーンキャンバスを作成
+  const offscreenCanvas = document.createElement('canvas');
+  offscreenCanvas.width = canvasWidth;
+  offscreenCanvas.height = canvasHeight;
+  const offscreenCtx = offscreenCanvas.getContext("2d", {
+    alpha: false,
+    desynchronized: true,
+    willReadFrequently: false,
+  });
+
+  if (!offscreenCtx) {
+    return offscreenCanvas;
+  }
+
+  // 背景を描画
+  offscreenCtx.fillStyle = "rgba(34, 34, 34, 1.0)";
+  offscreenCtx.fillRect(0, 0, canvasWidth, canvasHeight);
+
+  // 画像のサイズ計算
+  const rawWidth = image.width;
+  const rawHeight = image.height;
+  let imageCtxWidth = 0;
+  let imageCtxHeight = 0;
+  
+  if (rawWidth > canvasWidth || rawHeight > canvasHeight) {
+    imageCtxWidth = canvasWidth;
+    imageCtxHeight = Math.round(rawHeight * (canvasWidth / rawWidth));
+    if (imageCtxHeight > canvasHeight) {
+      imageCtxHeight = canvasHeight;
+      imageCtxWidth = Math.round(rawWidth * (canvasHeight / rawHeight));
+    }
+  } else {
+    imageCtxWidth = image.width;
+    imageCtxHeight = image.height;
+  }
+  
+  const marginWidth = canvasWidth - imageCtxWidth;
+  const posX = marginWidth === 0 ? 0 : marginWidth / 2;
+  const marginHeight = canvasHeight - imageCtxHeight;
+  const posY = marginHeight === 0 ? 0 : marginHeight / 2;
+  
+  // 画像を描画
+  offscreenCtx.drawImage(
+    image,
+    0,
+    0,
+    rawWidth,
+    rawHeight,
+    posX,
+    posY,
+    imageCtxWidth,
+    imageCtxHeight
+  );
+
+  // キャッシュを更新
+  imageCache = {
+    canvas: offscreenCanvas,
+    imageHash: hash,
+    canvasWidth,
+    canvasHeight,
+  };
+
+  return offscreenCanvas;
+}
+
 export const drawBars = (
   canvas: HTMLCanvasElement,
   imageCtx: HTMLImageElement,
@@ -36,44 +153,17 @@ export const drawBars = (
     offsetY: 0,
   };
 
-  ctx.fillStyle = "rgba(34, 34, 34, 1.0)";
-  ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+  // 画像をオフスクリーンキャンバスからコピー（高速化）
+  if (imageCtx) {
+    const offscreenCanvas = drawImageToOffscreen(imageCtx, canvasWidth, canvasHeight);
+    ctx.drawImage(offscreenCanvas, 0, 0);
+  } else {
+    // 画像がない場合は背景のみ描画
+    ctx.fillStyle = "rgba(34, 34, 34, 1.0)";
+    ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+  }
 
   ctx.save();
-
-  // drawImage
-  if (imageCtx) {
-    const rawWidth = imageCtx.width;
-    const rawHeight = imageCtx.height;
-    let imageCtxWidth = 0;
-    let imageCtxHeight = 0;
-    if (rawWidth > canvasWidth || rawHeight > canvasHeight) {
-      imageCtxWidth = canvasWidth;
-      imageCtxHeight = Math.round(rawHeight * (canvasWidth / rawWidth));
-      do {
-        imageCtxWidth -= 1;
-        imageCtxHeight -= 1;
-      } while (imageCtxWidth > canvasWidth);
-    } else {
-      imageCtxWidth = imageCtx.width;
-      imageCtxHeight = imageCtx.height;
-    }
-    const marginWidth = canvasWidth - imageCtxWidth;
-    const posX = marginWidth === 0 ? 0 : marginWidth / 2; // imageのwidthをcenterにする
-    const marginHeight = canvasHeight - imageCtxHeight;
-    const posY = marginHeight === 0 ? 0 : marginHeight / 2; // imageのheightをcenterにする
-    ctx.drawImage(
-      imageCtx,
-      0,
-      0,
-      rawWidth,
-      rawHeight,
-      posX,
-      posY,
-      imageCtxWidth,
-      imageCtxHeight
-    );
-  }
 
   if (!analyser) {
     return requestAnimationFrame(function () {
@@ -271,6 +361,16 @@ export const drawBars = (
 
   // 調整パラメータの適用を解除
   ctx.restore();
+
+  // FPS測定
+  fpsCounter++;
+  const currentTime = performance.now();
+  const elapsed = currentTime - fpsLastTime;
+  if (elapsed >= 1000) { // 1秒ごとに更新
+    currentFPS = Math.round((fpsCounter * 1000) / elapsed);
+    fpsCounter = 0;
+    fpsLastTime = currentTime;
+  }
 
   return requestAnimationFrame(function () {
     drawBars(canvas, imageCtx, mode, analyser, adjustments);

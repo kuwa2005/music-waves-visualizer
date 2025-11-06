@@ -25,7 +25,7 @@ import {
   ExpandMore,
 } from "@mui/icons-material";
 import { CustomSnackbar } from "../components/CustomSnackbar";
-import { drawBars } from "../lib/Canvas";
+import { drawBars, clearImageCache, getFPS } from "../lib/Canvas";
 import { generateMp4Video } from "../lib/Ffmpeg";
 
 const hasWindow = () => {
@@ -58,6 +58,8 @@ const Home: NextPage = () => {
   const [recordMovieDisabled, setRecordMovieDisabled] = useState<boolean>(true);
   const [imageFileName, setImageFileName] = useState<string>("");
   const [audioFileName, setAudioFileName] = useState<string>("");
+  const [fps, setFps] = useState<number>(0);
+  const [isRecording, setIsRecording] = useState<boolean>(false);
 
   // Audio State
   const audioCtxRef = useRef<AudioContext>(null);
@@ -142,7 +144,6 @@ const Home: NextPage = () => {
 
   // 設定を保存
   const saveSettings = (mode: number, size: CanvasSize, adjustments: ModeAdjustments) => {
-    if (!isDeveloperMode) return;
     try {
       const key = getSettingsKey(mode, size);
       localStorage.setItem(key, JSON.stringify(adjustments));
@@ -153,7 +154,6 @@ const Home: NextPage = () => {
 
   // 設定を読み込み
   const loadSettings = (mode: number, size: CanvasSize): ModeAdjustments | null => {
-    if (!isDeveloperMode) return null;
     try {
       const key = getSettingsKey(mode, size);
       const saved = localStorage.getItem(key);
@@ -168,7 +168,6 @@ const Home: NextPage = () => {
 
   // すべての設定をエクスポート
   const exportAllSettings = (): string => {
-    if (!isDeveloperMode) return "";
     const allSettings: Record<string, ModeAdjustments> = {};
     const modes = [0, 1, 2, 3, 4, 5, 6];
     const sizes: CanvasSize[] = ["1920x1080", "1080x1920", "1920x1920"];
@@ -188,7 +187,6 @@ const Home: NextPage = () => {
 
   // 設定をインポート
   const importAllSettings = (jsonString: string): boolean => {
-    if (!isDeveloperMode) return false;
     try {
       const allSettings = JSON.parse(jsonString);
       Object.keys(allSettings).forEach((key) => {
@@ -207,43 +205,33 @@ const Home: NextPage = () => {
         ...prev,
         [key]: value,
       };
-      // 開発者モードの場合、設定を自動保存
-      if (isDeveloperMode) {
-        saveSettings(mode, canvasSize, newAdjustments);
-      }
+      // 設定を自動保存
+      saveSettings(mode, canvasSize, newAdjustments);
       return newAdjustments;
     });
   };
 
   const onChangeMode = (event: SelectChangeEvent<string>) => {
     const newMode = Number(event.target.value);
-    // 開発者モードの場合、現在の設定を保存してからモードを変更
-    if (isDeveloperMode) {
-      saveSettings(mode, canvasSize, modeAdjustments);
-    }
+    // 現在の設定を保存してからモードを変更
+    saveSettings(mode, canvasSize, modeAdjustments);
     setMode(newMode);
     // 新しいモードの設定を読み込み
-    if (isDeveloperMode) {
-      const loaded = loadSettings(newMode, canvasSize);
-      if (loaded) {
-        setModeAdjustments(loaded);
-      }
+    const loaded = loadSettings(newMode, canvasSize);
+    if (loaded) {
+      setModeAdjustments(loaded);
     }
   };
 
   const onChangeCanvasSize = (event: SelectChangeEvent<string>) => {
     const newSize = event.target.value as CanvasSize;
-    // 開発者モードの場合、現在の設定を保存してからサイズを変更
-    if (isDeveloperMode) {
-      saveSettings(mode, canvasSize, modeAdjustments);
-    }
+    // 現在の設定を保存してからサイズを変更
+    saveSettings(mode, canvasSize, modeAdjustments);
     setCanvasSize(newSize);
     // 新しいサイズの設定を読み込み
-    if (isDeveloperMode) {
-      const loaded = loadSettings(mode, newSize);
-      if (loaded) {
-        setModeAdjustments(loaded);
-      }
+    const loaded = loadSettings(mode, newSize);
+    if (loaded) {
+      setModeAdjustments(loaded);
     }
   };
 
@@ -266,13 +254,11 @@ const Home: NextPage = () => {
   // Canvas用ImageContext
   const [imageCtx, setImageCtx] = useState<HTMLImageElement>(null);
 
-  // 初期設定の読み込み（開発者モードのみ）
+  // 初期設定の読み込み
   useEffect(() => {
-    if (isDeveloperMode) {
-      const loaded = loadSettings(mode, canvasSize);
-      if (loaded) {
-        setModeAdjustments(loaded);
-      }
+    const loaded = loadSettings(mode, canvasSize);
+    if (loaded) {
+      setModeAdjustments(loaded);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -283,9 +269,12 @@ const Home: NextPage = () => {
       const dimensions = getCanvasDimensions(canvasSize);
       canvasRef.current.width = dimensions.width;
       canvasRef.current.height = dimensions.height;
+      // キャンバスサイズ変更時に画像キャッシュをクリア
+      clearImageCache();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canvasSize]);
+  
   // Canvas Animation
   useEffect(() => {
     if (!canvasRef.current) {
@@ -302,6 +291,14 @@ const Home: NextPage = () => {
     });
     return () => cancelAnimationFrame(reqIdRef.current);
   }, [imageCtx, mode, modeAdjustments]);
+
+  // FPS表示更新（1秒ごとに更新）
+  useEffect(() => {
+    const fpsInterval = setInterval(() => {
+      setFps(getFPS());
+    }, 1000);
+    return () => clearInterval(fpsInterval);
+  }, []);
 
   // ファイル拡張子判定ヘルパー
   const isImageFile = (filename: string): boolean => {
@@ -421,7 +418,9 @@ const Home: NextPage = () => {
           // 再生終了時の処理
           video.onended = () => {
             setIsPlaySound(false);
-            cancelAnimationFrame(reqIdRef.current);
+            if (reqIdRef.current) {
+              cancelAnimationFrame(reqIdRef.current);
+            }
           };
           
           setPlaySoundDisabled(false);
@@ -492,7 +491,9 @@ const Home: NextPage = () => {
       if (videoElementRef.current) {
         videoElementRef.current.pause();
       }
-      cancelAnimationFrame(reqIdRef.current);
+      if (reqIdRef.current) {
+        cancelAnimationFrame(reqIdRef.current);
+      }
       setIsPlaySound(false);
       return;
     }
@@ -509,64 +510,78 @@ const Home: NextPage = () => {
   };
   // RecordMovieEvent
   const onRecordMovie = () => {
-    const audioStream = streamDestinationRef.current.stream;
-    const canvasStream = canvasRef.current.captureStream();
-    const outputStream = new MediaStream();
-    [audioStream, canvasStream].forEach((stream) => {
-      stream.getTracks().forEach(function (track: MediaStreamTrack) {
-        outputStream.addTrack(track);
-      });
-    });
-    //ストリームからMediaRecorderを生成
-    const recorder = new MediaRecorder(outputStream, {
-      mimeType: "video/webm;codecs=h264",
-    });
-    const recordedBlobs: Blob[] = [];
-    recorder.addEventListener("dataavailable", (e) => {
-      recordedBlobs.push(e.data);
-    });
-    //録画終了時に動画ファイルのダウンロードリンクを生成する処理
-    recorder.addEventListener("stop", async () => {
-      const movieName = "movie_" + Math.random().toString(36).slice(-8);
-      const webmName = movieName + ".webm";
-      const mp4Name = movieName + ".mp4";
-
-      openSnackBar(
-        "動画をmp4に変換しています...（時間がかかります、ブラウザ検証ツールにログがでます）"
-      );
-      const webmBlob = new Blob(recordedBlobs, { type: "video/webm" });
-      const binaryData = new Uint8Array(await webmBlob.arrayBuffer());
-      const video = await generateMp4Video(binaryData, webmName, mp4Name);
-      const mp4Blob = new Blob([video], { type: "video/mp4" });
-      const objectURL = URL.createObjectURL(mp4Blob);
-
-      const a = document.createElement("a");
-      a.href = objectURL;
-      a.download = mp4Name;
-      a.click();
-      a.remove();
-      openSnackBar("動画の変換が完了しました！");
-      setRecordMovieDisabled(false);
-    });
-    recorder.start();
-    openSnackBar("動画を録画しています...");
-    onPlaySound();
-    setRecordMovieDisabled(true);
-    
-    // 再生終了時の処理
-    if (videoElementRef.current) {
-      const originalOnEnded = videoElementRef.current.onended;
-      videoElementRef.current.onended = () => {
-        if (originalOnEnded) {
-          originalOnEnded.call(videoElementRef.current);
-        }
-        recorder.stop();
-      };
-    } else if (audioBufferSrcRef.current) {
-      audioBufferSrcRef.current.onended = () => {
-        recorder.stop();
-      };
+    if (!canvasRef.current) {
+      openSnackBar("canvasが初期化されていません");
+      return;
     }
+    
+    // 録画開始フラグを先に設定
+    setIsRecording(true);
+    
+    // 録画用canvasのアニメーションが開始されるまで少し待つ
+    setTimeout(() => {
+      const audioStream = streamDestinationRef.current.stream;
+      const canvasStream = canvasRef.current.captureStream();
+      const outputStream = new MediaStream();
+      [audioStream, canvasStream].forEach((stream) => {
+        stream.getTracks().forEach(function (track: MediaStreamTrack) {
+          outputStream.addTrack(track);
+        });
+      });
+      //ストリームからMediaRecorderを生成
+      const recorder = new MediaRecorder(outputStream, {
+        mimeType: "video/webm;codecs=h264",
+      });
+      const recordedBlobs: Blob[] = [];
+      recorder.addEventListener("dataavailable", (e) => {
+        recordedBlobs.push(e.data);
+      });
+      //録画終了時に動画ファイルのダウンロードリンクを生成する処理
+      recorder.addEventListener("stop", async () => {
+        setIsRecording(false);
+        const movieName = "movie_" + Math.random().toString(36).slice(-8);
+        const webmName = movieName + ".webm";
+        const mp4Name = movieName + ".mp4";
+
+        openSnackBar(
+          "動画をmp4に変換しています...（時間がかかります、ブラウザ検証ツールにログがでます）"
+        );
+        const webmBlob = new Blob(recordedBlobs, { type: "video/webm" });
+        const binaryData = new Uint8Array(await webmBlob.arrayBuffer());
+        const video = await generateMp4Video(binaryData, webmName, mp4Name);
+        const mp4Blob = new Blob([video], { type: "video/mp4" });
+        const objectURL = URL.createObjectURL(mp4Blob);
+
+        const a = document.createElement("a");
+        a.href = objectURL;
+        a.download = mp4Name;
+        a.click();
+        a.remove();
+        openSnackBar("動画の変換が完了しました！");
+        setRecordMovieDisabled(false);
+      });
+      recorder.start();
+      openSnackBar("動画を録画しています...");
+      onPlaySound();
+      setRecordMovieDisabled(true);
+      
+      // 再生終了時の処理
+      if (videoElementRef.current) {
+        const originalOnEnded = videoElementRef.current.onended;
+        videoElementRef.current.onended = () => {
+          if (originalOnEnded) {
+            originalOnEnded.call(videoElementRef.current);
+          }
+          recorder.stop();
+          setIsRecording(false);
+        };
+      } else if (audioBufferSrcRef.current) {
+        audioBufferSrcRef.current.onended = () => {
+          recorder.stop();
+          setIsRecording(false);
+        };
+      }
+    }, 100); // 100ms待機して録画用canvasのアニメーション開始を保証
   };
 
   // SnackBar
@@ -758,106 +773,11 @@ const Home: NextPage = () => {
 
         {isDeveloperMode && (
           <div className={styles.developerPanel}>
-            <Accordion>
-              <AccordionSummary expandIcon={<ExpandMore />}>
-                <Typography variant="subtitle2" color="primary">
-                  🔧 開発者用: 設定管理
-                </Typography>
-              </AccordionSummary>
-              <AccordionDetails>
-                <Box sx={{ width: "100%", maxWidth: 600, margin: "0 auto" }}>
-                  <Typography variant="body2" gutterBottom>
-                    現在の設定: モード{mode} × {canvasSize}
-                  </Typography>
-                  <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 2 }}>
-                    設定は自動保存されます。モードや解像度を変更すると、対応する設定が自動的に読み込まれます。
-                  </Typography>
-                  <Divider sx={{ my: 2 }} />
-                  <Typography variant="subtitle2" gutterBottom>
-                    設定のエクスポート/インポート
-                  </Typography>
-                  <Box sx={{ display: "flex", gap: 1, mb: 2 }}>
-                    <Button
-                      variant="outlined"
-                      size="small"
-                      onClick={() => {
-                        const json = exportAllSettings();
-                        if (json) {
-                          navigator.clipboard.writeText(json);
-                          openSnackBar("設定をクリップボードにコピーしました");
-                        }
-                      }}
-                    >
-                      エクスポート
-                    </Button>
-                    <Button
-                      variant="outlined"
-                      size="small"
-                      onClick={() => {
-                        navigator.clipboard.readText().then((text) => {
-                          if (importAllSettings(text)) {
-                            // 現在の設定を再読み込み
-                            const loaded = loadSettings(mode, canvasSize);
-                            if (loaded) {
-                              setModeAdjustments(loaded);
-                            }
-                            openSnackBar("設定をインポートしました");
-                          } else {
-                            openSnackBar("設定のインポートに失敗しました");
-                          }
-                        });
-                      }}
-                    >
-                      インポート
-                    </Button>
-                  </Box>
-                  <TextField
-                    fullWidth
-                    multiline
-                    rows={4}
-                    label="設定JSON（貼り付け用）"
-                    variant="outlined"
-                    size="small"
-                    placeholder='{"spectrumSettings_0_1920x1080": {...}}'
-                    onChange={(e) => {
-                      try {
-                        const parsed = JSON.parse(e.target.value);
-                        if (importAllSettings(e.target.value)) {
-                          const loaded = loadSettings(mode, canvasSize);
-                          if (loaded) {
-                            setModeAdjustments(loaded);
-                          }
-                          openSnackBar("設定を適用しました");
-                        }
-                      } catch (err) {
-                        // パースエラーは無視（入力中）
-                      }
-                    }}
-                  />
-                  <Typography variant="caption" color="textSecondary" sx={{ mt: 1, display: "block" }}>
-                    すべての設定をクリア:{" "}
-                    <Button
-                      size="small"
-                      color="error"
-                      onClick={() => {
-                        if (confirm("すべての保存された設定を削除しますか？")) {
-                          const modes = [0, 1, 2, 3, 4, 5, 6];
-                          const sizes: CanvasSize[] = ["1920x1080", "1080x1920", "1920x1920"];
-                          modes.forEach((m) => {
-                            sizes.forEach((s) => {
-                              localStorage.removeItem(getSettingsKey(m, s));
-                            });
-                          });
-                          openSnackBar("すべての設定を削除しました");
-                        }
-                      }}
-                    >
-                      クリア
-                    </Button>
-                  </Typography>
-                </Box>
-              </AccordionDetails>
-            </Accordion>
+            <Box sx={{ mb: 2, p: 1, bgcolor: 'background.paper', borderRadius: 1 }}>
+              <Typography variant="body2" color="textSecondary">
+                FPS: <strong style={{ color: fps >= 55 ? '#4caf50' : fps >= 30 ? '#ff9800' : '#f44336' }}>{fps}</strong>
+              </Typography>
+            </Box>
           </div>
         )}
 
@@ -969,6 +889,109 @@ const Home: NextPage = () => {
         {...snackBarProps}
         handleClose={handleClose}
       ></CustomSnackbar>
+
+      <div className={styles.developerPanel}>
+        <Accordion>
+          <AccordionSummary expandIcon={<ExpandMore />}>
+            <Typography variant="subtitle2" color="primary">
+              設定管理
+            </Typography>
+          </AccordionSummary>
+          <AccordionDetails>
+            <Box sx={{ width: "100%", maxWidth: 600, margin: "0 auto" }}>
+              <Typography variant="body2" gutterBottom>
+                現在の設定: モード{mode} × {canvasSize}
+              </Typography>
+              <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 2 }}>
+                設定は自動保存されます。モードや解像度を変更すると、対応する設定が自動的に読み込まれます。
+              </Typography>
+              <Divider sx={{ my: 2 }} />
+              <Typography variant="subtitle2" gutterBottom>
+                設定のエクスポート/インポート
+              </Typography>
+              <Box sx={{ display: "flex", gap: 1, mb: 2 }}>
+                <Button
+                  variant="outlined"
+                  size="small"
+                  onClick={() => {
+                    const json = exportAllSettings();
+                    if (json) {
+                      navigator.clipboard.writeText(json);
+                      openSnackBar("設定をクリップボードにコピーしました");
+                    }
+                  }}
+                >
+                  エクスポート
+                </Button>
+                <Button
+                  variant="outlined"
+                  size="small"
+                  onClick={() => {
+                    navigator.clipboard.readText().then((text) => {
+                      if (importAllSettings(text)) {
+                        // 現在の設定を再読み込み
+                        const loaded = loadSettings(mode, canvasSize);
+                        if (loaded) {
+                          setModeAdjustments(loaded);
+                        }
+                        openSnackBar("設定をインポートしました");
+                      } else {
+                        openSnackBar("設定のインポートに失敗しました");
+                      }
+                    });
+                  }}
+                >
+                  インポート
+                </Button>
+              </Box>
+              <TextField
+                fullWidth
+                multiline
+                rows={4}
+                label="設定JSON（貼り付け用）"
+                variant="outlined"
+                size="small"
+                placeholder='{"spectrumSettings_0_1920x1080": {...}}'
+                onChange={(e) => {
+                  try {
+                    const parsed = JSON.parse(e.target.value);
+                    if (importAllSettings(e.target.value)) {
+                      const loaded = loadSettings(mode, canvasSize);
+                      if (loaded) {
+                        setModeAdjustments(loaded);
+                      }
+                      openSnackBar("設定を適用しました");
+                    }
+                  } catch (err) {
+                    // パースエラーは無視（入力中）
+                  }
+                }}
+              />
+              <Typography variant="caption" color="textSecondary" sx={{ mt: 1, display: "block" }}>
+                すべての設定をクリア:{" "}
+                <Button
+                  size="small"
+                  color="error"
+                  onClick={() => {
+                    if (confirm("すべての保存された設定を削除しますか？")) {
+                      const modes = [0, 1, 2, 3, 4, 5, 6];
+                      const sizes: CanvasSize[] = ["1920x1080", "1080x1920", "1920x1920"];
+                      modes.forEach((m) => {
+                        sizes.forEach((s) => {
+                          localStorage.removeItem(getSettingsKey(m, s));
+                        });
+                      });
+                      openSnackBar("すべての設定を削除しました");
+                    }
+                  }}
+                >
+                  クリア
+                </Button>
+              </Typography>
+            </Box>
+          </AccordionDetails>
+        </Accordion>
+      </div>
 
       <footer className={styles.footer}>
         <p>

@@ -14,5 +14,6 @@ services:
     environment:
       - NODE_ENV=development
       - NEXT_TELEMETRY_DISABLED=1
+      - NEXT_PUBLIC_DEVELOPER_MODE=true
     restart: unless-stopped
 

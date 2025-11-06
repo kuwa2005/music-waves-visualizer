@@ -18,6 +18,7 @@ COPY . .
 
 # 環境変数の設定（ビルド時に必要）
 ENV NEXT_TELEMETRY_DISABLED 1
+ENV NEXT_PUBLIC_DEVELOPER_MODE true
 
 # ビルド実行
 RUN npm run build
