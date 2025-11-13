@@ -290,22 +290,23 @@ function drawBackgroundWebGL(
     gl.uniform2f(texResolutionLocation, canvasWidth, canvasHeight);
   }
 
-  // 画像のサイズ計算
+  // 画像のサイズ計算（アスペクト比を保ちながらcanvasに収める）
   const rawWidth = image.width;
   const rawHeight = image.height;
+  const canvasAspect = canvasWidth / canvasHeight;
+  const imageAspect = rawWidth / rawHeight;
+
   let imageCtxWidth = 0;
   let imageCtxHeight = 0;
 
-  if (rawWidth > canvasWidth || rawHeight > canvasHeight) {
+  if (imageAspect > canvasAspect) {
+    // 画像の方が横長 → 幅を基準にスケーリング
     imageCtxWidth = canvasWidth;
-    imageCtxHeight = Math.round(rawHeight * (canvasWidth / rawWidth));
-    if (imageCtxHeight > canvasHeight) {
-      imageCtxHeight = canvasHeight;
-      imageCtxWidth = Math.round(rawWidth * (canvasHeight / rawHeight));
-    }
+    imageCtxHeight = Math.round(canvasWidth / imageAspect);
   } else {
-    imageCtxWidth = image.width;
-    imageCtxHeight = image.height;
+    // 画像の方が縦長または同じ → 高さを基準にスケーリング
+    imageCtxHeight = canvasHeight;
+    imageCtxWidth = Math.round(canvasHeight * imageAspect);
   }
 
   const marginWidth = canvasWidth - imageCtxWidth;
@@ -395,22 +396,23 @@ function prepareImageTexture(
     tempCtx.fillStyle = 'rgba(34, 34, 34, 1.0)';
     tempCtx.fillRect(0, 0, canvasWidth, canvasHeight);
 
-    // 画像のサイズ計算（drawBackgroundWebGLと同じロジック）
+    // 画像のサイズ計算（アスペクト比を保ちながらcanvasに収める）
     const rawWidth = image.width;
     const rawHeight = image.height;
+    const canvasAspect = canvasWidth / canvasHeight;
+    const imageAspect = rawWidth / rawHeight;
+
     let imageCtxWidth = 0;
     let imageCtxHeight = 0;
 
-    if (rawWidth > canvasWidth || rawHeight > canvasHeight) {
+    if (imageAspect > canvasAspect) {
+      // 画像の方が横長 → 幅を基準にスケーリング
       imageCtxWidth = canvasWidth;
-      imageCtxHeight = Math.round(rawHeight * (canvasWidth / rawWidth));
-      if (imageCtxHeight > canvasHeight) {
-        imageCtxHeight = canvasHeight;
-        imageCtxWidth = Math.round(rawWidth * (canvasHeight / rawHeight));
-      }
+      imageCtxHeight = Math.round(canvasWidth / imageAspect);
     } else {
-      imageCtxWidth = image.width;
-      imageCtxHeight = image.height;
+      // 画像の方が縦長または同じ → 高さを基準にスケーリング
+      imageCtxHeight = canvasHeight;
+      imageCtxWidth = Math.round(canvasHeight * imageAspect);
     }
 
     const marginWidth = canvasWidth - imageCtxWidth;
@@ -686,8 +688,8 @@ function renderFrame(): void {
       drawMode0(glContext, bufferData, canvasWidth, canvasHeight, adj);
       break;
     case 1:
-      // 折れ線
-      analyser.getByteFrequencyData(bufferData);
+      // 波形（折れ線）
+      analyser.getByteTimeDomainData(bufferData);
       drawMode1(glContext, bufferData, canvasWidth, canvasHeight, adj);
       break;
     case 2:
@@ -779,7 +781,7 @@ export const drawBarsWebGL = (
   renderFrame();
 };
 
-// モード0: 周波数バー
+// モード0: 周波数バー（Canvas.tsに合わせる）
 function drawMode0(
   ctx: WebGLRendererContext,
   bufferData: Uint8Array,
@@ -787,21 +789,19 @@ function drawMode0(
   canvasHeight: number,
   adj: ModeAdjustments
 ): void {
-  const barWidth = (canvasWidth / bufferData.length) * 2.5 * adj.scaleX;
-  let x = adj.offsetX;
+  const barsLength = 128;
+  const barWidth = (canvasWidth / barsLength) * adj.scaleX;
+  let barX = 0;
 
-  for (let i = 0; i < bufferData.length; i++) {
-    const barHeight = (bufferData[i] / 255) * canvasHeight * adj.scaleY;
-    const r = (bufferData[i] + 100) / 255;
-    const g = 0.5;
-    const b = 0.8;
-
-    drawRect(ctx, x, canvasHeight - barHeight + adj.offsetY, barWidth, barHeight, r, g, b, 1.0);
-    x += barWidth + 1;
+  for (let i = 0; i < barsLength; i++) {
+    const barHeight = bufferData[i] * adj.scaleY;
+    // 白色（rgba(255, 255, 255, 0.8)）
+    drawRect(ctx, barX, canvasHeight - barHeight, barWidth, barHeight, 1.0, 1.0, 1.0, 0.8);
+    barX += canvasWidth / barsLength;
   }
 }
 
-// モード1: 折れ線
+// モード1: 波形（Canvas.tsに合わせる）
 function drawMode1(
   ctx: WebGLRendererContext,
   bufferData: Uint8Array,
@@ -809,21 +809,22 @@ function drawMode1(
   canvasHeight: number,
   adj: ModeAdjustments
 ): void {
-  const sliceWidth = (canvasWidth / bufferData.length) * adj.scaleX;
-  let x = adj.offsetX;
+  const bufferLength = bufferData.length;
+  const centerY = canvasHeight / 2;
+  const scale = (canvasHeight / 2) / 128;
 
-  for (let i = 0; i < bufferData.length - 1; i++) {
-    const v1 = bufferData[i] / 255.0;
-    const v2 = bufferData[i + 1] / 255.0;
-    const y1 = canvasHeight - v1 * canvasHeight * adj.scaleY + adj.offsetY;
-    const y2 = canvasHeight - v2 * canvasHeight * adj.scaleY + adj.offsetY;
+  for (let i = 0; i < bufferLength - 1; i++) {
+    const x1 = (i / bufferLength) * canvasWidth;
+    const x2 = ((i + 1) / bufferLength) * canvasWidth;
+    const y1 = centerY - (bufferData[i] - 128) * scale;
+    const y2 = centerY - (bufferData[i + 1] - 128) * scale;
 
-    drawLine(ctx, x, y1, x + sliceWidth, y2, 0.2, 0.8, 1.0, 1.0, 3);
-    x += sliceWidth;
+    // 白色（rgba(255, 255, 255, 0.8)）
+    drawLine(ctx, x1, y1, x2, y2, 1.0, 1.0, 1.0, 0.8, 2);
   }
 }
 
-// モード2: 円形
+// モード2: 円形（Canvas.tsに合わせる）
 function drawMode2(
   ctx: WebGLRendererContext,
   bufferData: Uint8Array,
@@ -831,28 +832,32 @@ function drawMode2(
   canvasHeight: number,
   adj: ModeAdjustments
 ): void {
-  const centerX = canvasWidth / 2 + adj.offsetX;
-  const centerY = canvasHeight / 2 + adj.offsetY;
-  const radius = Math.min(canvasWidth, canvasHeight) / 4;
-  const barCount = bufferData.length;
+  const centerX = canvasWidth / 2;
+  const centerY = canvasHeight / 2;
+  const bass = Math.floor(bufferData[1]); // 1Hz Freq
+  const baseRadius = 0.2 * canvasWidth <= 200 ? 0.2 * canvasWidth : 200;
+  const radius = bass * 0.25 + baseRadius;
+  const barWidth = canvasWidth <= 450 ? 2 : 3;
 
-  for (let i = 0; i < barCount; i++) {
-    const angle = (i / barCount) * Math.PI * 2;
-    const barHeight = (bufferData[i] / 255) * radius * adj.scaleY;
+  for (let i = 0; i < 256; i++) {
+    const value = bufferData[i];
+    if (value >= 0) {
+      const angle = i * ((180 / 128) * Math.PI / 180);
+      const barLength = value;
 
-    const x1 = centerX + Math.cos(angle) * radius;
-    const y1 = centerY + Math.sin(angle) * radius;
-    const x2 = centerX + Math.cos(angle) * (radius + barHeight);
-    const y2 = centerY + Math.sin(angle) * (radius + barHeight);
+      // 回転した位置を計算
+      const x1 = centerX + Math.cos(angle) * radius;
+      const y1 = centerY + Math.sin(angle) * radius;
+      const x2 = centerX + Math.cos(angle) * (radius + barLength);
+      const y2 = centerY + Math.sin(angle) * (radius + barLength);
 
-    const hue = (i / barCount) * 360;
-    const [r, g, b] = hslToRgb(hue, 1.0, 0.5);
-
-    drawLine(ctx, x1, y1, x2, y2, r, g, b, 1.0, 3);
+      // 白色（rgba(255, 255, 255, 0.8)）
+      drawLine(ctx, x1, y1, x2, y2, 1.0, 1.0, 1.0, 0.8, barWidth);
+    }
   }
 }
 
-// モード3: 上下対称バー
+// モード3: 上下対称バー（Canvas.tsに合わせる）
 function drawMode3(
   ctx: WebGLRendererContext,
   bufferData: Uint8Array,
@@ -860,25 +865,21 @@ function drawMode3(
   canvasHeight: number,
   adj: ModeAdjustments
 ): void {
-  const barWidth = (canvasWidth / bufferData.length) * 2.5 * adj.scaleX;
-  let x = adj.offsetX;
+  const barsLength = 128;
+  const barWidth = canvasWidth / barsLength;
   const centerY = canvasHeight / 2;
 
-  for (let i = 0; i < bufferData.length; i++) {
-    const barHeight = (bufferData[i] / 255) * (canvasHeight / 2) * adj.scaleY;
-    const hue = (i / bufferData.length) * 360;
+  for (let i = 0; i < barsLength; i++) {
+    const barHeight = bufferData[i] * 2;
+    const hue = (i / barsLength) * 360;
     const [r, g, b] = hslToRgb(hue, 1.0, 0.5);
 
-    // 上半分
-    drawRect(ctx, x, centerY - barHeight + adj.offsetY, barWidth, barHeight, r, g, b, 0.8);
-    // 下半分
-    drawRect(ctx, x, centerY + adj.offsetY, barWidth, barHeight, r, g, b, 0.8);
-
-    x += barWidth + 1;
+    // 上下対称に描画
+    drawRect(ctx, i * barWidth, centerY - barHeight / 2, barWidth - 1, barHeight, r, g, b, 0.8);
   }
 }
 
-// モード4: ドット表示
+// モード4: ドット表示（Canvas.tsに合わせる）
 function drawMode4(
   ctx: WebGLRendererContext,
   bufferData: Uint8Array,
@@ -886,25 +887,31 @@ function drawMode4(
   canvasHeight: number,
   adj: ModeAdjustments
 ): void {
-  const centerX = canvasWidth / 2 + adj.offsetX;
-  const centerY = canvasHeight / 2 + adj.offsetY;
-  const maxRadius = Math.min(canvasWidth, canvasHeight) / 2;
+  const bufferLength = bufferData.length;
+  const dotsPerRow = 32;
+  const dotsPerCol = 16;
+  const dotSize = Math.min(canvasWidth / dotsPerRow, canvasHeight / dotsPerCol);
 
-  for (let i = 0; i < bufferData.length; i++) {
-    const angle = (i / bufferData.length) * Math.PI * 2;
-    const distance = (bufferData[i] / 255) * maxRadius * adj.scaleY;
-    const x = centerX + Math.cos(angle) * distance;
-    const y = centerY + Math.sin(angle) * distance;
-    const size = 3 + (bufferData[i] / 255) * 5;
+  for (let col = 0; col < dotsPerRow; col++) {
+    const freqIndex = Math.floor((col / dotsPerRow) * bufferLength);
+    const value = bufferData[freqIndex];
 
-    const hue = (i / bufferData.length) * 360;
-    const [r, g, b] = hslToRgb(hue, 1.0, 0.5);
+    for (let row = 0; row < dotsPerCol; row++) {
+      const threshold = (255 / dotsPerCol) * (dotsPerCol - row);
+      const opacity = value > threshold ? 0.8 : 0.2;
+      const hue = (col / dotsPerRow) * 360;
+      const [r, g, b] = hslToRgb(hue, 1.0, 0.5);
 
-    drawCircle(ctx, x, y, size, r, g, b, 0.9);
+      const x = col * dotSize + dotSize / 2;
+      const y = row * dotSize + dotSize / 2;
+      const radius = dotSize / 3;
+
+      drawCircle(ctx, x, y, radius, r, g, b, opacity);
+    }
   }
 }
 
-// モード5: 波形（上下対称）
+// モード5: 波形（上下対称）（Canvas.tsに合わせる）
 function drawMode5(
   ctx: WebGLRendererContext,
   bufferData: Uint8Array,
@@ -912,24 +919,26 @@ function drawMode5(
   canvasHeight: number,
   adj: ModeAdjustments
 ): void {
-  const sliceWidth = (canvasWidth / bufferData.length) * adj.scaleX;
+  const bufferLength = bufferData.length;
   const centerY = canvasHeight / 2;
-  let x = adj.offsetX;
+  const scale = canvasHeight / 512;
 
-  for (let i = 0; i < bufferData.length - 1; i++) {
-    const v1 = (bufferData[i] / 128.0 - 1.0) * (canvasHeight / 2) * adj.scaleY;
-    const v2 = (bufferData[i + 1] / 128.0 - 1.0) * (canvasHeight / 2) * adj.scaleY;
+  for (let i = 0; i < bufferLength - 1; i++) {
+    const x1 = (i / bufferLength) * canvasWidth;
+    const x2 = ((i + 1) / bufferLength) * canvasWidth;
+    const y1 = centerY - (bufferData[i] - 128) * scale;
+    const y2 = centerY - (bufferData[i + 1] - 128) * scale;
 
-    // 上側
-    drawLine(ctx, x, centerY + v1 + adj.offsetY, x + sliceWidth, centerY + v2 + adj.offsetY, 0.2, 1.0, 0.8, 1.0, 2);
+    // 上側（通常）
+    drawLine(ctx, x1, y1, x2, y2, 1.0, 1.0, 1.0, 0.8, 2);
     // 下側（反転）
-    drawLine(ctx, x, centerY - v1 + adj.offsetY, x + sliceWidth, centerY - v2 + adj.offsetY, 1.0, 0.4, 0.8, 1.0, 2);
-
-    x += sliceWidth;
+    const y1Mirror = canvasHeight - y1;
+    const y2Mirror = canvasHeight - y2;
+    drawLine(ctx, x1, y1Mirror, x2, y2Mirror, 1.0, 1.0, 1.0, 0.8, 2);
   }
 }
 
-// モード6: 3D風バー
+// モード6: 3D風バー（Canvas.tsに合わせる）
 function drawMode6(
   ctx: WebGLRendererContext,
   bufferData: Uint8Array,
@@ -937,22 +946,28 @@ function drawMode6(
   canvasHeight: number,
   adj: ModeAdjustments
 ): void {
-  const barWidth = (canvasWidth / bufferData.length) * 2.5 * adj.scaleX;
-  let x = adj.offsetX;
+  const bufferLength = bufferData.length;
+  const barsLength = 64;
+  const barWidth = canvasWidth / barsLength;
 
-  for (let i = 0; i < bufferData.length; i++) {
-    const barHeight = (bufferData[i] / 255) * canvasHeight * adj.scaleY;
-    const hue = (i / bufferData.length) * 360;
-    const [r, g, b] = hslToRgb(hue, 1.0, 0.5);
+  for (let i = 0; i < barsLength; i++) {
+    const value = bufferData[Math.floor((i / barsLength) * bufferLength)];
+    const barHeight = value * 1.5 * adj.scaleY;
+    const x = i * barWidth;
+    const offset = (i - barsLength / 2) * 2;
+
+    // 奥行き効果のための色変化
+    const brightness = 0.3 + (i / barsLength) * 0.7;
+    const r = 0.2 + brightness * 0.8;
+    const g = 0.5 + brightness * 0.5;
+    const b = 1.0;
 
     // メインバー
-    drawRect(ctx, x, canvasHeight - barHeight + adj.offsetY, barWidth, barHeight, r, g, b, 0.9);
+    drawRect(ctx, x, canvasHeight - barHeight, barWidth - 1, barHeight, r, g, b, 0.8);
 
     // 3D効果（影）
-    const offset = 5;
-    drawRect(ctx, x + offset, canvasHeight - barHeight + offset + adj.offsetY, barWidth, barHeight, r * 0.5, g * 0.5, b * 0.5, 0.3);
-
-    x += barWidth + 1;
+    const shadowOffset = 3;
+    drawRect(ctx, x + shadowOffset, canvasHeight - barHeight + shadowOffset, barWidth - 1, barHeight, r * 0.4, g * 0.4, b * 0.4, 0.3);
   }
 }
 
