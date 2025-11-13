@@ -10,6 +10,9 @@ let fpsCounter = 0;
 let fpsLastTime = performance.now();
 let currentFPS = 0;
 
+// アニメーションフレームID
+let animationFrameId: number | null = null;
+
 // FPSを取得
 export function getFPS(): number {
   return currentFPS;
@@ -20,6 +23,14 @@ export function resetFPS(): void {
   fpsCounter = 0;
   fpsLastTime = performance.now();
   currentFPS = 0;
+}
+
+// Canvas 2Dアニメーションを停止
+export function stopCanvas2DAnimation(): void {
+  if (animationFrameId !== null) {
+    cancelAnimationFrame(animationFrameId);
+    animationFrameId = null;
+  }
 }
 
 // オフスクリーンキャンバスのキャッシュ（画像処理の最適化）
@@ -138,9 +149,10 @@ export const drawBars = (
   });
   
   if (!ctx) {
-    return requestAnimationFrame(function () {
+    animationFrameId = requestAnimationFrame(function () {
       drawBars(canvas, imageCtx, mode, analyser, adjustments);
     });
+    return animationFrameId;
   }
   
   const canvasWidth = canvas.width;
@@ -167,9 +179,10 @@ export const drawBars = (
   ctx.save();
 
   if (!analyser) {
-    return requestAnimationFrame(function () {
+    animationFrameId = requestAnimationFrame(function () {
       drawBars(canvas, imageCtx, mode, analyser, adjustments);
     });
+    return animationFrameId;
   }
 
   const bufferLength = analyser.frequencyBinCount; // analyser.fftSizeの半分になる(1024)
@@ -373,7 +386,8 @@ export const drawBars = (
     fpsLastTime = currentTime;
   }
 
-  return requestAnimationFrame(function () {
+  animationFrameId = requestAnimationFrame(function () {
     drawBars(canvas, imageCtx, mode, analyser, adjustments);
   });
+  return animationFrameId;
 };

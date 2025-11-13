@@ -25,7 +25,7 @@ import {
   ExpandMore,
 } from "@mui/icons-material";
 import { CustomSnackbar } from "../components/CustomSnackbar";
-import { drawBars, clearImageCache, getFPS } from "../lib/Canvas";
+import { drawBars, clearImageCache, getFPS, stopCanvas2DAnimation } from "../lib/Canvas";
 import { drawBarsWebGL, getFPSWebGL, cleanupWebGL, stopWebGLAnimation } from "../lib/WebGLRenderer";
 import { getGpuInfo, getGpuDisplayName, getRecommendedRenderer, type GpuInfo } from "../lib/GpuDetector";
 import { isWebCodecsSupported, checkHardwareEncoderSupport, getBestEncodingMethod } from "../lib/WebCodecsEncoder";
@@ -328,9 +328,7 @@ const Home: NextPage = () => {
     }
 
     // 前のアニメーションを停止
-    if (reqIdRef.current) {
-      cancelAnimationFrame(reqIdRef.current);
-    }
+    stopCanvas2DAnimation();
     stopWebGLAnimation();
 
     // レンダラータイプに応じて描画関数を選択
@@ -347,24 +345,19 @@ const Home: NextPage = () => {
     } else {
       console.log('[index.tsx] Starting Canvas 2D renderer');
       // Canvas 2Dレンダラーも内部でrequestAnimationFrameを再帰呼び出しする
-      reqIdRef.current = requestAnimationFrame(function () {
-        return drawBars(
-          canvasRef.current,
-          imageCtx,
-          mode,
-          analyserRef.current,
-          modeAdjustments
-        );
-      });
+      drawBars(
+        canvasRef.current,
+        imageCtx,
+        mode,
+        analyserRef.current,
+        modeAdjustments
+      );
     }
 
     return () => {
       console.log('[index.tsx] Canvas Animation cleanup');
       // クリーンアップ：アニメーションを停止
-      if (reqIdRef.current) {
-        cancelAnimationFrame(reqIdRef.current);
-        reqIdRef.current = null;
-      }
+      stopCanvas2DAnimation();
       stopWebGLAnimation();
     };
   }, [imageCtx, mode, modeAdjustments, rendererType]);
@@ -500,9 +493,8 @@ const Home: NextPage = () => {
           // 再生終了時の処理
           video.onended = () => {
             setIsPlaySound(false);
-            if (reqIdRef.current) {
-              cancelAnimationFrame(reqIdRef.current);
-            }
+            stopCanvas2DAnimation();
+            stopWebGLAnimation();
           };
           
           setPlaySoundDisabled(false);
@@ -573,9 +565,8 @@ const Home: NextPage = () => {
       if (videoElementRef.current) {
         videoElementRef.current.pause();
       }
-      if (reqIdRef.current) {
-        cancelAnimationFrame(reqIdRef.current);
-      }
+      stopCanvas2DAnimation();
+      stopWebGLAnimation();
       setIsPlaySound(false);
       return;
     }
