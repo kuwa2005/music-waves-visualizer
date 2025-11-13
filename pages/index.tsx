@@ -26,6 +26,9 @@ import {
 } from "@mui/icons-material";
 import { CustomSnackbar } from "../components/CustomSnackbar";
 import { drawBars, clearImageCache, getFPS } from "../lib/Canvas";
+import { drawBarsWebGL, getFPSWebGL, cleanupWebGL } from "../lib/WebGLRenderer";
+import { getGpuInfo, getGpuDisplayName, getRecommendedRenderer, type GpuInfo } from "../lib/GpuDetector";
+import { isWebCodecsSupported, checkHardwareEncoderSupport, getBestEncodingMethod } from "../lib/WebCodecsEncoder";
 import { generateMp4Video } from "../lib/Ffmpeg";
 
 const hasWindow = () => {
@@ -60,6 +63,17 @@ const Home: NextPage = () => {
   const [audioFileName, setAudioFileName] = useState<string>("");
   const [fps, setFps] = useState<number>(0);
   const [isRecording, setIsRecording] = useState<boolean>(false);
+
+  // GPU関連State
+  const [gpuInfo, setGpuInfo] = useState<GpuInfo | null>(null);
+  const [rendererType, setRendererType] = useState<'canvas2d' | 'webgl'>('canvas2d');
+  const [webCodecsSupported, setWebCodecsSupported] = useState<boolean>(false);
+  const [hardwareEncoderSupport, setHardwareEncoderSupport] = useState<{
+    h264: boolean;
+    h265: boolean;
+    vp9: boolean;
+    av1: boolean;
+  }>({ h264: false, h265: false, vp9: false, av1: false });
 
   // Audio State
   const audioCtxRef = useRef<AudioContext>(null);
@@ -263,6 +277,29 @@ const Home: NextPage = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // GPU情報を取得して推奨レンダラーを設定
+  useEffect(() => {
+    const initGpu = async () => {
+      const info = getGpuInfo();
+      setGpuInfo(info);
+
+      // 推奨レンダラーを設定
+      const recommended = getRecommendedRenderer(info);
+      setRendererType(recommended);
+
+      // WebCodecsサポート確認
+      const webCodecsAvailable = isWebCodecsSupported();
+      setWebCodecsSupported(webCodecsAvailable);
+
+      if (webCodecsAvailable) {
+        const encoderSupport = await checkHardwareEncoderSupport();
+        setHardwareEncoderSupport(encoderSupport);
+      }
+    };
+
+    initGpu();
+  }, []);
+
   // Update canvas size when canvasSize changes or on mount
   useEffect(() => {
     if (canvasRef.current) {
@@ -280,25 +317,51 @@ const Home: NextPage = () => {
     if (!canvasRef.current) {
       return;
     }
-    reqIdRef.current = requestAnimationFrame(function () {
-      return drawBars(
-        canvasRef.current,
-        imageCtx,
-        mode,
-        analyserRef.current,
-        modeAdjustments
-      );
-    });
-    return () => cancelAnimationFrame(reqIdRef.current);
-  }, [imageCtx, mode, modeAdjustments]);
+
+    // レンダラータイプに応じて描画関数を選択
+    if (rendererType === 'webgl') {
+      reqIdRef.current = requestAnimationFrame(function () {
+        return drawBarsWebGL(
+          canvasRef.current,
+          imageCtx,
+          mode,
+          analyserRef.current,
+          modeAdjustments
+        );
+      });
+    } else {
+      reqIdRef.current = requestAnimationFrame(function () {
+        return drawBars(
+          canvasRef.current,
+          imageCtx,
+          mode,
+          analyserRef.current,
+          modeAdjustments
+        );
+      });
+    }
+
+    return () => {
+      cancelAnimationFrame(reqIdRef.current);
+      // WebGLからCanvas 2Dに切り替える時はクリーンアップ
+      if (rendererType === 'canvas2d') {
+        cleanupWebGL();
+      }
+    };
+  }, [imageCtx, mode, modeAdjustments, rendererType]);
 
   // FPS表示更新（1秒ごとに更新）
   useEffect(() => {
     const fpsInterval = setInterval(() => {
-      setFps(getFPS());
+      // レンダラータイプに応じてFPSを取得
+      if (rendererType === 'webgl') {
+        setFps(getFPSWebGL());
+      } else {
+        setFps(getFPS());
+      }
     }, 1000);
     return () => clearInterval(fpsInterval);
-  }, []);
+  }, [rendererType]);
 
   // ファイル拡張子判定ヘルパー
   const isImageFile = (filename: string): boolean => {
@@ -780,6 +843,101 @@ const Home: NextPage = () => {
             </Box>
           </div>
         )}
+
+        {/* GPU情報パネル */}
+        <div className={styles.gpuPanel}>
+          <Accordion defaultExpanded>
+            <AccordionSummary expandIcon={<ExpandMore />}>
+              <Typography>GPU設定</Typography>
+            </AccordionSummary>
+            <AccordionDetails>
+              <Box sx={{ width: "100%", maxWidth: 800, margin: "0 auto" }}>
+                {/* GPU情報表示 */}
+                {gpuInfo && (
+                  <Box sx={{ mb: 3, p: 2, bgcolor: 'background.paper', borderRadius: 1 }}>
+                    <Typography variant="h6" gutterBottom>
+                      検出されたGPU
+                    </Typography>
+                    <Typography variant="body2" color="textSecondary" gutterBottom>
+                      {getGpuDisplayName(gpuInfo)}
+                    </Typography>
+                    <Box sx={{ mt: 1, display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                      <Typography variant="caption" sx={{
+                        px: 1,
+                        py: 0.5,
+                        bgcolor: gpuInfo.isWebGL2Supported ? 'success.main' : 'error.main',
+                        color: 'white',
+                        borderRadius: 1
+                      }}>
+                        WebGL2: {gpuInfo.isWebGL2Supported ? '対応' : '非対応'}
+                      </Typography>
+                      <Typography variant="caption" sx={{
+                        px: 1,
+                        py: 0.5,
+                        bgcolor: gpuInfo.isWebGPUSupported ? 'success.main' : 'warning.main',
+                        color: 'white',
+                        borderRadius: 1
+                      }}>
+                        WebGPU: {gpuInfo.isWebGPUSupported ? '対応' : '非対応'}
+                      </Typography>
+                      <Typography variant="caption" sx={{
+                        px: 1,
+                        py: 0.5,
+                        bgcolor: webCodecsSupported ? 'success.main' : 'warning.main',
+                        color: 'white',
+                        borderRadius: 1
+                      }}>
+                        WebCodecs: {webCodecsSupported ? '対応' : '非対応'}
+                      </Typography>
+                      {webCodecsSupported && hardwareEncoderSupport.h264 && (
+                        <Typography variant="caption" sx={{
+                          px: 1,
+                          py: 0.5,
+                          bgcolor: 'info.main',
+                          color: 'white',
+                          borderRadius: 1
+                        }}>
+                          H.264ハードウェアエンコード対応
+                        </Typography>
+                      )}
+                    </Box>
+                    <Typography variant="caption" color="textSecondary" sx={{ mt: 1, display: 'block' }}>
+                      GPUベンダー: {gpuInfo.vendorType === 'nvidia' ? 'NVIDIA' : gpuInfo.vendorType === 'intel' ? 'Intel' : gpuInfo.vendorType === 'amd' ? 'AMD' : gpuInfo.vendorType === 'apple' ? 'Apple' : '不明'}
+                    </Typography>
+                  </Box>
+                )}
+
+                {/* レンダラー選択 */}
+                <Box sx={{ mb: 2 }}>
+                  <Typography variant="body1" gutterBottom fontWeight={500}>
+                    レンダリングエンジン
+                  </Typography>
+                  <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 1 }}>
+                    WebGLを使用するとGPU加速により高速なレンダリングが可能です
+                  </Typography>
+                  <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
+                    <Button
+                      variant={rendererType === 'canvas2d' ? 'contained' : 'outlined'}
+                      onClick={() => setRendererType('canvas2d')}
+                      size="small"
+                    >
+                      Canvas 2D (互換性優先)
+                    </Button>
+                    <Button
+                      variant={rendererType === 'webgl' ? 'contained' : 'outlined'}
+                      onClick={() => setRendererType('webgl')}
+                      size="small"
+                      disabled={!gpuInfo?.isWebGLSupported}
+                    >
+                      WebGL (GPU加速)
+                      {gpuInfo && getRecommendedRenderer(gpuInfo) === 'webgl' && ' 🎯推奨'}
+                    </Button>
+                  </Box>
+                </Box>
+              </Box>
+            </AccordionDetails>
+          </Accordion>
+        </div>
 
         <div className={styles.adjustments}>
           <Accordion>
