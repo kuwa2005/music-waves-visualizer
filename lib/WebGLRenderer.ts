@@ -90,6 +90,13 @@ let currentFPS = 0;
 // アニメーションフレームID管理
 let animationFrameId: number | null = null;
 
+// 最新のパラメータを保持（再帰呼び出し時に使用）
+let latestCanvas: HTMLCanvasElement | null = null;
+let latestImageCtx: HTMLImageElement | null = null;
+let latestMode: number = 0;
+let latestAnalyser: AnalyserNode | null = null;
+let latestAdjustments: ModeAdjustments | undefined = undefined;
+
 /**
  * WebGLコンテキストを初期化
  */
@@ -588,6 +595,13 @@ export const drawBarsWebGL = (
   analyser: AnalyserNode,
   adjustments?: ModeAdjustments
 ): void => {
+  // 最新のパラメータを保存（再帰呼び出し時に使用）
+  latestCanvas = canvas;
+  latestImageCtx = imageCtx;
+  latestMode = mode;
+  latestAnalyser = analyser;
+  latestAdjustments = adjustments;
+
   // WebGLコンテキストを初期化（初回のみ）
   if (!glContext || glContext.gl.canvas !== canvas) {
     glContext = initWebGL(canvas);
@@ -679,8 +693,11 @@ export const drawBarsWebGL = (
   }
 
   // Canvas.tsのdrawBars関数と同じパターン：再帰的にrequestAnimationFrameを呼び出す
+  // 最新のパラメータを使用することで、モード変更時に正しく更新される
   animationFrameId = requestAnimationFrame(() => {
-    drawBarsWebGL(canvas, imageCtx, mode, analyser, adjustments);
+    if (latestCanvas && latestAnalyser) {
+      drawBarsWebGL(latestCanvas, latestImageCtx, latestMode, latestAnalyser, latestAdjustments);
+    }
   });
 };
 
