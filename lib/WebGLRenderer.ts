@@ -100,6 +100,19 @@ let latestMode: number = 0;
 let latestAnalyser: AnalyserNode | null = null;
 let latestAdjustments: ModeAdjustments | undefined = undefined;
 
+// デバッグログ用フラグ
+const DEBUG_WEBGL = true;
+
+function debugLog(message: string, data?: any) {
+  if (DEBUG_WEBGL) {
+    if (data !== undefined) {
+      console.log(`[WebGL] ${message}`, data);
+    } else {
+      console.log(`[WebGL] ${message}`);
+    }
+  }
+}
+
 /**
  * WebGLコンテキストを初期化
  */
@@ -243,6 +256,12 @@ function drawBackgroundWebGL(
   canvas: HTMLCanvasElement,
   image: HTMLImageElement | null
 ): void {
+  debugLog('drawBackgroundWebGL called', {
+    hasImage: !!image,
+    imageSrc: image?.src?.substring(0, 50) + '...',
+    canvasSize: `${canvas.width}x${canvas.height}`
+  });
+
   const { gl, textureProgram, texPositionLocation, texCoordLocation,
           texResolutionLocation, textureLocation, positionBuffer, texCoordBuffer } = ctx;
   const canvasWidth = canvas.width;
@@ -254,8 +273,11 @@ function drawBackgroundWebGL(
 
   // 画像がない場合は背景色のみ
   if (!image) {
+    debugLog('No image provided, showing background color only');
     return;
   }
+
+  debugLog('Image dimensions', { width: image.width, height: image.height });
 
   // 画像テクスチャの準備
   prepareImageTexture(ctx, image, canvasWidth, canvasHeight);
@@ -354,8 +376,14 @@ function prepareImageTexture(
       ctx.imageCache.width === canvasWidth &&
       ctx.imageCache.height === canvasHeight &&
       ctx.imageTexture) {
+    debugLog('Using cached texture');
     return; // キャッシュが有効
   }
+
+  debugLog('Creating new texture', {
+    canvasSize: `${canvasWidth}x${canvasHeight}`,
+    imageSize: `${image.width}x${image.height}`
+  });
 
   // オフスクリーンcanvasに画像を描画
   const tempCanvas = document.createElement('canvas');
@@ -593,6 +621,11 @@ function drawCircle(
  */
 function renderFrame(): void {
   if (!latestCanvas || !latestAnalyser || !glContext) {
+    debugLog('renderFrame: Missing required parameters', {
+      hasCanvas: !!latestCanvas,
+      hasAnalyser: !!latestAnalyser,
+      hasGlContext: !!glContext
+    });
     isAnimating = false;
     return;
   }
@@ -602,6 +635,16 @@ function renderFrame(): void {
   const mode = latestMode;
   const analyser = latestAnalyser;
   const adjustments = latestAdjustments;
+
+  // 最初のフレームのみログ出力
+  if (fpsCounter === 0) {
+    debugLog('renderFrame: Starting render', {
+      hasImage: !!imageCtx,
+      imageSrc: imageCtx?.src?.substring(0, 50) + '...',
+      mode,
+      canvasSize: `${canvas.width}x${canvas.height}`
+    });
+  }
 
   const { gl, program, resolutionLocation } = glContext;
   const canvasWidth = canvas.width;
@@ -697,6 +740,14 @@ export const drawBarsWebGL = (
   analyser: AnalyserNode,
   adjustments?: ModeAdjustments
 ): void => {
+  debugLog('drawBarsWebGL called', {
+    hasImage: !!imageCtx,
+    imageSrc: imageCtx?.src?.substring(0, 50) + '...',
+    mode,
+    isAnimating,
+    canvasSize: `${canvas.width}x${canvas.height}`
+  });
+
   // 最新のパラメータを保存（再帰呼び出し時に使用）
   latestCanvas = canvas;
   latestImageCtx = imageCtx;
@@ -706,6 +757,7 @@ export const drawBarsWebGL = (
 
   // 既にアニメーション中の場合は、パラメータだけ更新して終了
   if (isAnimating) {
+    debugLog('Already animating, updating parameters only');
     return;
   }
 
@@ -937,6 +989,7 @@ export function getFPSWebGL(): number {
  * WebGLアニメーションを停止
  */
 export function stopWebGLAnimation(): void {
+  debugLog('stopWebGLAnimation called', { wasAnimating: isAnimating });
   if (animationFrameId !== null) {
     cancelAnimationFrame(animationFrameId);
     animationFrameId = null;

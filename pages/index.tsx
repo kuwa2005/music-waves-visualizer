@@ -314,7 +314,16 @@ const Home: NextPage = () => {
   
   // Canvas Animation
   useEffect(() => {
+    console.log('[index.tsx] Canvas Animation useEffect triggered', {
+      hasCanvas: !!canvasRef.current,
+      hasImage: !!imageCtx,
+      imageSrc: imageCtx?.src?.substring(0, 50) + '...',
+      mode,
+      rendererType
+    });
+
     if (!canvasRef.current) {
+      console.log('[index.tsx] No canvas ref, skipping');
       return;
     }
 
@@ -326,6 +335,7 @@ const Home: NextPage = () => {
 
     // レンダラータイプに応じて描画関数を選択
     if (rendererType === 'webgl') {
+      console.log('[index.tsx] Starting WebGL renderer');
       // WebGLレンダラーは内部でrequestAnimationFrameを再帰呼び出しするため、一度呼び出すだけでOK
       drawBarsWebGL(
         canvasRef.current,
@@ -335,6 +345,7 @@ const Home: NextPage = () => {
         modeAdjustments
       );
     } else {
+      console.log('[index.tsx] Starting Canvas 2D renderer');
       // Canvas 2Dレンダラーも内部でrequestAnimationFrameを再帰呼び出しする
       reqIdRef.current = requestAnimationFrame(function () {
         return drawBars(
@@ -348,6 +359,7 @@ const Home: NextPage = () => {
     }
 
     return () => {
+      console.log('[index.tsx] Canvas Animation cleanup');
       // クリーンアップ：アニメーションを停止
       if (reqIdRef.current) {
         cancelAnimationFrame(reqIdRef.current);
