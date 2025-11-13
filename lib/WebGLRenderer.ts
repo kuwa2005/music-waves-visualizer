@@ -101,7 +101,7 @@ let latestAnalyser: AnalyserNode | null = null;
 let latestAdjustments: ModeAdjustments | undefined = undefined;
 
 // デバッグログ用フラグ
-const DEBUG_WEBGL = true;
+const DEBUG_WEBGL = false;
 
 function debugLog(message: string, data?: any) {
   if (DEBUG_WEBGL) {
