@@ -865,9 +865,15 @@ function drawMode2(
       const x2 = centerX + Math.cos(angle) * (radius + barLength);
       const y2 = centerY + Math.sin(angle) * (radius + barLength);
 
+      // Canvas.tsのctx.scale(0.5, 0.5)に合わせて座標を0.5倍
+      const scaledX1 = x1 * 0.5;
+      const scaledY1 = y1 * 0.5;
+      const scaledX2 = x2 * 0.5;
+      const scaledY2 = y2 * 0.5;
+
       // 変換を適用
-      const [tx1, ty1] = applyTransform(x1, y1, canvasWidth, canvasHeight, adj);
-      const [tx2, ty2] = applyTransform(x2, y2, canvasWidth, canvasHeight, adj);
+      const [tx1, ty1] = applyTransform(scaledX1, scaledY1, canvasWidth, canvasHeight, adj);
+      const [tx2, ty2] = applyTransform(scaledX2, scaledY2, canvasWidth, canvasHeight, adj);
 
       // 白色（rgba(255, 255, 255, 0.8)）
       drawLine(ctx, tx1, ty1, tx2, ty2, 1.0, 1.0, 1.0, 0.8, barWidth);
