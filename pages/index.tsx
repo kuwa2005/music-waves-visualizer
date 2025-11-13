@@ -851,101 +851,6 @@ const Home: NextPage = () => {
           </div>
         )}
 
-        {/* GPU情報パネル */}
-        <div className={styles.gpuPanel}>
-          <Accordion defaultExpanded>
-            <AccordionSummary expandIcon={<ExpandMore />}>
-              <Typography>GPU設定</Typography>
-            </AccordionSummary>
-            <AccordionDetails>
-              <Box sx={{ width: "100%", maxWidth: 800, margin: "0 auto" }}>
-                {/* GPU情報表示 */}
-                {gpuInfo && (
-                  <Box sx={{ mb: 3, p: 2, bgcolor: 'background.paper', borderRadius: 1 }}>
-                    <Typography variant="h6" gutterBottom>
-                      検出されたGPU
-                    </Typography>
-                    <Typography variant="body2" color="textSecondary" gutterBottom>
-                      {getGpuDisplayName(gpuInfo)}
-                    </Typography>
-                    <Box sx={{ mt: 1, display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                      <Typography variant="caption" sx={{
-                        px: 1,
-                        py: 0.5,
-                        bgcolor: gpuInfo.isWebGL2Supported ? 'success.main' : 'error.main',
-                        color: 'white',
-                        borderRadius: 1
-                      }}>
-                        WebGL2: {gpuInfo.isWebGL2Supported ? '対応' : '非対応'}
-                      </Typography>
-                      <Typography variant="caption" sx={{
-                        px: 1,
-                        py: 0.5,
-                        bgcolor: gpuInfo.isWebGPUSupported ? 'success.main' : 'warning.main',
-                        color: 'white',
-                        borderRadius: 1
-                      }}>
-                        WebGPU: {gpuInfo.isWebGPUSupported ? '対応' : '非対応'}
-                      </Typography>
-                      <Typography variant="caption" sx={{
-                        px: 1,
-                        py: 0.5,
-                        bgcolor: webCodecsSupported ? 'success.main' : 'warning.main',
-                        color: 'white',
-                        borderRadius: 1
-                      }}>
-                        WebCodecs: {webCodecsSupported ? '対応' : '非対応'}
-                      </Typography>
-                      {webCodecsSupported && hardwareEncoderSupport.h264 && (
-                        <Typography variant="caption" sx={{
-                          px: 1,
-                          py: 0.5,
-                          bgcolor: 'info.main',
-                          color: 'white',
-                          borderRadius: 1
-                        }}>
-                          H.264ハードウェアエンコード対応
-                        </Typography>
-                      )}
-                    </Box>
-                    <Typography variant="caption" color="textSecondary" sx={{ mt: 1, display: 'block' }}>
-                      GPUベンダー: {gpuInfo.vendorType === 'nvidia' ? 'NVIDIA' : gpuInfo.vendorType === 'intel' ? 'Intel' : gpuInfo.vendorType === 'amd' ? 'AMD' : gpuInfo.vendorType === 'apple' ? 'Apple' : '不明'}
-                    </Typography>
-                  </Box>
-                )}
-
-                {/* レンダラー選択 */}
-                <Box sx={{ mb: 2 }}>
-                  <Typography variant="body1" gutterBottom fontWeight={500}>
-                    レンダリングエンジン
-                  </Typography>
-                  <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 1 }}>
-                    WebGLを使用するとGPU加速により高速なレンダリングが可能です
-                  </Typography>
-                  <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
-                    <Button
-                      variant={rendererType === 'canvas2d' ? 'contained' : 'outlined'}
-                      onClick={() => setRendererType('canvas2d')}
-                      size="small"
-                    >
-                      Canvas 2D (互換性優先)
-                    </Button>
-                    <Button
-                      variant={rendererType === 'webgl' ? 'contained' : 'outlined'}
-                      onClick={() => setRendererType('webgl')}
-                      size="small"
-                      disabled={!gpuInfo?.isWebGLSupported}
-                    >
-                      WebGL (GPU加速)
-                      {gpuInfo && getRecommendedRenderer(gpuInfo) === 'webgl' && ' 🎯推奨'}
-                    </Button>
-                  </Box>
-                </Box>
-              </Box>
-            </AccordionDetails>
-          </Accordion>
-        </div>
-
         <div className={styles.adjustments}>
           <Accordion>
             <AccordionSummary expandIcon={<ExpandMore />}>
@@ -1153,6 +1058,103 @@ const Home: NextPage = () => {
                   クリア
                 </Button>
               </Typography>
+            </Box>
+          </AccordionDetails>
+        </Accordion>
+      </div>
+
+      {/* GPU設定パネル */}
+      <div className={styles.developerPanel}>
+        <Accordion>
+          <AccordionSummary expandIcon={<ExpandMore />}>
+            <Typography variant="subtitle2" color="primary">
+              GPU設定
+            </Typography>
+          </AccordionSummary>
+          <AccordionDetails>
+            <Box sx={{ width: "100%", maxWidth: 800, margin: "0 auto" }}>
+              {/* GPU情報表示 */}
+              {gpuInfo && (
+                <Box sx={{ mb: 3, p: 2, bgcolor: 'background.paper', borderRadius: 1 }}>
+                  <Typography variant="h6" gutterBottom>
+                    検出されたGPU
+                  </Typography>
+                  <Typography variant="body2" color="textSecondary" gutterBottom>
+                    {getGpuDisplayName(gpuInfo)}
+                  </Typography>
+                  <Box sx={{ mt: 1, display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                    <Typography variant="caption" sx={{
+                      px: 1,
+                      py: 0.5,
+                      bgcolor: gpuInfo.isWebGL2Supported ? 'success.main' : 'error.main',
+                      color: 'white',
+                      borderRadius: 1
+                    }}>
+                      WebGL2: {gpuInfo.isWebGL2Supported ? '対応' : '非対応'}
+                    </Typography>
+                    <Typography variant="caption" sx={{
+                      px: 1,
+                      py: 0.5,
+                      bgcolor: gpuInfo.isWebGPUSupported ? 'success.main' : 'warning.main',
+                      color: 'white',
+                      borderRadius: 1
+                    }}>
+                      WebGPU: {gpuInfo.isWebGPUSupported ? '対応' : '非対応'}
+                    </Typography>
+                    <Typography variant="caption" sx={{
+                      px: 1,
+                      py: 0.5,
+                      bgcolor: webCodecsSupported ? 'success.main' : 'warning.main',
+                      color: 'white',
+                      borderRadius: 1
+                    }}>
+                      WebCodecs: {webCodecsSupported ? '対応' : '非対応'}
+                    </Typography>
+                    {webCodecsSupported && hardwareEncoderSupport.h264 && (
+                      <Typography variant="caption" sx={{
+                        px: 1,
+                        py: 0.5,
+                        bgcolor: 'info.main',
+                        color: 'white',
+                        borderRadius: 1
+                      }}>
+                        H.264ハードウェアエンコード対応
+                      </Typography>
+                    )}
+                  </Box>
+                  <Typography variant="caption" color="textSecondary" sx={{ mt: 1, display: 'block' }}>
+                    GPUベンダー: {gpuInfo.vendorType === 'nvidia' ? 'NVIDIA' : gpuInfo.vendorType === 'intel' ? 'Intel' : gpuInfo.vendorType === 'amd' ? 'AMD' : gpuInfo.vendorType === 'apple' ? 'Apple' : '不明'}
+                  </Typography>
+                </Box>
+              )}
+
+              {/* レンダラー選択 */}
+              <Box sx={{ mb: 2 }}>
+                <Typography variant="body1" gutterBottom fontWeight={500}>
+                  レンダリングエンジン
+                </Typography>
+                <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 1 }}>
+                  WebGLを使用するとGPU加速により高速なレンダリングが可能です
+                </Typography>
+                <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
+                  <Button
+                    variant={rendererType === 'canvas2d' ? 'contained' : 'outlined'}
+                    onClick={() => setRendererType('canvas2d')}
+                    size="small"
+                  >
+                    Canvas 2D (互換性優先)
+                  </Button>
+                  <Button
+                    variant={rendererType === 'webgl' ? 'contained' : 'outlined'}
+                    onClick={() => setRendererType('webgl')}
+                    size="small"
+                    disabled={!gpuInfo?.isWebGLSupported}
+                  >
+                    WebGL (GPU加速)
+                    {gpuInfo && getRecommendedRenderer(gpuInfo) === 'webgl' && ' 🎯推奨'}
+                  </Button>
+                </Box>
+              </Box>
             </Box>
           </AccordionDetails>
         </Accordion>
