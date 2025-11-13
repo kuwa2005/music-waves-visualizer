@@ -303,16 +303,33 @@ const Home: NextPage = () => {
   // Canvas サイズ設定（canvasSize または rendererType が変更されたときに実行）
   // useLayoutEffectを使用してDOM更新直後にサイズを設定
   useLayoutEffect(() => {
+    console.log('[index.tsx] useLayoutEffect START', {
+      hasCanvas: !!canvasRef.current,
+      rendererType,
+      canvasSize
+    });
+
     if (!canvasRef.current) {
+      console.log('[index.tsx] No canvas ref in useLayoutEffect');
       return;
     }
+
     const dimensions = getCanvasDimensions(canvasSize);
+    console.log('[index.tsx] Setting canvas size', {
+      before: { width: canvasRef.current.width, height: canvasRef.current.height },
+      dimensions
+    });
+
     canvasRef.current.width = dimensions.width;
     canvasRef.current.height = dimensions.height;
+
+    console.log('[index.tsx] Canvas size set', {
+      after: { width: canvasRef.current.width, height: canvasRef.current.height }
+    });
+
     // キャンバスサイズ変更時に画像キャッシュをクリア（両方のレンダラー）
     clearImageCache();
     clearWebGLImageCache();
-    console.log('[index.tsx] Canvas size set', dimensions);
   }, [canvasSize, rendererType]);
 
   // Canvas Animation
