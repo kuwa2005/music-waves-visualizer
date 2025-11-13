@@ -26,7 +26,7 @@ import {
 } from "@mui/icons-material";
 import { CustomSnackbar } from "../components/CustomSnackbar";
 import { drawBars, clearImageCache, getFPS } from "../lib/Canvas";
-import { drawBarsWebGL, getFPSWebGL, cleanupWebGL } from "../lib/WebGLRenderer";
+import { drawBarsWebGL, getFPSWebGL, cleanupWebGL, stopWebGLAnimation } from "../lib/WebGLRenderer";
 import { getGpuInfo, getGpuDisplayName, getRecommendedRenderer, type GpuInfo } from "../lib/GpuDetector";
 import { isWebCodecsSupported, checkHardwareEncoderSupport, getBestEncodingMethod } from "../lib/WebCodecsEncoder";
 import { generateMp4Video } from "../lib/Ffmpeg";
@@ -318,18 +318,24 @@ const Home: NextPage = () => {
       return;
     }
 
+    // 前のアニメーションを停止
+    if (reqIdRef.current) {
+      cancelAnimationFrame(reqIdRef.current);
+    }
+    stopWebGLAnimation();
+
     // レンダラータイプに応じて描画関数を選択
     if (rendererType === 'webgl') {
-      reqIdRef.current = requestAnimationFrame(function () {
-        return drawBarsWebGL(
-          canvasRef.current,
-          imageCtx,
-          mode,
-          analyserRef.current,
-          modeAdjustments
-        );
-      });
+      // WebGLレンダラーは内部でrequestAnimationFrameを再帰呼び出しするため、一度呼び出すだけでOK
+      drawBarsWebGL(
+        canvasRef.current,
+        imageCtx,
+        mode,
+        analyserRef.current,
+        modeAdjustments
+      );
     } else {
+      // Canvas 2Dレンダラーも内部でrequestAnimationFrameを再帰呼び出しする
       reqIdRef.current = requestAnimationFrame(function () {
         return drawBars(
           canvasRef.current,
@@ -342,11 +348,12 @@ const Home: NextPage = () => {
     }
 
     return () => {
-      cancelAnimationFrame(reqIdRef.current);
-      // WebGLからCanvas 2Dに切り替える時はクリーンアップ
-      if (rendererType === 'canvas2d') {
-        cleanupWebGL();
+      // クリーンアップ：アニメーションを停止
+      if (reqIdRef.current) {
+        cancelAnimationFrame(reqIdRef.current);
+        reqIdRef.current = null;
       }
+      stopWebGLAnimation();
     };
   }, [imageCtx, mode, modeAdjustments, rendererType]);
 

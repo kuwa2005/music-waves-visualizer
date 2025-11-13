@@ -54,6 +54,9 @@ let fpsCounter = 0;
 let fpsLastTime = performance.now();
 let currentFPS = 0;
 
+// アニメーションフレームID管理
+let animationFrameId: number | null = null;
+
 /**
  * WebGLコンテキストを初期化
  */
@@ -518,7 +521,8 @@ export const drawBarsWebGL = (
     fpsLastTime = now;
   }
 
-  requestAnimationFrame(() => {
+  // Canvas.tsのdrawBars関数と同じパターン：再帰的にrequestAnimationFrameを呼び出す
+  animationFrameId = requestAnimationFrame(() => {
     drawBarsWebGL(canvas, imageCtx, mode, analyser, adjustments);
   });
 };
@@ -730,9 +734,25 @@ export function getFPSWebGL(): number {
 }
 
 /**
+ * WebGLアニメーションを停止
+ */
+export function stopWebGLAnimation(): void {
+  if (animationFrameId !== null) {
+    cancelAnimationFrame(animationFrameId);
+    animationFrameId = null;
+  }
+}
+
+/**
  * WebGLコンテキストをクリーンアップ
  */
 export function cleanupWebGL(): void {
+  // アニメーションフレームをキャンセル
+  if (animationFrameId !== null) {
+    cancelAnimationFrame(animationFrameId);
+    animationFrameId = null;
+  }
+
   if (glContext) {
     const { gl, program, positionBuffer, colorBuffer, imageTexture } = glContext;
     gl.deleteProgram(program);
