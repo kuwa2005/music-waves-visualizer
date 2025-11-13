@@ -510,6 +510,118 @@ function drawRect(
 }
 
 /**
+ * WebGLでグラデーション付き矩形を描画
+ */
+function drawRectGradient(
+  ctx: WebGLRendererContext,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  r1: number,
+  g1: number,
+  b1: number,
+  a1: number,
+  r2: number,
+  g2: number,
+  b2: number,
+  a2: number
+): void {
+  const { gl, positionBuffer, colorBuffer, positionLocation, colorLocation } = ctx;
+
+  // 矩形の頂点（2つの三角形）
+  const x1 = x;
+  const y1 = y;
+  const x2 = x + width;
+  const y2 = y + height;
+
+  const positions = new Float32Array([
+    x1, y1,
+    x2, y1,
+    x1, y2,
+    x1, y2,
+    x2, y1,
+    x2, y2,
+  ]);
+
+  // 上側の頂点(y1)には色1、下側の頂点(y2)には色2
+  const colors = new Float32Array([
+    r1, g1, b1, a1,  // 左上
+    r1, g1, b1, a1,  // 右上
+    r2, g2, b2, a2,  // 左下
+    r2, g2, b2, a2,  // 左下(2つ目の三角形)
+    r1, g1, b1, a1,  // 右上(2つ目の三角形)
+    r2, g2, b2, a2,  // 右下
+  ]);
+
+  // 位置バッファを設定
+  gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+  gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(positionLocation);
+  gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
+
+  // 色バッファを設定
+  gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+  gl.bufferData(gl.ARRAY_BUFFER, colors, gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(colorLocation);
+  gl.vertexAttribPointer(colorLocation, 4, gl.FLOAT, false, 0, 0);
+
+  // 描画
+  gl.drawArrays(gl.TRIANGLES, 0, 6);
+}
+
+/**
+ * WebGLで多角形（塗りつぶし）を描画
+ */
+function drawPolygon(
+  ctx: WebGLRendererContext,
+  vertices: number[], // [x1, y1, x2, y2, x3, y3, ...]
+  r: number,
+  g: number,
+  b: number,
+  a: number
+): void {
+  const { gl, positionBuffer, colorBuffer, positionLocation, colorLocation } = ctx;
+
+  // 頂点数
+  const numVertices = vertices.length / 2;
+
+  // 三角形に分解（fan triangulation: 最初の頂点を中心に）
+  const positions: number[] = [];
+  const colors: number[] = [];
+
+  for (let i = 1; i < numVertices - 1; i++) {
+    // 三角形: 0, i, i+1
+    positions.push(vertices[0], vertices[1]);
+    positions.push(vertices[i * 2], vertices[i * 2 + 1]);
+    positions.push(vertices[(i + 1) * 2], vertices[(i + 1) * 2 + 1]);
+
+    // 各頂点に同じ色
+    for (let j = 0; j < 3; j++) {
+      colors.push(r, g, b, a);
+    }
+  }
+
+  const positionsArray = new Float32Array(positions);
+  const colorsArray = new Float32Array(colors);
+
+  // 位置バッファを設定
+  gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+  gl.bufferData(gl.ARRAY_BUFFER, positionsArray, gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(positionLocation);
+  gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
+
+  // 色バッファを設定
+  gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+  gl.bufferData(gl.ARRAY_BUFFER, colorsArray, gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(colorLocation);
+  gl.vertexAttribPointer(colorLocation, 4, gl.FLOAT, false, 0, 0);
+
+  // 描画
+  gl.drawArrays(gl.TRIANGLES, 0, positions.length / 2);
+}
+
+/**
  * WebGLで線を描画
  */
 function drawLine(
@@ -846,38 +958,37 @@ function drawMode2(
   canvasHeight: number,
   adj: ModeAdjustments
 ): void {
-  const centerX = canvasWidth / 2;
-  const centerY = canvasHeight / 2;
   const bass = Math.floor(bufferData[1]); // 1Hz Freq
   const baseRadius = 0.2 * canvasWidth <= 200 ? 0.2 * canvasWidth : 200;
-  const radius = bass * 0.25 + baseRadius;
+  const radius = -(bass * 0.25 + baseRadius);  // radius is negative (matching Canvas.ts)
   const barWidth = canvasWidth <= 450 ? 2 : 3;
+
+  // User adjustment offsets in pixels
+  const offsetXPixels = (canvasWidth * adj.offsetX) / 100;
+  const offsetYPixels = (canvasHeight * adj.offsetY) / 100;
 
   for (let i = 0; i < 256; i++) {
     const value = bufferData[i];
-    if (value >= 0) {
-      const angle = i * ((180 / 128) * Math.PI / 180);
-      const barLength = value;
+    const angle = i * ((180 / 128) * Math.PI / 180);
 
-      // 回転した位置を計算
-      const x1 = centerX + Math.cos(angle) * radius;
-      const y1 = centerY + Math.sin(angle) * radius;
-      const x2 = centerX + Math.cos(angle) * (radius + barLength);
-      const y2 = centerY + Math.sin(angle) * (radius + barLength);
+    // Canvas.ts draws bars at (0, radius) with rotation
+    // After rotation by angle: point (0, radius) becomes (-radius*sin(angle), radius*cos(angle))
+    const localX1 = -radius * Math.sin(angle);
+    const localY1 = radius * Math.cos(angle);
+    const localX2 = -(radius - value) * Math.sin(angle);
+    const localY2 = (radius - value) * Math.cos(angle);
 
-      // Canvas.tsのctx.scale(0.5, 0.5)に合わせて座標を0.5倍
-      const scaledX1 = x1 * 0.5;
-      const scaledY1 = y1 * 0.5;
-      const scaledX2 = x2 * 0.5;
-      const scaledY2 = y2 * 0.5;
+    // Apply full Canvas.ts transformation:
+    // After user adjustments + scale(0.5,0.5) + translate(canvasWidth, canvasHeight):
+    // screen_x = local_x * scaleX * 0.5 + canvasWidth/2 + scaleX * offsetXPixels
+    // screen_y = local_y * scaleY * 0.5 + canvasHeight/2 + scaleY * offsetYPixels
+    const tx1 = localX1 * adj.scaleX * 0.5 + canvasWidth / 2 + adj.scaleX * offsetXPixels;
+    const ty1 = localY1 * adj.scaleY * 0.5 + canvasHeight / 2 + adj.scaleY * offsetYPixels;
+    const tx2 = localX2 * adj.scaleX * 0.5 + canvasWidth / 2 + adj.scaleX * offsetXPixels;
+    const ty2 = localY2 * adj.scaleY * 0.5 + canvasHeight / 2 + adj.scaleY * offsetYPixels;
 
-      // 変換を適用
-      const [tx1, ty1] = applyTransform(scaledX1, scaledY1, canvasWidth, canvasHeight, adj);
-      const [tx2, ty2] = applyTransform(scaledX2, scaledY2, canvasWidth, canvasHeight, adj);
-
-      // 白色（rgba(255, 255, 255, 0.8)）
-      drawLine(ctx, tx1, ty1, tx2, ty2, 1.0, 1.0, 1.0, 0.8, barWidth);
-    }
+    // 白色（rgba(255, 255, 255, 0.8)）
+    drawLine(ctx, tx1, ty1, tx2, ty2, 1.0, 1.0, 1.0, 0.8, barWidth);
   }
 }
 
@@ -896,7 +1007,12 @@ function drawMode3(
   for (let i = 0; i < barsLength; i++) {
     const barHeight = bufferData[i] * 2;
     const hue = (i / barsLength) * 360;
-    const [r, g, b] = hslToRgb(hue, 1.0, 0.5);
+
+    // Canvas.tsと同じグラデーション: 上側と下側で色を変える
+    // 上側: hsla(hue, 100%, 50%, 0.8)
+    const [r1, g1, b1] = hslToRgb(hue, 1.0, 0.5);
+    // 下側: hsla(hue+60, 100%, 70%, 0.8)
+    const [r2, g2, b2] = hslToRgb(hue + 60, 1.0, 0.7);
 
     const x = i * barWidth;
     const y = centerY - barHeight / 2;
@@ -908,8 +1024,8 @@ function drawMode3(
     const transformedWidth = x2 - x1;
     const transformedHeight = y2 - y1;
 
-    // 上下対称に描画
-    drawRect(ctx, x1, y1, transformedWidth, transformedHeight, r, g, b, 0.8);
+    // グラデーション付きで描画
+    drawRectGradient(ctx, x1, y1, transformedWidth, transformedHeight, r1, g1, b1, 0.8, r2, g2, b2, 0.8);
   }
 }
 
@@ -998,28 +1114,35 @@ function drawMode6(
     const value = bufferData[Math.floor((i / barsLength) * bufferLength)];
     const barHeight = value * 1.5;
     const x = i * barWidth;
+    const offset = (i - barsLength / 2) * 2;
 
-    // 奥行き効果のための色変化
-    const brightness = 0.3 + (i / barsLength) * 0.7;
-    const r = 0.2 + brightness * 0.8;
-    const g = 0.5 + brightness * 0.5;
-    const b = 1.0;
+    // Canvas.tsと同じ色: グラデーションの中間色を使用
+    const hue = (i / barsLength) * 360;
+    const [r, g, b] = hslToRgb(hue, 1.0, 0.5);
 
-    // メインバーの変換
-    const y = canvasHeight - barHeight;
-    const [x1, y1] = applyTransform(x, y, canvasWidth, canvasHeight, adj);
-    const [x2, y2] = applyTransform(x + barWidth - 1, y + barHeight, canvasWidth, canvasHeight, adj);
-    const transformedWidth = x2 - x1;
-    const transformedHeight = y2 - y1;
-    drawRect(ctx, x1, y1, transformedWidth, transformedHeight, r, g, b, 0.8);
+    // Canvas.tsの平行四辺形の頂点:
+    // (x, canvasHeight)
+    // (x + barWidth, canvasHeight)
+    // (x + barWidth + offset * 0.3, canvasHeight - barHeight)
+    // (x + offset * 0.3, canvasHeight - barHeight)
+    const v1x = x;
+    const v1y = canvasHeight;
+    const v2x = x + barWidth;
+    const v2y = canvasHeight;
+    const v3x = x + barWidth + offset * 0.3;
+    const v3y = canvasHeight - barHeight;
+    const v4x = x + offset * 0.3;
+    const v4y = canvasHeight - barHeight;
 
-    // 3D効果（影）の変換
-    const shadowOffset = 3;
-    const [sx1, sy1] = applyTransform(x + shadowOffset, y + shadowOffset, canvasWidth, canvasHeight, adj);
-    const [sx2, sy2] = applyTransform(x + barWidth - 1 + shadowOffset, y + barHeight + shadowOffset, canvasWidth, canvasHeight, adj);
-    const shadowWidth = sx2 - sx1;
-    const shadowHeight = sy2 - sy1;
-    drawRect(ctx, sx1, sy1, shadowWidth, shadowHeight, r * 0.4, g * 0.4, b * 0.4, 0.3);
+    // 各頂点に変換を適用
+    const [t1x, t1y] = applyTransform(v1x, v1y, canvasWidth, canvasHeight, adj);
+    const [t2x, t2y] = applyTransform(v2x, v2y, canvasWidth, canvasHeight, adj);
+    const [t3x, t3y] = applyTransform(v3x, v3y, canvasWidth, canvasHeight, adj);
+    const [t4x, t4y] = applyTransform(v4x, v4y, canvasWidth, canvasHeight, adj);
+
+    // 平行四辺形を描画
+    const vertices = [t1x, t1y, t2x, t2y, t3x, t3y, t4x, t4y];
+    drawPolygon(ctx, vertices, r, g, b, 0.8);
   }
 }
 
