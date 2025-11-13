@@ -955,6 +955,7 @@ const Home: NextPage = () => {
 
         <div className={styles.canvasWrapper}>
           <canvas
+            key={rendererType}
             className={styles.canvas}
             ref={canvasRef}
             data-size={canvasSize}
