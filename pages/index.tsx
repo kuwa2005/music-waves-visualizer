@@ -300,18 +300,19 @@ const Home: NextPage = () => {
     initGpu();
   }, []);
 
-  // Update canvas size when canvasSize changes or on mount
+  // Canvas サイズ設定（canvasSize または rendererType が変更されたときに実行）
   useEffect(() => {
-    if (canvasRef.current) {
-      const dimensions = getCanvasDimensions(canvasSize);
-      canvasRef.current.width = dimensions.width;
-      canvasRef.current.height = dimensions.height;
-      // キャンバスサイズ変更時に画像キャッシュをクリア
-      clearImageCache();
+    if (!canvasRef.current) {
+      return;
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canvasSize]);
-  
+    const dimensions = getCanvasDimensions(canvasSize);
+    canvasRef.current.width = dimensions.width;
+    canvasRef.current.height = dimensions.height;
+    // キャンバスサイズ変更時に画像キャッシュをクリア
+    clearImageCache();
+    console.log('[index.tsx] Canvas size set', dimensions);
+  }, [canvasSize, rendererType]);
+
   // Canvas Animation
   useEffect(() => {
     console.log('[index.tsx] Canvas Animation useEffect triggered', {
