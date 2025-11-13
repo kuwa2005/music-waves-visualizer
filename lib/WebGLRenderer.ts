@@ -790,14 +790,24 @@ function drawMode0(
   adj: ModeAdjustments
 ): void {
   const barsLength = 128;
-  const barWidth = (canvasWidth / barsLength) * adj.scaleX;
+  const barWidth = canvasWidth / barsLength;
   let barX = 0;
 
   for (let i = 0; i < barsLength; i++) {
-    const barHeight = bufferData[i] * adj.scaleY;
+    const barHeight = bufferData[i];
+    const y = canvasHeight - barHeight;
+
+    // 4つの角の座標を変換
+    const [x1, y1] = applyTransform(barX, y, canvasWidth, canvasHeight, adj);
+    const [x2, y2] = applyTransform(barX + barWidth, y + barHeight, canvasWidth, canvasHeight, adj);
+
+    // 変換後のサイズを計算
+    const transformedWidth = x2 - x1;
+    const transformedHeight = y2 - y1;
+
     // 白色（rgba(255, 255, 255, 0.8)）
-    drawRect(ctx, barX, canvasHeight - barHeight, barWidth, barHeight, 1.0, 1.0, 1.0, 0.8);
-    barX += canvasWidth / barsLength;
+    drawRect(ctx, x1, y1, transformedWidth, transformedHeight, 1.0, 1.0, 1.0, 0.8);
+    barX += barWidth;
   }
 }
 
@@ -819,8 +829,12 @@ function drawMode1(
     const y1 = centerY - (bufferData[i] - 128) * scale;
     const y2 = centerY - (bufferData[i + 1] - 128) * scale;
 
+    // 変換を適用
+    const [tx1, ty1] = applyTransform(x1, y1, canvasWidth, canvasHeight, adj);
+    const [tx2, ty2] = applyTransform(x2, y2, canvasWidth, canvasHeight, adj);
+
     // 白色（rgba(255, 255, 255, 0.8)）
-    drawLine(ctx, x1, y1, x2, y2, 1.0, 1.0, 1.0, 0.8, 2);
+    drawLine(ctx, tx1, ty1, tx2, ty2, 1.0, 1.0, 1.0, 0.8, 2);
   }
 }
 
@@ -851,8 +865,12 @@ function drawMode2(
       const x2 = centerX + Math.cos(angle) * (radius + barLength);
       const y2 = centerY + Math.sin(angle) * (radius + barLength);
 
+      // 変換を適用
+      const [tx1, ty1] = applyTransform(x1, y1, canvasWidth, canvasHeight, adj);
+      const [tx2, ty2] = applyTransform(x2, y2, canvasWidth, canvasHeight, adj);
+
       // 白色（rgba(255, 255, 255, 0.8)）
-      drawLine(ctx, x1, y1, x2, y2, 1.0, 1.0, 1.0, 0.8, barWidth);
+      drawLine(ctx, tx1, ty1, tx2, ty2, 1.0, 1.0, 1.0, 0.8, barWidth);
     }
   }
 }
@@ -874,8 +892,18 @@ function drawMode3(
     const hue = (i / barsLength) * 360;
     const [r, g, b] = hslToRgb(hue, 1.0, 0.5);
 
+    const x = i * barWidth;
+    const y = centerY - barHeight / 2;
+
+    // 変換を適用
+    const [x1, y1] = applyTransform(x, y, canvasWidth, canvasHeight, adj);
+    const [x2, y2] = applyTransform(x + barWidth - 1, y + barHeight, canvasWidth, canvasHeight, adj);
+
+    const transformedWidth = x2 - x1;
+    const transformedHeight = y2 - y1;
+
     // 上下対称に描画
-    drawRect(ctx, i * barWidth, centerY - barHeight / 2, barWidth - 1, barHeight, r, g, b, 0.8);
+    drawRect(ctx, x1, y1, transformedWidth, transformedHeight, r, g, b, 0.8);
   }
 }
 
@@ -904,9 +932,14 @@ function drawMode4(
 
       const x = col * dotSize + dotSize / 2;
       const y = row * dotSize + dotSize / 2;
-      const radius = dotSize / 3;
 
-      drawCircle(ctx, x, y, radius, r, g, b, opacity);
+      // 変換を適用
+      const [tx, ty] = applyTransform(x, y, canvasWidth, canvasHeight, adj);
+
+      // スケールに応じて半径も調整
+      const radius = (dotSize / 3) * Math.min(adj.scaleX, adj.scaleY);
+
+      drawCircle(ctx, tx, ty, radius, r, g, b, opacity);
     }
   }
 }
@@ -929,12 +962,17 @@ function drawMode5(
     const y1 = centerY - (bufferData[i] - 128) * scale;
     const y2 = centerY - (bufferData[i + 1] - 128) * scale;
 
-    // 上側（通常）
-    drawLine(ctx, x1, y1, x2, y2, 1.0, 1.0, 1.0, 0.8, 2);
-    // 下側（反転）
+    // 上側（通常）の変換
+    const [tx1, ty1] = applyTransform(x1, y1, canvasWidth, canvasHeight, adj);
+    const [tx2, ty2] = applyTransform(x2, y2, canvasWidth, canvasHeight, adj);
+    drawLine(ctx, tx1, ty1, tx2, ty2, 1.0, 1.0, 1.0, 0.8, 2);
+
+    // 下側（反転）の変換
     const y1Mirror = canvasHeight - y1;
     const y2Mirror = canvasHeight - y2;
-    drawLine(ctx, x1, y1Mirror, x2, y2Mirror, 1.0, 1.0, 1.0, 0.8, 2);
+    const [tx1m, ty1m] = applyTransform(x1, y1Mirror, canvasWidth, canvasHeight, adj);
+    const [tx2m, ty2m] = applyTransform(x2, y2Mirror, canvasWidth, canvasHeight, adj);
+    drawLine(ctx, tx1m, ty1m, tx2m, ty2m, 1.0, 1.0, 1.0, 0.8, 2);
   }
 }
 
@@ -952,9 +990,8 @@ function drawMode6(
 
   for (let i = 0; i < barsLength; i++) {
     const value = bufferData[Math.floor((i / barsLength) * bufferLength)];
-    const barHeight = value * 1.5 * adj.scaleY;
+    const barHeight = value * 1.5;
     const x = i * barWidth;
-    const offset = (i - barsLength / 2) * 2;
 
     // 奥行き効果のための色変化
     const brightness = 0.3 + (i / barsLength) * 0.7;
@@ -962,12 +999,21 @@ function drawMode6(
     const g = 0.5 + brightness * 0.5;
     const b = 1.0;
 
-    // メインバー
-    drawRect(ctx, x, canvasHeight - barHeight, barWidth - 1, barHeight, r, g, b, 0.8);
+    // メインバーの変換
+    const y = canvasHeight - barHeight;
+    const [x1, y1] = applyTransform(x, y, canvasWidth, canvasHeight, adj);
+    const [x2, y2] = applyTransform(x + barWidth - 1, y + barHeight, canvasWidth, canvasHeight, adj);
+    const transformedWidth = x2 - x1;
+    const transformedHeight = y2 - y1;
+    drawRect(ctx, x1, y1, transformedWidth, transformedHeight, r, g, b, 0.8);
 
-    // 3D効果（影）
+    // 3D効果（影）の変換
     const shadowOffset = 3;
-    drawRect(ctx, x + shadowOffset, canvasHeight - barHeight + shadowOffset, barWidth - 1, barHeight, r * 0.4, g * 0.4, b * 0.4, 0.3);
+    const [sx1, sy1] = applyTransform(x + shadowOffset, y + shadowOffset, canvasWidth, canvasHeight, adj);
+    const [sx2, sy2] = applyTransform(x + barWidth - 1 + shadowOffset, y + barHeight + shadowOffset, canvasWidth, canvasHeight, adj);
+    const shadowWidth = sx2 - sx1;
+    const shadowHeight = sy2 - sy1;
+    drawRect(ctx, sx1, sy1, shadowWidth, shadowHeight, r * 0.4, g * 0.4, b * 0.4, 0.3);
   }
 }
 
@@ -991,6 +1037,37 @@ function hueToRgb(p: number, q: number, t: number): number {
   if (t < 1 / 2) return q;
   if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
   return p;
+}
+
+/**
+ * 調整パラメータを適用して座標を変換
+ * Canvas 2Dのtranslate/scaleと同じ効果を実現
+ */
+function applyTransform(
+  x: number,
+  y: number,
+  canvasWidth: number,
+  canvasHeight: number,
+  adj: ModeAdjustments
+): [number, number] {
+  // offsetをピクセルに変換（パーセンテージ → ピクセル）
+  const offsetXPixels = (canvasWidth * adj.offsetX) / 100;
+  const offsetYPixels = (canvasHeight * adj.offsetY) / 100;
+
+  // Canvas 2Dと同じ変換を適用：
+  // 1. 原点を中心に移動
+  let tx = x - canvasWidth / 2;
+  let ty = y - canvasHeight / 2;
+
+  // 2. スケール適用
+  tx *= adj.scaleX;
+  ty *= adj.scaleY;
+
+  // 3. 原点を戻してオフセット適用
+  tx += canvasWidth / 2 + offsetXPixels;
+  ty += canvasHeight / 2 + offsetYPixels;
+
+  return [tx, ty];
 }
 
 /**
