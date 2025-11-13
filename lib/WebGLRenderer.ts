@@ -1090,6 +1090,23 @@ export function stopWebGLAnimation(): void {
 }
 
 /**
+ * WebGLの画像キャッシュをクリア
+ */
+export function clearWebGLImageCache(): void {
+  if (glContext) {
+    if (glContext.imageTexture) {
+      glContext.gl.deleteTexture(glContext.imageTexture);
+      glContext.imageTexture = null;
+    }
+    glContext.imageCache = {
+      image: null,
+      width: 0,
+      height: 0,
+    };
+  }
+}
+
+/**
  * WebGLコンテキストをクリーンアップ
  */
 export function cleanupWebGL(): void {

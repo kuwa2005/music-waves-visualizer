@@ -376,6 +376,9 @@ export const drawBars = (
   // 調整パラメータの適用を解除
   ctx.restore();
 
+  // 最初のsave()に対応するrestore()
+  ctx.restore();
+
   // FPS測定
   fpsCounter++;
   const currentTime = performance.now();

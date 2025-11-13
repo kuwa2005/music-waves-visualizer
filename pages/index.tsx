@@ -2,7 +2,7 @@ import "./@types/window.d";
 import type { NextPage } from "next";
 import styles from "../styles/Home.module.scss";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useLayoutEffect } from "react";
 import {
   Button,
   MenuItem,
@@ -26,7 +26,7 @@ import {
 } from "@mui/icons-material";
 import { CustomSnackbar } from "../components/CustomSnackbar";
 import { drawBars, clearImageCache, getFPS, stopCanvas2DAnimation } from "../lib/Canvas";
-import { drawBarsWebGL, getFPSWebGL, cleanupWebGL, stopWebGLAnimation } from "../lib/WebGLRenderer";
+import { drawBarsWebGL, getFPSWebGL, cleanupWebGL, stopWebGLAnimation, clearWebGLImageCache } from "../lib/WebGLRenderer";
 import { getGpuInfo, getGpuDisplayName, getRecommendedRenderer, type GpuInfo } from "../lib/GpuDetector";
 import { isWebCodecsSupported, checkHardwareEncoderSupport, getBestEncodingMethod } from "../lib/WebCodecsEncoder";
 import { generateMp4Video } from "../lib/Ffmpeg";
@@ -301,15 +301,17 @@ const Home: NextPage = () => {
   }, []);
 
   // Canvas サイズ設定（canvasSize または rendererType が変更されたときに実行）
-  useEffect(() => {
+  // useLayoutEffectを使用してDOM更新直後にサイズを設定
+  useLayoutEffect(() => {
     if (!canvasRef.current) {
       return;
     }
     const dimensions = getCanvasDimensions(canvasSize);
     canvasRef.current.width = dimensions.width;
     canvasRef.current.height = dimensions.height;
-    // キャンバスサイズ変更時に画像キャッシュをクリア
+    // キャンバスサイズ変更時に画像キャッシュをクリア（両方のレンダラー）
     clearImageCache();
+    clearWebGLImageCache();
     console.log('[index.tsx] Canvas size set', dimensions);
   }, [canvasSize, rendererType]);
 
