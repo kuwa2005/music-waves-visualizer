@@ -90,6 +90,9 @@ let currentFPS = 0;
 // アニメーションフレームID管理
 let animationFrameId: number | null = null;
 
+// アニメーション実行中フラグ
+let isAnimating = false;
+
 // 最新のパラメータを保持（再帰呼び出し時に使用）
 let latestCanvas: HTMLCanvasElement | null = null;
 let latestImageCtx: HTMLImageElement | null = null;
@@ -586,31 +589,19 @@ function drawCircle(
 }
 
 /**
- * WebGLでスペクトラムを描画（メイン関数）
+ * アニメーションループの本体
  */
-export const drawBarsWebGL = (
-  canvas: HTMLCanvasElement,
-  imageCtx: HTMLImageElement,
-  mode: number,
-  analyser: AnalyserNode,
-  adjustments?: ModeAdjustments
-): void => {
-  // 最新のパラメータを保存（再帰呼び出し時に使用）
-  latestCanvas = canvas;
-  latestImageCtx = imageCtx;
-  latestMode = mode;
-  latestAnalyser = analyser;
-  latestAdjustments = adjustments;
-
-  // WebGLコンテキストを初期化（初回のみ）
-  if (!glContext || glContext.gl.canvas !== canvas) {
-    glContext = initWebGL(canvas);
-  }
-
-  if (!glContext) {
-    console.error('Failed to initialize WebGL, falling back to Canvas 2D');
+function renderFrame(): void {
+  if (!latestCanvas || !latestAnalyser || !glContext) {
+    isAnimating = false;
     return;
   }
+
+  const canvas = latestCanvas;
+  const imageCtx = latestImageCtx;
+  const mode = latestMode;
+  const analyser = latestAnalyser;
+  const adjustments = latestAdjustments;
 
   const { gl, program, resolutionLocation } = glContext;
   const canvasWidth = canvas.width;
@@ -692,13 +683,48 @@ export const drawBarsWebGL = (
     fpsLastTime = now;
   }
 
-  // Canvas.tsのdrawBars関数と同じパターン：再帰的にrequestAnimationFrameを呼び出す
-  // 最新のパラメータを使用することで、モード変更時に正しく更新される
-  animationFrameId = requestAnimationFrame(() => {
-    if (latestCanvas && latestAnalyser) {
-      drawBarsWebGL(latestCanvas, latestImageCtx, latestMode, latestAnalyser, latestAdjustments);
-    }
-  });
+  // 次のフレームをスケジュール
+  animationFrameId = requestAnimationFrame(renderFrame);
+}
+
+/**
+ * WebGLでスペクトラムを描画（メイン関数）
+ */
+export const drawBarsWebGL = (
+  canvas: HTMLCanvasElement,
+  imageCtx: HTMLImageElement,
+  mode: number,
+  analyser: AnalyserNode,
+  adjustments?: ModeAdjustments
+): void => {
+  // 最新のパラメータを保存（再帰呼び出し時に使用）
+  latestCanvas = canvas;
+  latestImageCtx = imageCtx;
+  latestMode = mode;
+  latestAnalyser = analyser;
+  latestAdjustments = adjustments;
+
+  // 既にアニメーション中の場合は、パラメータだけ更新して終了
+  if (isAnimating) {
+    return;
+  }
+
+  // アニメーション開始
+  isAnimating = true;
+
+  // WebGLコンテキストを初期化（初回のみ）
+  if (!glContext || glContext.gl.canvas !== canvas) {
+    glContext = initWebGL(canvas);
+  }
+
+  if (!glContext) {
+    console.error('Failed to initialize WebGL, falling back to Canvas 2D');
+    isAnimating = false;
+    return;
+  }
+
+  // 最初のフレームをレンダリング
+  renderFrame();
 };
 
 // モード0: 周波数バー
@@ -915,6 +941,7 @@ export function stopWebGLAnimation(): void {
     cancelAnimationFrame(animationFrameId);
     animationFrameId = null;
   }
+  isAnimating = false;
 }
 
 /**
@@ -926,6 +953,7 @@ export function cleanupWebGL(): void {
     cancelAnimationFrame(animationFrameId);
     animationFrameId = null;
   }
+  isAnimating = false;
 
   if (glContext) {
     const { gl, program, textureProgram, positionBuffer, colorBuffer, texCoordBuffer, imageTexture } = glContext;
