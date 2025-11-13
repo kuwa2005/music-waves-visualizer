@@ -5,7 +5,7 @@
 
 import type { ModeAdjustments } from './Canvas';
 
-// 頂点シェーダー（共通）
+// 頂点シェーダー（カラー描画用）
 const vertexShaderSource = `
 attribute vec2 a_position;
 attribute vec4 a_color;
@@ -21,7 +21,7 @@ void main() {
 }
 `;
 
-// フラグメントシェーダー（共通）
+// フラグメントシェーダー（カラー描画用）
 const fragmentShaderSource = `
 precision mediump float;
 varying vec4 v_color;
@@ -31,14 +31,47 @@ void main() {
 }
 `;
 
+// 頂点シェーダー（テクスチャ描画用）
+const textureVertexShaderSource = `
+attribute vec2 a_position;
+attribute vec2 a_texCoord;
+uniform vec2 u_resolution;
+varying vec2 v_texCoord;
+
+void main() {
+  vec2 zeroToOne = a_position / u_resolution;
+  vec2 zeroToTwo = zeroToOne * 2.0;
+  vec2 clipSpace = zeroToTwo - 1.0;
+  gl_Position = vec4(clipSpace * vec2(1, -1), 0, 1);
+  v_texCoord = a_texCoord;
+}
+`;
+
+// フラグメントシェーダー（テクスチャ描画用）
+const textureFragmentShaderSource = `
+precision mediump float;
+varying vec2 v_texCoord;
+uniform sampler2D u_texture;
+
+void main() {
+  gl_FragColor = texture2D(u_texture, v_texCoord);
+}
+`;
+
 interface WebGLRendererContext {
   gl: WebGLRenderingContext | WebGL2RenderingContext;
   program: WebGLProgram;
+  textureProgram: WebGLProgram;
   positionBuffer: WebGLBuffer;
   colorBuffer: WebGLBuffer;
+  texCoordBuffer: WebGLBuffer;
   positionLocation: number;
   colorLocation: number;
   resolutionLocation: WebGLUniformLocation | null;
+  texPositionLocation: number;
+  texCoordLocation: number;
+  texResolutionLocation: WebGLUniformLocation | null;
+  textureLocation: WebGLUniformLocation | null;
   imageTexture: WebGLTexture | null;
   imageCache: {
     image: HTMLImageElement | null;
@@ -67,7 +100,7 @@ function initWebGL(canvas: HTMLCanvasElement): WebGLRendererContext | null {
     return null;
   }
 
-  // シェーダーをコンパイル
+  // カラー描画用シェーダーをコンパイル
   const vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexShaderSource);
   const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentShaderSource);
 
@@ -76,35 +109,64 @@ function initWebGL(canvas: HTMLCanvasElement): WebGLRendererContext | null {
     return null;
   }
 
-  // プログラムをリンク
+  // カラー描画用プログラムをリンク
   const program = createProgram(gl, vertexShader, fragmentShader);
   if (!program) {
     console.error('Failed to create program');
     return null;
   }
 
+  // テクスチャ描画用シェーダーをコンパイル
+  const texVertexShader = createShader(gl, gl.VERTEX_SHADER, textureVertexShaderSource);
+  const texFragmentShader = createShader(gl, gl.FRAGMENT_SHADER, textureFragmentShaderSource);
+
+  if (!texVertexShader || !texFragmentShader) {
+    console.error('Failed to create texture shaders');
+    return null;
+  }
+
+  // テクスチャ描画用プログラムをリンク
+  const textureProgram = createProgram(gl, texVertexShader, texFragmentShader);
+  if (!textureProgram) {
+    console.error('Failed to create texture program');
+    return null;
+  }
+
   // バッファを作成
   const positionBuffer = gl.createBuffer();
   const colorBuffer = gl.createBuffer();
+  const texCoordBuffer = gl.createBuffer();
 
-  if (!positionBuffer || !colorBuffer) {
+  if (!positionBuffer || !colorBuffer || !texCoordBuffer) {
     console.error('Failed to create buffers');
     return null;
   }
 
-  // attribute/uniformの位置を取得
+  // attribute/uniformの位置を取得（カラー描画用）
   const positionLocation = gl.getAttribLocation(program, 'a_position');
   const colorLocation = gl.getAttribLocation(program, 'a_color');
   const resolutionLocation = gl.getUniformLocation(program, 'u_resolution');
 
+  // attribute/uniformの位置を取得（テクスチャ描画用）
+  const texPositionLocation = gl.getAttribLocation(textureProgram, 'a_position');
+  const texCoordLocation = gl.getAttribLocation(textureProgram, 'a_texCoord');
+  const texResolutionLocation = gl.getUniformLocation(textureProgram, 'u_resolution');
+  const textureLocation = gl.getUniformLocation(textureProgram, 'u_texture');
+
   return {
     gl,
     program,
+    textureProgram,
     positionBuffer,
     colorBuffer,
+    texCoordBuffer,
     positionLocation,
     colorLocation,
     resolutionLocation,
+    texPositionLocation,
+    texCoordLocation,
+    texResolutionLocation,
+    textureLocation,
     imageTexture: null,
     imageCache: {
       image: null,
@@ -164,60 +226,37 @@ function createProgram(
 }
 
 /**
- * 背景画像をテクスチャとして準備
+ * WebGLで背景画像を描画
  */
-function prepareBackgroundTexture(
+function drawBackgroundWebGL(
   ctx: WebGLRendererContext,
-  image: HTMLImageElement,
-  canvasWidth: number,
-  canvasHeight: number
-): void {
-  const { gl } = ctx;
-
-  // キャッシュチェック
-  if (ctx.imageCache.image === image &&
-      ctx.imageCache.width === canvasWidth &&
-      ctx.imageCache.height === canvasHeight &&
-      ctx.imageTexture) {
-    return; // キャッシュが有効
-  }
-
-  // テクスチャを作成
-  if (!ctx.imageTexture) {
-    ctx.imageTexture = gl.createTexture();
-  }
-
-  gl.bindTexture(gl.TEXTURE_2D, ctx.imageTexture);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-
-  // キャッシュを更新
-  ctx.imageCache = {
-    image,
-    width: canvasWidth,
-    height: canvasHeight,
-  };
-}
-
-/**
- * Canvas 2Dで背景を描画（WebGLで画像描画はやや複雑なため、Canvas 2Dを併用）
- */
-function drawBackground(
   canvas: HTMLCanvasElement,
-  image: HTMLImageElement
+  image: HTMLImageElement | null
 ): void {
-  const ctx = canvas.getContext('2d', { alpha: false });
-  if (!ctx) return;
-
+  const { gl, textureProgram, texPositionLocation, texCoordLocation,
+          texResolutionLocation, textureLocation, positionBuffer, texCoordBuffer } = ctx;
   const canvasWidth = canvas.width;
   const canvasHeight = canvas.height;
 
-  // 背景塗りつぶし
-  ctx.fillStyle = 'rgba(34, 34, 34, 1.0)';
-  ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+  // 背景色でクリア
+  gl.clearColor(34 / 255, 34 / 255, 34 / 255, 1.0);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+
+  // 画像がない場合は背景色のみ
+  if (!image) {
+    return;
+  }
+
+  // 画像テクスチャの準備
+  prepareImageTexture(ctx, image, canvasWidth, canvasHeight);
+
+  // テクスチャプログラムを使用
+  gl.useProgram(textureProgram);
+
+  // 解像度を設定
+  if (texResolutionLocation) {
+    gl.uniform2f(texResolutionLocation, canvasWidth, canvasHeight);
+  }
 
   // 画像のサイズ計算
   const rawWidth = image.width;
@@ -242,18 +281,136 @@ function drawBackground(
   const marginHeight = canvasHeight - imageCtxHeight;
   const posY = marginHeight === 0 ? 0 : marginHeight / 2;
 
-  // 画像を描画
-  ctx.drawImage(
+  // 画像を描画する矩形の頂点（2つの三角形）
+  const x1 = posX;
+  const y1 = posY;
+  const x2 = posX + imageCtxWidth;
+  const y2 = posY + imageCtxHeight;
+
+  const positions = new Float32Array([
+    x1, y1,
+    x2, y1,
+    x1, y2,
+    x1, y2,
+    x2, y1,
+    x2, y2,
+  ]);
+
+  const texCoords = new Float32Array([
+    0, 0,
+    1, 0,
+    0, 1,
+    0, 1,
+    1, 0,
+    1, 1,
+  ]);
+
+  // 位置バッファを設定
+  gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+  gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(texPositionLocation);
+  gl.vertexAttribPointer(texPositionLocation, 2, gl.FLOAT, false, 0, 0);
+
+  // テクスチャ座標バッファを設定
+  gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
+  gl.bufferData(gl.ARRAY_BUFFER, texCoords, gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(texCoordLocation);
+  gl.vertexAttribPointer(texCoordLocation, 2, gl.FLOAT, false, 0, 0);
+
+  // テクスチャを設定
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, ctx.imageTexture);
+  if (textureLocation) {
+    gl.uniform1i(textureLocation, 0);
+  }
+
+  // 描画
+  gl.drawArrays(gl.TRIANGLES, 0, 6);
+}
+
+/**
+ * 画像テクスチャを準備
+ */
+function prepareImageTexture(
+  ctx: WebGLRendererContext,
+  image: HTMLImageElement,
+  canvasWidth: number,
+  canvasHeight: number
+): void {
+  const { gl } = ctx;
+
+  // キャッシュチェック
+  if (ctx.imageCache.image === image &&
+      ctx.imageCache.width === canvasWidth &&
+      ctx.imageCache.height === canvasHeight &&
+      ctx.imageTexture) {
+    return; // キャッシュが有効
+  }
+
+  // オフスクリーンcanvasに画像を描画
+  const tempCanvas = document.createElement('canvas');
+  tempCanvas.width = canvasWidth;
+  tempCanvas.height = canvasHeight;
+  const tempCtx = tempCanvas.getContext('2d');
+
+  if (tempCtx) {
+    tempCtx.fillStyle = 'rgba(34, 34, 34, 1.0)';
+    tempCtx.fillRect(0, 0, canvasWidth, canvasHeight);
+
+    // 画像のサイズ計算（drawBackgroundWebGLと同じロジック）
+    const rawWidth = image.width;
+    const rawHeight = image.height;
+    let imageCtxWidth = 0;
+    let imageCtxHeight = 0;
+
+    if (rawWidth > canvasWidth || rawHeight > canvasHeight) {
+      imageCtxWidth = canvasWidth;
+      imageCtxHeight = Math.round(rawHeight * (canvasWidth / rawWidth));
+      if (imageCtxHeight > canvasHeight) {
+        imageCtxHeight = canvasHeight;
+        imageCtxWidth = Math.round(rawWidth * (canvasHeight / rawHeight));
+      }
+    } else {
+      imageCtxWidth = image.width;
+      imageCtxHeight = image.height;
+    }
+
+    const marginWidth = canvasWidth - imageCtxWidth;
+    const posX = marginWidth === 0 ? 0 : marginWidth / 2;
+    const marginHeight = canvasHeight - imageCtxHeight;
+    const posY = marginHeight === 0 ? 0 : marginHeight / 2;
+
+    tempCtx.drawImage(
+      image,
+      0,
+      0,
+      rawWidth,
+      rawHeight,
+      posX,
+      posY,
+      imageCtxWidth,
+      imageCtxHeight
+    );
+  }
+
+  // テクスチャを作成
+  if (!ctx.imageTexture) {
+    ctx.imageTexture = gl.createTexture();
+  }
+
+  gl.bindTexture(gl.TEXTURE_2D, ctx.imageTexture);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, tempCanvas);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+
+  // キャッシュを更新
+  ctx.imageCache = {
     image,
-    0,
-    0,
-    rawWidth,
-    rawHeight,
-    posX,
-    posY,
-    imageCtxWidth,
-    imageCtxHeight
-  );
+    width: canvasWidth,
+    height: canvasHeight,
+  };
 }
 
 /**
@@ -453,10 +610,10 @@ export const drawBarsWebGL = (
     offsetY: 0,
   };
 
-  // 背景を描画（Canvas 2Dを使用）
-  drawBackground(canvas, imageCtx);
+  // 背景を描画（WebGLでテクスチャとして描画）
+  drawBackgroundWebGL(glContext, canvas, imageCtx);
 
-  // WebGLの準備
+  // WebGLの準備（スペクトラム描画用）
   gl.viewport(0, 0, canvasWidth, canvasHeight);
   gl.useProgram(program);
 
@@ -754,10 +911,12 @@ export function cleanupWebGL(): void {
   }
 
   if (glContext) {
-    const { gl, program, positionBuffer, colorBuffer, imageTexture } = glContext;
+    const { gl, program, textureProgram, positionBuffer, colorBuffer, texCoordBuffer, imageTexture } = glContext;
     gl.deleteProgram(program);
+    gl.deleteProgram(textureProgram);
     gl.deleteBuffer(positionBuffer);
     gl.deleteBuffer(colorBuffer);
+    gl.deleteBuffer(texCoordBuffer);
     if (imageTexture) {
       gl.deleteTexture(imageTexture);
     }
