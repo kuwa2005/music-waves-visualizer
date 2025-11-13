@@ -202,10 +202,10 @@ export const drawBars = (
     analyser.getByteFrequencyData(bufferData); //spectrum data
     ctx.fillStyle = "rgba(255, 255, 255, 0.8)";
     const barsLength = 128;
-    const barWidth = (canvasWidth / barsLength) * adj.scaleX;
+    const barWidth = canvasWidth / barsLength;
     let barX = 0;
     for (let i = 0; i < barsLength; i++) {
-      const barHeight = bufferData[i] * adj.scaleY;
+      const barHeight = bufferData[i];
       ctx.fillRect(barX, canvasHeight - barHeight, barWidth, barHeight);
       barX += canvasWidth / barsLength;
     }
