@@ -229,7 +229,7 @@ export const drawBars = (
     analyser.getByteFrequencyData(bufferData); //spectrum data
     ctx.fillStyle = "rgba(255, 255, 255, 0.8)";
 
-    ctx.scale(0.5 * adj.scaleX, 0.5 * adj.scaleY);
+    ctx.scale(0.5, 0.5);
     ctx.translate(canvasWidth, canvasHeight);
 
     const bass = Math.floor(bufferData[1]); //1Hz Freq
@@ -344,7 +344,7 @@ export const drawBars = (
     
     for (let i = 0; i < barsLength; i++) {
       const value = bufferData[Math.floor((i / barsLength) * bufferLength)];
-      const barHeight = value * 1.5 * adj.scaleY;
+      const barHeight = value * 1.5;
       const x = i * barWidth;
       const offset = (i - barsLength / 2) * 2;
       
