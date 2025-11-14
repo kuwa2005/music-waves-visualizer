@@ -979,13 +979,14 @@ function drawMode2(
     const localY2 = (radius - value) * Math.cos(angle);
 
     // Apply full Canvas.ts transformation:
-    // After user adjustments + scale(0.5,0.5) + translate(canvasWidth, canvasHeight):
-    // screen_x = local_x * scaleX * 0.5 + canvasWidth/2 + scaleX * offsetXPixels
-    // screen_y = local_y * scaleY * 0.5 + canvasHeight/2 + scaleY * offsetYPixels
-    const tx1 = localX1 * adj.scaleX * 0.5 + canvasWidth / 2 + adj.scaleX * offsetXPixels;
-    const ty1 = localY1 * adj.scaleY * 0.5 + canvasHeight / 2 + adj.scaleY * offsetYPixels;
-    const tx2 = localX2 * adj.scaleX * 0.5 + canvasWidth / 2 + adj.scaleX * offsetXPixels;
-    const ty2 = localY2 * adj.scaleY * 0.5 + canvasHeight / 2 + adj.scaleY * offsetYPixels;
+    // User adjustments are applied first, then mode-specific scale(0.5, 0.5)
+    // The offset is also scaled by the mode's 0.5 factor
+    // screen_x = local_x * scaleX * 0.5 + canvasWidth/2 + offsetXPixels * 0.5
+    // screen_y = local_y * scaleY * 0.5 + canvasHeight/2 + offsetYPixels * 0.5
+    const tx1 = localX1 * adj.scaleX * 0.5 + canvasWidth / 2 + offsetXPixels * 0.5;
+    const ty1 = localY1 * adj.scaleY * 0.5 + canvasHeight / 2 + offsetYPixels * 0.5;
+    const tx2 = localX2 * adj.scaleX * 0.5 + canvasWidth / 2 + offsetXPixels * 0.5;
+    const ty2 = localY2 * adj.scaleY * 0.5 + canvasHeight / 2 + offsetYPixels * 0.5;
 
     // 白色（rgba(255, 255, 255, 0.8)）
     drawLine(ctx, tx1, ty1, tx2, ty2, 1.0, 1.0, 1.0, 0.8, barWidth);

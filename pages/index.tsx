@@ -406,6 +406,46 @@ const Home: NextPage = () => {
 
   // 音楽読み込み処理（共通）
   const loadAudioFile = async (file: File) => {
+    // ビデオファイルの場合、MediaElementAudioSourceを使用
+    if (isVideoFile(file.name)) {
+      const video = document.createElement("video");
+      video.preload = "auto";
+      video.crossOrigin = "anonymous";
+      video.src = URL.createObjectURL(file);
+      videoElementRef.current = video;
+
+      video.onloadedmetadata = () => {
+        try {
+          // MediaElementAudioSourceNodeを使用して音声を取得
+          const source = audioCtxRef.current.createMediaElementSource(video);
+          source.connect(analyserRef.current);
+          analyserRef.current.connect(audioCtxRef.current.destination);
+          analyserRef.current.connect(streamDestinationRef.current);
+
+          // 再生終了時の処理
+          video.onended = () => {
+            setIsPlaySound(false);
+            stopCanvas2DAnimation();
+            stopWebGLAnimation();
+          };
+
+          setPlaySoundDisabled(false);
+          setRecordMovieDisabled(false);
+          setAudioFileName(file.name);
+          openSnackBar("動画ファイルから音声を読み込みました");
+        } catch (error) {
+          openSnackBar("動画ファイルの音声読み込みに失敗しました: " + error);
+          videoElementRef.current = null;
+        }
+      };
+      video.onerror = () => {
+        openSnackBar("動画ファイルの読み込みに失敗しました");
+        videoElementRef.current = null;
+      };
+      return;
+    }
+
+    // 通常の音声ファイルの場合、decodeAudioDataを使用
     try {
       const arraybuffer = await file.arrayBuffer();
       decodedAudioBufferRef.current = await audioCtxRef.current.decodeAudioData(
@@ -463,45 +503,6 @@ const Home: NextPage = () => {
   const audioLoad = async (event: { target: HTMLInputElement }) => {
     const file = event.target.files[0];
     if (!file) {
-      return;
-    }
-    // MP4ファイルの場合、音声として扱う
-    if (isVideoFile(file.name)) {
-      // MP4の音声トラックを抽出（HTMLVideoElementとMediaElementAudioSourceNodeを使用）
-      const video = document.createElement("video");
-      video.preload = "auto";
-      video.crossOrigin = "anonymous";
-      video.src = URL.createObjectURL(file);
-      videoElementRef.current = video;
-      
-      video.onloadedmetadata = () => {
-        try {
-          // MediaElementAudioSourceNodeを使用して音声を取得
-          const source = audioCtxRef.current.createMediaElementSource(video);
-          source.connect(analyserRef.current);
-          analyserRef.current.connect(audioCtxRef.current.destination);
-          analyserRef.current.connect(streamDestinationRef.current);
-          
-          // 再生終了時の処理
-          video.onended = () => {
-            setIsPlaySound(false);
-            stopCanvas2DAnimation();
-            stopWebGLAnimation();
-          };
-          
-          setPlaySoundDisabled(false);
-          setRecordMovieDisabled(false);
-          setAudioFileName(file.name);
-          openSnackBar("動画ファイルから音声を読み込みました");
-        } catch (error) {
-          openSnackBar("動画ファイルの音声読み込みに失敗しました: " + error);
-          videoElementRef.current = null;
-        }
-      };
-      video.onerror = () => {
-        openSnackBar("動画ファイルの読み込みに失敗しました");
-        videoElementRef.current = null;
-      };
       return;
     }
     await loadAudioFile(file);
