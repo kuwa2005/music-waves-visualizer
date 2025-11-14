@@ -303,29 +303,13 @@ const Home: NextPage = () => {
   // Canvas サイズ設定（canvasSize または rendererType が変更されたときに実行）
   // useLayoutEffectを使用してDOM更新直後にサイズを設定
   useLayoutEffect(() => {
-    console.log('[index.tsx] useLayoutEffect START', {
-      hasCanvas: !!canvasRef.current,
-      rendererType,
-      canvasSize
-    });
-
     if (!canvasRef.current) {
-      console.log('[index.tsx] No canvas ref in useLayoutEffect');
       return;
     }
 
     const dimensions = getCanvasDimensions(canvasSize);
-    console.log('[index.tsx] Setting canvas size', {
-      before: { width: canvasRef.current.width, height: canvasRef.current.height },
-      dimensions
-    });
-
     canvasRef.current.width = dimensions.width;
     canvasRef.current.height = dimensions.height;
-
-    console.log('[index.tsx] Canvas size set', {
-      after: { width: canvasRef.current.width, height: canvasRef.current.height }
-    });
 
     // キャンバスサイズ変更時に画像キャッシュをクリア（両方のレンダラー）
     clearImageCache();
@@ -334,16 +318,7 @@ const Home: NextPage = () => {
 
   // Canvas Animation
   useEffect(() => {
-    console.log('[index.tsx] Canvas Animation useEffect triggered', {
-      hasCanvas: !!canvasRef.current,
-      hasImage: !!imageCtx,
-      imageSrc: imageCtx?.src?.substring(0, 50) + '...',
-      mode,
-      rendererType
-    });
-
     if (!canvasRef.current) {
-      console.log('[index.tsx] No canvas ref, skipping');
       return;
     }
 
@@ -353,7 +328,6 @@ const Home: NextPage = () => {
 
     // レンダラータイプに応じて描画関数を選択
     if (rendererType === 'webgl') {
-      console.log('[index.tsx] Starting WebGL renderer');
       // WebGLレンダラーは内部でrequestAnimationFrameを再帰呼び出しするため、一度呼び出すだけでOK
       drawBarsWebGL(
         canvasRef.current,
@@ -363,7 +337,6 @@ const Home: NextPage = () => {
         modeAdjustments
       );
     } else {
-      console.log('[index.tsx] Starting Canvas 2D renderer');
       // Canvas 2Dレンダラーも内部でrequestAnimationFrameを再帰呼び出しする
       drawBars(
         canvasRef.current,
@@ -375,7 +348,6 @@ const Home: NextPage = () => {
     }
 
     return () => {
-      console.log('[index.tsx] Canvas Animation cleanup');
       // クリーンアップ：アニメーションを停止
       stopCanvas2DAnimation();
       stopWebGLAnimation();
@@ -426,7 +398,7 @@ const Home: NextPage = () => {
       openSnackBar("画像を読み込みました");
     };
     image.onerror = (e) => {
-      console.log(e);
+      console.error("画像の読み込みに失敗しました:", e);
       openSnackBar("画像の読み込みに失敗しました");
     };
     image.src = URL.createObjectURL(file);
