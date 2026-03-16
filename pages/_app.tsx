@@ -4,7 +4,7 @@ import React from "react";
 import "../styles/globals.scss";
 import { GoogleAnalytics, usePageView } from "../lib/Gtag";
 
-const baseURL = process.env.NEXT_PUBLIC_DOMAIN;
+const baseURL = process.env.NEXT_PUBLIC_DOMAIN ?? "";
 
 const App = ({ Component, pageProps }: AppProps) => {
   usePageView();

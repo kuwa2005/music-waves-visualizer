@@ -17,6 +17,7 @@ https://music-waves-visualizer.vercel.app/
 ## 主な機能
 
 - **ファイル読み込み**: ドラッグ&ドロップまたはボタンから画像・音楽ファイルを読み込み
+- **画像の自動スケーリング**: 読み込んだ画像を推奨解像度（1920×1080等）に自動拡大・縮小
 - **7つのスペクトラムアナライザーモード**: 様々な波形表示スタイルを選択可能
 - **3つの解像度**: 1920×1080、1080×1920、1920×1920から選択
 - **表示調整機能**: 各モードごとに倍率・位置を調整可能
@@ -42,9 +43,21 @@ docker-compose up --build
 
 # 開発モード
 docker-compose -f docker-compose.dev.yml up --build
+
+# 他PCからHTTPSでアクセス（FFmpeg動画変換対応）
+./generate-ssl-cert.sh <サーバーIP>
+docker compose -f docker-compose.https.yml up -d --build
 ```
 
 詳細は [README_DOCKER.md](./README_DOCKER.md) を参照
+
+### レンタルサーバー用静的配布
+
+```bash
+npm run build:html
+```
+
+`html/` ディレクトリをサーバーの `visualizer` フォルダにアップロードし、`https://あなたのドメイン/visualizer/` でアクセス可能
 
 ## 使用方法
 

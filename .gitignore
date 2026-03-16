@@ -41,3 +41,10 @@ bgm/
 img/
 dist/
 .env
+
+# SSL証明書（HTTPS用・自己生成）
+ssl/
+
+# ビルド出力
+out/
+html/

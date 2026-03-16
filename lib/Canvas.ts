@@ -75,23 +75,12 @@ function drawImageToOffscreen(
   offscreenCtx.fillStyle = "rgba(34, 34, 34, 1.0)";
   offscreenCtx.fillRect(0, 0, canvasWidth, canvasHeight);
 
-  // 画像のサイズ計算
+  // 画像のサイズ計算（推奨解像度に合わせて拡大・縮小）
   const rawWidth = image.width;
   const rawHeight = image.height;
-  let imageCtxWidth = 0;
-  let imageCtxHeight = 0;
-  
-  if (rawWidth > canvasWidth || rawHeight > canvasHeight) {
-    imageCtxWidth = canvasWidth;
-    imageCtxHeight = Math.round(rawHeight * (canvasWidth / rawWidth));
-    if (imageCtxHeight > canvasHeight) {
-      imageCtxHeight = canvasHeight;
-      imageCtxWidth = Math.round(rawWidth * (canvasHeight / rawHeight));
-    }
-  } else {
-    imageCtxWidth = image.width;
-    imageCtxHeight = image.height;
-  }
+  const scale = Math.min(canvasWidth / rawWidth, canvasHeight / rawHeight);
+  const imageCtxWidth = Math.round(rawWidth * scale);
+  const imageCtxHeight = Math.round(rawHeight * scale);
   
   const marginWidth = canvasWidth - imageCtxWidth;
   const posX = marginWidth === 0 ? 0 : marginWidth / 2;

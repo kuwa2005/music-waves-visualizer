@@ -1,0 +1,32 @@
+# 他PCからHTTPSでアクセスするための構成
+# 使い方:
+#   1. ./generate-ssl-cert.sh 192.168.0.234  # サーバーのIPで証明書を生成
+#   2. docker compose -f docker-compose.https.yml up -d --build
+# アクセス: https://<サーバーIP>:8443
+# ※自己署名証明書のため、ブラウザで「詳細」→「安全でないサイトへ」で進む必要があります
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: music-waves-visualizer
+    environment:
+      - NODE_ENV=production
+      - NEXT_TELEMETRY_DISABLED=1
+      - NEXT_PUBLIC_DEVELOPER_MODE=true
+    expose:
+      - "3000"
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:alpine
+    container_name: music-waves-visualizer-nginx
+    ports:
+      - "8443:443"
+    volumes:
+      - ./nginx-https.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - app
+    restart: unless-stopped

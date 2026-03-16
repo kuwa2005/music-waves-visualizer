@@ -3,6 +3,9 @@
 ## [Unreleased]
 
 ### Added
+- Docker HTTPS版（他PCからアクセス可能、nginx + 自己署名証明書）
+- レンタルサーバー用静的HTML配布（`npm run build:html`、basePath: /visualizer）
+- 証明書生成スクリプト（`generate-ssl-cert.sh`）
 - ドラッグ&ドロップ対応（複数ファイル対応、拡張子による自動判定）
 - MP4ファイル対応（音楽ファイルとして扱う、または静止画として抽出）
 - ファイル名表示機能
@@ -23,6 +26,8 @@
 ### Fixed
 - MP4ファイルの音声抽出処理
 - 録画時の動画ファイル処理
+- 画像がキャンバスより小さい場合に拡大されない問題（推奨解像度に自動スケーリング）
+- faviconのbaseURL未設定時の404エラー（`undefinedfavicon.ico`）
 
 ### Documentation
 - README.mdを更新（新機能の説明を追加）

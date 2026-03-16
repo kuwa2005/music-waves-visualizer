@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "build:html": "mv pages/api .api.bak 2>/dev/null; BUILD_HTML=1 npx next build && npx next export -o out && mv .api.bak pages/api 2>/dev/null; rm -rf html && cp -r out html && cp htaccess-for-export html/.htaccess && cp html-deploy-README.txt html/README.txt",
     "start": "next start",
     "lint": "next lint"
   },
