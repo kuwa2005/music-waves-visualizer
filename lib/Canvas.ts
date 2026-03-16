@@ -10,6 +10,9 @@ let fpsCounter = 0;
 let fpsLastTime = performance.now();
 let currentFPS = 0;
 
+// アニメーションフレームID
+let animationFrameId: number | null = null;
+
 // FPSを取得
 export function getFPS(): number {
   return currentFPS;
@@ -20,6 +23,14 @@ export function resetFPS(): void {
   fpsCounter = 0;
   fpsLastTime = performance.now();
   currentFPS = 0;
+}
+
+// Canvas 2Dアニメーションを停止
+export function stopCanvas2DAnimation(): void {
+  if (animationFrameId !== null) {
+    cancelAnimationFrame(animationFrameId);
+    animationFrameId = null;
+  }
 }
 
 // オフスクリーンキャンバスのキャッシュ（画像処理の最適化）
@@ -126,9 +137,10 @@ export const drawBars = (
   });
   
   if (!ctx) {
-    return requestAnimationFrame(function () {
+    animationFrameId = requestAnimationFrame(function () {
       drawBars(canvas, imageCtx, mode, analyser, adjustments);
     });
+    return animationFrameId;
   }
   
   const canvasWidth = canvas.width;
@@ -155,9 +167,10 @@ export const drawBars = (
   ctx.save();
 
   if (!analyser) {
-    return requestAnimationFrame(function () {
+    animationFrameId = requestAnimationFrame(function () {
       drawBars(canvas, imageCtx, mode, analyser, adjustments);
     });
+    return animationFrameId;
   }
 
   const bufferLength = analyser.frequencyBinCount; // analyser.fftSizeの半分になる(1024)
@@ -177,10 +190,10 @@ export const drawBars = (
     analyser.getByteFrequencyData(bufferData); //spectrum data
     ctx.fillStyle = "rgba(255, 255, 255, 0.8)";
     const barsLength = 128;
-    const barWidth = (canvasWidth / barsLength) * adj.scaleX;
+    const barWidth = canvasWidth / barsLength;
     let barX = 0;
     for (let i = 0; i < barsLength; i++) {
-      const barHeight = bufferData[i] * adj.scaleY;
+      const barHeight = bufferData[i];
       ctx.fillRect(barX, canvasHeight - barHeight, barWidth, barHeight);
       barX += canvasWidth / barsLength;
     }
@@ -204,7 +217,7 @@ export const drawBars = (
     analyser.getByteFrequencyData(bufferData); //spectrum data
     ctx.fillStyle = "rgba(255, 255, 255, 0.8)";
 
-    ctx.scale(0.5 * adj.scaleX, 0.5 * adj.scaleY);
+    ctx.scale(0.5, 0.5);
     ctx.translate(canvasWidth, canvasHeight);
 
     const bass = Math.floor(bufferData[1]); //1Hz Freq
@@ -319,7 +332,7 @@ export const drawBars = (
     
     for (let i = 0; i < barsLength; i++) {
       const value = bufferData[Math.floor((i / barsLength) * bufferLength)];
-      const barHeight = value * 1.5 * adj.scaleY;
+      const barHeight = value * 1.5;
       const x = i * barWidth;
       const offset = (i - barsLength / 2) * 2;
       
@@ -351,6 +364,9 @@ export const drawBars = (
   // 調整パラメータの適用を解除
   ctx.restore();
 
+  // 最初のsave()に対応するrestore()
+  ctx.restore();
+
   // FPS測定
   fpsCounter++;
   const currentTime = performance.now();
@@ -361,7 +377,8 @@ export const drawBars = (
     fpsLastTime = currentTime;
   }
 
-  return requestAnimationFrame(function () {
+  animationFrameId = requestAnimationFrame(function () {
     drawBars(canvas, imageCtx, mode, analyser, adjustments);
   });
+  return animationFrameId;
 };
