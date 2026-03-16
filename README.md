@@ -2,9 +2,9 @@
 
 画像と音楽ファイルを読み込んで、音声波形を可視化した動画を作成するWebアプリケーションです。
 
-## デモ（オリジナル版）
+## デモ
 
-https://music-waves-visualizer.vercel.app/
+https://lil.la/visualizer/
 
 ### Music Waves Visualizer(改) 実行イメージ
 
