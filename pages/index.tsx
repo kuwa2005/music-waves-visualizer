@@ -30,6 +30,7 @@ import {
 import { CustomSnackbar } from "../components/CustomSnackbar";
 import { drawBars, clearImageCache, getFPS, stopCanvas2DAnimation } from "../lib/Canvas";
 import { drawBarsWebGL, getFPSWebGL, cleanupWebGL, stopWebGLAnimation, clearWebGLImageCache } from "../lib/WebGLRenderer";
+import type { EffectType, EffectDensity } from "../lib/Effects";
 import { getGpuInfo, getGpuDisplayName, getRecommendedRenderer, type GpuInfo } from "../lib/GpuDetector";
 import { isWebCodecsSupported, checkHardwareEncoderSupport, getBestEncodingMethod } from "../lib/WebCodecsEncoder";
 import { generateMp4Video } from "../lib/Ffmpeg";
@@ -156,6 +157,27 @@ const Home: NextPage = () => {
     offsetX: 0, // パーセンテージ
     offsetY: 0, // パーセンテージ
   });
+
+  // エフェクト（グラフ種類とは独立、ON/OFF可能）
+  const [effectType, setEffectType] = useState<EffectType>("none");
+  const [effectDensity, setEffectDensity] = useState<EffectDensity>(2);
+
+  // 音量設定（目標LUFS、null=正規化なし）
+  const [targetLufs, setTargetLufs] = useState<number | null>(() => {
+    if (typeof window === "undefined") return null;
+    const saved = localStorage.getItem("targetLufs");
+    return saved ? parseFloat(saved) : null;
+  });
+  const [targetLufsCustom, setTargetLufsCustom] = useState<string>(() => {
+    if (typeof window === "undefined") return "";
+    const saved = localStorage.getItem("targetLufs");
+    const n = saved ? parseFloat(saved) : null;
+    return n != null && n !== -14 && n !== -15 ? String(n) : "";
+  });
+  useEffect(() => {
+    if (targetLufs != null) localStorage.setItem("targetLufs", String(targetLufs));
+    else localStorage.removeItem("targetLufs");
+  }, [targetLufs]);
 
   // 設定の保存キー生成
   const getSettingsKey = (mode: number, size: CanvasSize) => {
@@ -333,32 +355,35 @@ const Home: NextPage = () => {
     stopWebGLAnimation();
 
     // レンダラータイプに応じて描画関数を選択
+    const effect = effectType !== "none" ? { type: effectType, density: effectDensity } : undefined;
+    const isEffectActive = isPlaySound || isRecording;
     if (rendererType === 'webgl') {
-      // WebGLレンダラーは内部でrequestAnimationFrameを再帰呼び出しするため、一度呼び出すだけでOK
       drawBarsWebGL(
         canvasRef.current,
         imageCtx,
         mode,
         analyserRef.current,
-        modeAdjustments
+        modeAdjustments,
+        effect,
+        isEffectActive
       );
     } else {
-      // Canvas 2Dレンダラーも内部でrequestAnimationFrameを再帰呼び出しする
       drawBars(
         canvasRef.current,
         imageCtx,
         mode,
         analyserRef.current,
-        modeAdjustments
+        modeAdjustments,
+        effect,
+        isEffectActive
       );
     }
 
     return () => {
-      // クリーンアップ：アニメーションを停止
       stopCanvas2DAnimation();
       stopWebGLAnimation();
     };
-  }, [imageCtx, mode, modeAdjustments, rendererType]);
+  }, [imageCtx, mode, modeAdjustments, rendererType, effectType, effectDensity, isPlaySound, isRecording]);
 
   // FPS表示更新（1秒ごとに更新）
   useEffect(() => {
@@ -592,6 +617,7 @@ const Home: NextPage = () => {
     setIsRecording(true);
     
     // キャンバスアニメーションを確実に開始（前回ストップで停止している場合に備える）
+    const effect = effectType !== "none" ? { type: effectType, density: effectDensity } : undefined;
     if (canvasRef.current && analyserRef.current) {
       if (rendererType === "webgl") {
         drawBarsWebGL(
@@ -599,7 +625,9 @@ const Home: NextPage = () => {
           imageCtx,
           mode,
           analyserRef.current,
-          modeAdjustments
+          modeAdjustments,
+          effect,
+          true  // 録画開始時はエフェクトを有効
         );
       } else {
         drawBars(
@@ -607,7 +635,9 @@ const Home: NextPage = () => {
           imageCtx,
           mode,
           analyserRef.current,
-          modeAdjustments
+          modeAdjustments,
+          effect,
+          true  // 録画開始時はエフェクトを有効
         );
       }
     }
@@ -649,7 +679,7 @@ const Home: NextPage = () => {
               setEncodeProgress(0);
             },
             onProgress: (ratio) => setEncodeProgress(Math.round(ratio * 100)),
-          });
+          }, targetLufs);
           setEncodeStatus("idle");
           const mp4Blob = new Blob([video], { type: "video/mp4" });
           const objectURL = URL.createObjectURL(mp4Blob);
@@ -755,6 +785,10 @@ const Home: NextPage = () => {
       offsetX: 0,
       offsetY: 0,
     });
+    setEffectType("none");
+    setEffectDensity(2);
+    setTargetLufs(null);
+    setTargetLufsCustom("");
     openSnackBar("クリアしました");
   };
 
@@ -957,6 +991,44 @@ const Home: NextPage = () => {
                 </Button>
               </Box>
             </div>
+            <div className={styles.effectButtons}>
+              <Typography variant="body2" sx={{ mb: 1, textAlign: "center", fontWeight: 500 }}>
+                エフェクト
+              </Typography>
+              <Box sx={{ display: "flex", gap: 1, justifyContent: "center", flexWrap: "wrap", alignItems: "center" }}>
+                <Button
+                  variant={effectType === "none" ? "contained" : "outlined"}
+                  onClick={() => setEffectType("none")}
+                  size="small"
+                >
+                  OFF
+                </Button>
+                <Button
+                  variant={effectType === "space" ? "contained" : "outlined"}
+                  onClick={() => setEffectType("space")}
+                  size="small"
+                >
+                  宇宙空間
+                </Button>
+                {effectType === "space" && (
+                  <>
+                    <Typography variant="caption" color="textSecondary" sx={{ mx: 0.5 }}>
+                      密度:
+                    </Typography>
+                    {([1, 2, 3] as EffectDensity[]).map((d) => (
+                      <Button
+                        key={d}
+                        variant={effectDensity === d ? "contained" : "outlined"}
+                        onClick={() => setEffectDensity(d)}
+                        size="small"
+                      >
+                        {d === 1 ? "少" : d === 2 ? "中" : "多"}
+                      </Button>
+                    ))}
+                  </>
+                )}
+              </Box>
+            </div>
           </div>
           <div className={styles.menu__right}>
             <Box sx={{ display: "flex", gap: 2, justifyContent: "center", flexWrap: "wrap" }}>
@@ -1004,10 +1076,62 @@ const Home: NextPage = () => {
         <div className={styles.adjustments}>
           <Accordion>
             <AccordionSummary expandIcon={<ExpandMore />}>
-              <Typography>表示調整</Typography>
+              <Typography>表示・音量設定</Typography>
             </AccordionSummary>
             <AccordionDetails>
               <Box sx={{ width: "100%", maxWidth: 600, margin: "0 auto" }}>
+                <Typography variant="subtitle2" sx={{ mb: 2, fontWeight: 600 }}>
+                  音量設定（目標LUFS）
+                </Typography>
+                <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 1 }}>
+                  動画サイトの推奨値に合わせて音量を正規化します。MP4変換時に適用されます。
+                </Typography>
+                <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap", alignItems: "center", mb: 3 }}>
+                  <Button
+                    variant={targetLufs === null ? "contained" : "outlined"}
+                    size="small"
+                    onClick={() => { setTargetLufs(null); setTargetLufsCustom(""); }}
+                  >
+                    なし
+                  </Button>
+                  <Button
+                    variant={targetLufs === -14 ? "contained" : "outlined"}
+                    size="small"
+                    onClick={() => { setTargetLufs(-14); setTargetLufsCustom(""); }}
+                  >
+                    YouTube等 (-14 LUFS)
+                  </Button>
+                  <Button
+                    variant={targetLufs === -15 ? "contained" : "outlined"}
+                    size="small"
+                    onClick={() => { setTargetLufs(-15); setTargetLufsCustom(""); }}
+                  >
+                    ニコニコ動画 (-15 LUFS)
+                  </Button>
+                  <TextField
+                    size="small"
+                    label="任意の値 (dB)"
+                    type="number"
+                    value={targetLufsCustom}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setTargetLufsCustom(v);
+                      const n = parseFloat(v);
+                      if (v === "") {
+                        setTargetLufs(null);
+                      } else if (!isNaN(n) && n < 0 && n > -60) {
+                        setTargetLufs(n);
+                      }
+                    }}
+                    placeholder="-14"
+                    sx={{ width: 100 }}
+                    inputProps={{ min: -60, max: 0, step: 0.5 }}
+                  />
+                </Box>
+                <Divider sx={{ my: 3 }} />
+                <Typography variant="subtitle2" sx={{ mb: 2, fontWeight: 600 }}>
+                  表示調整
+                </Typography>
                 <Typography gutterBottom>横幅倍率: {modeAdjustments.scaleX.toFixed(2)}</Typography>
                 <Slider
                   value={modeAdjustments.scaleX}

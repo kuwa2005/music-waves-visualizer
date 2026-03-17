@@ -1,3 +1,5 @@
+import { drawSpaceEffectCanvas, type EffectParams } from "./Effects";
+
 export type ModeAdjustments = {
   scaleX: number;
   scaleY: number;
@@ -127,7 +129,9 @@ export const drawBars = (
   imageCtx: HTMLImageElement,
   mode: number,
   analyser: AnalyserNode,
-  adjustments?: ModeAdjustments
+  adjustments?: ModeAdjustments,
+  effect?: EffectParams,
+  isEffectActive?: boolean
 ) => {
   // GPU加速を有効化（willReadFrequently: falseでGPU最適化）
   const ctx = canvas.getContext("2d", {
@@ -138,7 +142,7 @@ export const drawBars = (
   
   if (!ctx) {
     animationFrameId = requestAnimationFrame(function () {
-      drawBars(canvas, imageCtx, mode, analyser, adjustments);
+      drawBars(canvas, imageCtx, mode, analyser, adjustments, effect, isEffectActive);
     });
     return animationFrameId;
   }
@@ -168,7 +172,7 @@ export const drawBars = (
 
   if (!analyser) {
     animationFrameId = requestAnimationFrame(function () {
-      drawBars(canvas, imageCtx, mode, analyser, adjustments);
+      drawBars(canvas, imageCtx, mode, analyser, adjustments, effect, isEffectActive);
     });
     return animationFrameId;
   }
@@ -367,6 +371,11 @@ export const drawBars = (
   // 最初のsave()に対応するrestore()
   ctx.restore();
 
+  // エフェクトオーバーレイ（プレビュー/録画中のみアニメーション）
+  if (effect?.type === "space" && isEffectActive) {
+    drawSpaceEffectCanvas(ctx, canvasWidth, canvasHeight, effect.density);
+  }
+
   // FPS測定
   fpsCounter++;
   const currentTime = performance.now();
@@ -378,7 +387,7 @@ export const drawBars = (
   }
 
   animationFrameId = requestAnimationFrame(function () {
-    drawBars(canvas, imageCtx, mode, analyser, adjustments);
+    drawBars(canvas, imageCtx, mode, analyser, adjustments, effect, isEffectActive);
   });
   return animationFrameId;
 };

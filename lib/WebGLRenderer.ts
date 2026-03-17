@@ -4,6 +4,7 @@
  */
 
 import type { ModeAdjustments } from './Canvas';
+import { updateAndGetSpaceParticles, type EffectParams } from './Effects';
 
 // 頂点シェーダー（カラー描画用）
 const vertexShaderSource = `
@@ -99,6 +100,9 @@ let latestImageCtx: HTMLImageElement | null = null;
 let latestMode: number = 0;
 let latestAnalyser: AnalyserNode | null = null;
 let latestAdjustments: ModeAdjustments | undefined = undefined;
+let latestEffect: EffectParams | undefined = undefined;
+let latestEffectActive: boolean = false;
+let lastEffectTime = performance.now();
 
 // デバッグログ用フラグ
 const DEBUG_WEBGL = false;
@@ -806,6 +810,26 @@ function renderFrame(): void {
       break;
   }
 
+  // エフェクトオーバーレイ（プレビュー/録画中のみアニメーション）
+  if (latestEffect?.type === "space" && latestEffectActive) {
+    const now = performance.now();
+    const deltaTime = Math.min(now - lastEffectTime, 50);
+    lastEffectTime = now;
+    const particles = updateAndGetSpaceParticles(
+      canvasWidth,
+      canvasHeight,
+      latestEffect.density,
+      deltaTime
+    );
+    for (const p of particles) {
+      const r = p.r / 255;
+      const g = p.g / 255;
+      const b = p.b / 255;
+      const radius = Math.max(1, p.size / 2);
+      drawCircle(glContext, p.x, p.y, radius, r, g, b, p.alpha);
+    }
+  }
+
   // FPS計測
   fpsCounter++;
   const now = performance.now();
@@ -827,7 +851,9 @@ export const drawBarsWebGL = (
   imageCtx: HTMLImageElement,
   mode: number,
   analyser: AnalyserNode,
-  adjustments?: ModeAdjustments
+  adjustments?: ModeAdjustments,
+  effect?: EffectParams,
+  isEffectActive?: boolean
 ): void => {
   debugLog('drawBarsWebGL called', {
     hasImage: !!imageCtx,
@@ -843,6 +869,8 @@ export const drawBarsWebGL = (
   latestMode = mode;
   latestAnalyser = analyser;
   latestAdjustments = adjustments;
+  latestEffect = effect;
+  latestEffectActive = isEffectActive ?? false;
 
   // 既にアニメーション中の場合は、パラメータだけ更新して終了
   if (isAnimating) {
