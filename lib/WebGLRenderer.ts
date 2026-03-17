@@ -290,25 +290,12 @@ function drawBackgroundWebGL(
     gl.uniform2f(texResolutionLocation, canvasWidth, canvasHeight);
   }
 
-  // 画像のサイズ計算（アスペクト比を保ちながらcanvasに収める）
+  // 画像のサイズ計算（アスペクト比維持、隙間なしで最大表示＝cover）
   const rawWidth = image.width;
   const rawHeight = image.height;
-  const canvasAspect = canvasWidth / canvasHeight;
-  const imageAspect = rawWidth / rawHeight;
-
-  let imageCtxWidth = 0;
-  let imageCtxHeight = 0;
-
-  if (imageAspect > canvasAspect) {
-    // 画像の方が横長 → 幅を基準にスケーリング
-    imageCtxWidth = canvasWidth;
-    imageCtxHeight = Math.round(canvasWidth / imageAspect);
-  } else {
-    // 画像の方が縦長または同じ → 高さを基準にスケーリング
-    imageCtxHeight = canvasHeight;
-    imageCtxWidth = Math.round(canvasHeight * imageAspect);
-  }
-
+  const scale = Math.max(canvasWidth / rawWidth, canvasHeight / rawHeight);
+  const imageCtxWidth = Math.round(rawWidth * scale);
+  const imageCtxHeight = Math.round(rawHeight * scale);
   const marginWidth = canvasWidth - imageCtxWidth;
   const posX = marginWidth === 0 ? 0 : marginWidth / 2;
   const marginHeight = canvasHeight - imageCtxHeight;
@@ -399,22 +386,10 @@ function prepareImageTexture(
     // 画像のサイズ計算（アスペクト比を保ちながらcanvasに収める）
     const rawWidth = image.width;
     const rawHeight = image.height;
-    const canvasAspect = canvasWidth / canvasHeight;
-    const imageAspect = rawWidth / rawHeight;
-
-    let imageCtxWidth = 0;
-    let imageCtxHeight = 0;
-
-    if (imageAspect > canvasAspect) {
-      // 画像の方が横長 → 幅を基準にスケーリング
-      imageCtxWidth = canvasWidth;
-      imageCtxHeight = Math.round(canvasWidth / imageAspect);
-    } else {
-      // 画像の方が縦長または同じ → 高さを基準にスケーリング
-      imageCtxHeight = canvasHeight;
-      imageCtxWidth = Math.round(canvasHeight * imageAspect);
-    }
-
+    // アスペクト比維持、隙間なしで最大表示（cover）
+    const scale = Math.max(canvasWidth / rawWidth, canvasHeight / rawHeight);
+    const imageCtxWidth = Math.round(rawWidth * scale);
+    const imageCtxHeight = Math.round(rawHeight * scale);
     const marginWidth = canvasWidth - imageCtxWidth;
     const posX = marginWidth === 0 ? 0 : marginWidth / 2;
     const marginHeight = canvasHeight - imageCtxHeight;

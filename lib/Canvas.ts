@@ -86,10 +86,10 @@ function drawImageToOffscreen(
   offscreenCtx.fillStyle = "rgba(34, 34, 34, 1.0)";
   offscreenCtx.fillRect(0, 0, canvasWidth, canvasHeight);
 
-  // 画像のサイズ計算（推奨解像度に合わせて拡大・縮小）
+  // 画像のサイズ計算（アスペクト比維持、隙間なしで最大表示＝cover）
   const rawWidth = image.width;
   const rawHeight = image.height;
-  const scale = Math.min(canvasWidth / rawWidth, canvasHeight / rawHeight);
+  const scale = Math.max(canvasWidth / rawWidth, canvasHeight / rawHeight);
   const imageCtxWidth = Math.round(rawWidth * scale);
   const imageCtxHeight = Math.round(rawHeight * scale);
   
