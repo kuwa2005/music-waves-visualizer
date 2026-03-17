@@ -143,19 +143,12 @@ const Home: NextPage = () => {
     process.env.NEXT_PUBLIC_DEV_MODE === "true";
 
   // Mode（セッション用、エクスポート対象外）
-  const [mode, setMode] = useState<number>(() => {
-    if (typeof window === "undefined") return 0;
-    const saved = localStorage.getItem("session_mode");
-    return saved ? parseInt(saved, 10) : 0;
-  });
+  // 初期値は固定でハイドレーション一致（localStorageはuseEffectで読み込み）
+  const [mode, setMode] = useState<number>(0);
 
   // Canvas Size（セッション用、エクスポート対象外）
   type CanvasSize = "1920x1080" | "1080x1920" | "1920x1920";
-  const [canvasSize, setCanvasSize] = useState<CanvasSize>(() => {
-    if (typeof window === "undefined") return "1920x1080";
-    const saved = localStorage.getItem("session_canvasSize");
-    return (saved === "1080x1920" || saved === "1920x1920") ? saved : "1920x1080";
-  });
+  const [canvasSize, setCanvasSize] = useState<CanvasSize>("1920x1080");
   
   // Mode adjustment parameters
   // offsetX, offsetYはパーセンテージ（-150%〜150%）
@@ -179,41 +172,13 @@ const Home: NextPage = () => {
     EFFECT_TYPES_WITH_STRENGTH.forEach((t) => { o[t] = 2; });
     return o;
   };
-  const [effectType, setEffectType] = useState<EffectType>(() => {
-    if (typeof window === "undefined") return "none";
-    const saved = localStorage.getItem("common_effectType");
-    const valid: EffectType[] = ["none", "space", "spaceConstant", "spaceAudio", "vignette", "rainbow", "curtain"];
-    return saved && valid.includes(saved as EffectType) ? (saved as EffectType) : "none";
-  });
-  const [effectDensities, setEffectDensities] = useState<Partial<Record<EffectType, EffectDensity>>>(() => {
-    if (typeof window === "undefined") return defaultEffectDensities();
-    try {
-      const saved = localStorage.getItem("common_effectDensities");
-      if (saved) {
-        const parsed = JSON.parse(saved) as Partial<Record<EffectType, EffectDensity>>;
-        const result = defaultEffectDensities();
-        EFFECT_TYPES_WITH_STRENGTH.forEach((t) => {
-          if (parsed[t] === 1 || parsed[t] === 2 || parsed[t] === 3) result[t] = parsed[t];
-        });
-        return result;
-      }
-    } catch (_e) { /* ignore */ }
-    return defaultEffectDensities();
-  });
+  const [effectType, setEffectType] = useState<EffectType>("none");
+  const [effectDensities, setEffectDensities] = useState<Partial<Record<EffectType, EffectDensity>>>(defaultEffectDensities());
   const effectDensity = (effectType === "none" ? 2 : (effectDensities[effectType] ?? 2)) as EffectDensity;
 
   // 音量設定（共通設定: 目標LUFS、null=正規化なし）
-  const [targetLufs, setTargetLufs] = useState<number | null>(() => {
-    if (typeof window === "undefined") return null;
-    const saved = localStorage.getItem("common_targetLufs");
-    return saved ? parseFloat(saved) : null;
-  });
-  const [targetLufsCustom, setTargetLufsCustom] = useState<string>(() => {
-    if (typeof window === "undefined") return "";
-    const saved = localStorage.getItem("common_targetLufs");
-    const n = saved ? parseFloat(saved) : null;
-    return n != null && n !== -14 && n !== -15 ? String(n) : "";
-  });
+  const [targetLufs, setTargetLufs] = useState<number | null>(null);
+  const [targetLufsCustom, setTargetLufsCustom] = useState<string>("");
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (targetLufs != null) localStorage.setItem("common_targetLufs", String(targetLufs));
@@ -467,10 +432,43 @@ const Home: NextPage = () => {
   // Canvas用ImageContext
   const [imageCtx, setImageCtx] = useState<HTMLImageElement>(null);
 
-  // 初期設定の読み込み
+  // マウント後にlocalStorageから設定を読み込み（ハイドレーション一致のためクライアントのみ）
   useEffect(() => {
-    const loaded = loadSettings(canvasSize, mode);
-    if (loaded) setModeAdjustments(loaded);
+    const savedMode = localStorage.getItem("session_mode");
+    const modeVal = savedMode ? parseInt(savedMode, 10) : 0;
+    setMode(modeVal);
+
+    const savedSize = localStorage.getItem("session_canvasSize");
+    const sizeVal = (savedSize === "1080x1920" || savedSize === "1920x1920") ? savedSize : "1920x1080";
+    setCanvasSize(sizeVal);
+
+    const savedEffectType = localStorage.getItem("common_effectType");
+    const valid: EffectType[] = ["none", "space", "spaceConstant", "spaceAudio", "vignette", "rainbow", "curtain"];
+    if (savedEffectType && valid.includes(savedEffectType as EffectType)) {
+      setEffectType(savedEffectType as EffectType);
+    }
+
+    try {
+      const savedDensities = localStorage.getItem("common_effectDensities");
+      if (savedDensities) {
+        const parsed = JSON.parse(savedDensities) as Partial<Record<EffectType, EffectDensity>>;
+        const result = defaultEffectDensities();
+        EFFECT_TYPES_WITH_STRENGTH.forEach((t) => {
+          if (parsed[t] === 1 || parsed[t] === 2 || parsed[t] === 3) result[t] = parsed[t];
+        });
+        setEffectDensities(result);
+      }
+    } catch (_e) { /* ignore */ }
+
+    const savedLufs = localStorage.getItem("common_targetLufs");
+    if (savedLufs) {
+      const n = parseFloat(savedLufs);
+      setTargetLufs(n);
+      setTargetLufsCustom(n !== -14 && n !== -15 ? String(n) : "");
+    }
+
+    const adj = loadSettings(sizeVal as CanvasSize, modeVal);
+    if (adj) setModeAdjustments(adj);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
