@@ -16,6 +16,7 @@ import {
   AccordionDetails,
   TextField,
   Divider,
+  LinearProgress,
 } from "@mui/material";
 import {
   FiberManualRecord,
@@ -23,6 +24,8 @@ import {
   PhotoLibrary,
   VideoLibrary,
   ExpandMore,
+  DeleteSweep,
+  Warning,
 } from "@mui/icons-material";
 import { CustomSnackbar } from "../components/CustomSnackbar";
 import { drawBars, clearImageCache, getFPS, stopCanvas2DAnimation } from "../lib/Canvas";
@@ -64,6 +67,10 @@ const Home: NextPage = () => {
   const [fps, setFps] = useState<number>(0);
   const [isRecording, setIsRecording] = useState<boolean>(false);
 
+  // エンコード進捗
+  const [encodeStatus, setEncodeStatus] = useState<"idle" | "loading" | "converting">("idle");
+  const [encodeProgress, setEncodeProgress] = useState<number>(0);
+
   // GPU関連State
   const [gpuInfo, setGpuInfo] = useState<GpuInfo | null>(null);
   const [rendererType, setRendererType] = useState<'canvas2d' | 'webgl'>('canvas2d');
@@ -95,6 +102,7 @@ const Home: NextPage = () => {
   const audioBufferSrcRef = useRef<AudioBufferSourceNode>(null);
   const decodedAudioBufferRef = useRef<AudioBuffer>(null);
   const videoElementRef = useRef<HTMLVideoElement>(null);
+  const mediaElementSourceRef = useRef<MediaElementAudioSourceNode | null>(null);
   const setAudioBufferSourceNode = () => {
     // 動画ファイルの場合はMediaElementAudioSourceNodeを使用（既に接続済み）
     if (videoElementRef.current) {
@@ -119,8 +127,6 @@ const Home: NextPage = () => {
     audioBufferSourceNode.connect(analyserRef.current);
     analyserRef.current.connect(audioCtxRef.current.destination);
     analyserRef.current.connect(streamDestinationRef.current);
-    audioBufferSourceNode.connect(audioCtxRef.current.destination);
-    audioBufferSourceNode.connect(streamDestinationRef.current);
     audioBufferSrcRef.current = audioBufferSourceNode;
   };
 
@@ -477,7 +483,9 @@ const Home: NextPage = () => {
       video.onloadedmetadata = () => {
         try {
           // MediaElementAudioSourceNodeを使用して音声を取得
+          mediaElementSourceRef.current?.disconnect();
           const source = audioCtxRef.current.createMediaElementSource(video);
+          mediaElementSourceRef.current = source;
           source.connect(analyserRef.current);
           analyserRef.current.connect(audioCtxRef.current.destination);
           analyserRef.current.connect(streamDestinationRef.current);
@@ -583,6 +591,27 @@ const Home: NextPage = () => {
     // 録画開始フラグを先に設定
     setIsRecording(true);
     
+    // キャンバスアニメーションを確実に開始（前回ストップで停止している場合に備える）
+    if (canvasRef.current && analyserRef.current) {
+      if (rendererType === "webgl") {
+        drawBarsWebGL(
+          canvasRef.current,
+          imageCtx,
+          mode,
+          analyserRef.current,
+          modeAdjustments
+        );
+      } else {
+        drawBars(
+          canvasRef.current,
+          imageCtx,
+          mode,
+          analyserRef.current,
+          modeAdjustments
+        );
+      }
+    }
+    
     // 録画用canvasのアニメーションが開始されるまで少し待つ
     setTimeout(() => {
       const audioStream = streamDestinationRef.current.stream;
@@ -608,22 +637,35 @@ const Home: NextPage = () => {
         const webmName = movieName + ".webm";
         const mp4Name = movieName + ".mp4";
 
-        openSnackBar(
-          "動画をmp4に変換しています...（時間がかかります、ブラウザ検証ツールにログがでます）"
-        );
-        const webmBlob = new Blob(recordedBlobs, { type: "video/webm" });
-        const binaryData = new Uint8Array(await webmBlob.arrayBuffer());
-        const video = await generateMp4Video(binaryData, webmName, mp4Name);
-        const mp4Blob = new Blob([video], { type: "video/mp4" });
-        const objectURL = URL.createObjectURL(mp4Blob);
+        try {
+          setEncodeStatus("loading");
+          setEncodeProgress(0);
+          const webmBlob = new Blob(recordedBlobs, { type: "video/webm" });
+          const binaryData = new Uint8Array(await webmBlob.arrayBuffer());
+          const video = await generateMp4Video(binaryData, webmName, mp4Name, {
+            onLoadStart: () => setEncodeStatus("loading"),
+            onLoadComplete: () => {
+              setEncodeStatus("converting");
+              setEncodeProgress(0);
+            },
+            onProgress: (ratio) => setEncodeProgress(Math.round(ratio * 100)),
+          });
+          setEncodeStatus("idle");
+          const mp4Blob = new Blob([video], { type: "video/mp4" });
+          const objectURL = URL.createObjectURL(mp4Blob);
 
-        const a = document.createElement("a");
-        a.href = objectURL;
-        a.download = mp4Name;
-        a.click();
-        a.remove();
-        openSnackBar("動画の変換が完了しました！");
-        setRecordMovieDisabled(false);
+          const a = document.createElement("a");
+          a.href = objectURL;
+          a.download = mp4Name;
+          a.click();
+          a.remove();
+          openSnackBar("動画の変換が完了しました！");
+        } catch (error) {
+          openSnackBar("動画の変換に失敗しました: " + (error as Error).message);
+          setEncodeStatus("idle");
+        } finally {
+          setRecordMovieDisabled(false);
+        }
       });
       recorder.start();
       openSnackBar("動画を録画しています...");
@@ -639,11 +681,13 @@ const Home: NextPage = () => {
           }
           recorder.stop();
           setIsRecording(false);
+          setIsPlaySound(false);
         };
       } else if (audioBufferSrcRef.current) {
         audioBufferSrcRef.current.onended = () => {
           recorder.stop();
           setIsRecording(false);
+          setIsPlaySound(false);
         };
       }
     }, 100); // 100ms待機して録画用canvasのアニメーション開始を保証
@@ -667,9 +711,111 @@ const Home: NextPage = () => {
     setSnackBarProps({ isOpen: false, message: snackBarProps.message });
   };
 
+  // クリア（ページロード時の状態に戻す）
+  const onClear = () => {
+    // 再生停止
+    if (audioBufferSrcRef.current) {
+      try {
+        audioBufferSrcRef.current.stop(0);
+      } catch {}
+      audioBufferSrcRef.current = null;
+    }
+    if (videoElementRef.current) {
+      videoElementRef.current.pause();
+      if (videoElementRef.current.src?.startsWith("blob:")) {
+        URL.revokeObjectURL(videoElementRef.current.src);
+      }
+      videoElementRef.current.src = "";
+      videoElementRef.current = null;
+    }
+    mediaElementSourceRef.current?.disconnect();
+    mediaElementSourceRef.current = null;
+    stopCanvas2DAnimation();
+    stopWebGLAnimation();
+    clearImageCache();
+    clearWebGLImageCache();
+    if (imageCtx?.src?.startsWith("blob:")) {
+      URL.revokeObjectURL(imageCtx.src);
+    }
+    setImageCtx(null);
+    setImageFileName("");
+    setAudioFileName("");
+    decodedAudioBufferRef.current = null;
+    setIsPlaySound(false);
+    setPlaySoundDisabled(true);
+    setRecordMovieDisabled(true);
+    setIsRecording(false);
+    setEncodeStatus("idle");
+    setEncodeProgress(0);
+    setMode(0);
+    setCanvasSize("1920x1080");
+    setModeAdjustments({
+      scaleX: 1.0,
+      scaleY: 1.0,
+      offsetX: 0,
+      offsetY: 0,
+    });
+    openSnackBar("クリアしました");
+  };
+
   return (
     <>
       <main>
+        {/* 録画・変換中の注意喚起 */}
+        {(isRecording || encodeStatus !== "idle") && (
+          <Box
+            sx={{
+              position: "sticky",
+              top: 0,
+              zIndex: 1200,
+              bgcolor: "error.main",
+              color: "error.contrastText",
+              px: 2,
+              py: 2,
+              boxShadow: 4,
+              display: "flex",
+              alignItems: "center",
+              gap: 2,
+            }}
+          >
+            <Warning sx={{ fontSize: 32, flexShrink: 0 }} />
+            <Typography variant="h6" component="div" sx={{ fontWeight: 700 }}>
+              生成中はウィンドウを切り替えたり閉じないでください
+            </Typography>
+          </Box>
+        )}
+        {encodeStatus !== "idle" && (
+          <Box
+            sx={{
+              position: "sticky",
+              top: 0,
+              zIndex: 1100,
+              bgcolor: "primary.main",
+              color: "primary.contrastText",
+              px: 2,
+              py: 1.5,
+              boxShadow: 2,
+            }}
+          >
+            <Typography variant="body2" sx={{ mb: 0.5 }}>
+              {encodeStatus === "loading"
+                ? "FFmpegを読み込み中..."
+                : `MP4変換中... ${encodeProgress}%`}
+            </Typography>
+            <LinearProgress
+              variant={encodeStatus === "loading" ? "indeterminate" : "determinate"}
+              value={encodeProgress}
+              sx={{
+                height: 6,
+                borderRadius: 1,
+                bgcolor: "rgba(255,255,255,0.3)",
+                "& .MuiLinearProgress-bar": {
+                  bgcolor: "white",
+                },
+              }}
+            />
+          </Box>
+        )}
         <div className={styles.heading}>
           <h1 className={styles.heading__title}>Music Waves Visualizer(改)</h1>
           <div className={styles.heading__text}>
@@ -831,6 +977,15 @@ const Home: NextPage = () => {
                 size="medium"
               >
                 動画を生成
+              </Button>
+              <Button
+                variant="outlined"
+                color="inherit"
+                startIcon={<DeleteSweep />}
+                onClick={onClear}
+                size="medium"
+              >
+                クリア
               </Button>
             </Box>
           </div>

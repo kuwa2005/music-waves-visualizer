@@ -1,0 +1,18 @@
+---
+description: デプロイ・検証の運用ルール
+globs: **/*
+alwaysApply: true
+---
+
+# music-waves-visualizer デプロイルール
+
+## 検証・反映
+
+- **Docker版**: 修正後は**常に**Docker版へ反映する
+  - `docker compose -f docker-compose.https.yml up -d --build` で再ビルド・起動
+  - 検証は常にDocker版で行う
+
+## 指示がある場合のみ
+
+- **HTML版** (`npm run build:html`): ユーザーが指示したときのみ
+- **GitHub** (push等): ユーザーが指示したときのみ
