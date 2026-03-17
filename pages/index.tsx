@@ -124,6 +124,12 @@ const Home: NextPage = () => {
     const audioBufferSourceNode = audioCtxRef.current.createBufferSource();
     audioBufferSourceNode.buffer = decodedAudioBufferRef.current;
     audioBufferSourceNode.loop = false;
+    // 再生終了時にプレビューを停止
+    audioBufferSourceNode.onended = () => {
+      setIsPlaySound(false);
+      stopCanvas2DAnimation();
+      stopWebGLAnimation();
+    };
     // Node接続
     audioBufferSourceNode.connect(analyserRef.current);
     analyserRef.current.connect(audioCtxRef.current.destination);
@@ -1010,10 +1016,45 @@ const Home: NextPage = () => {
                 >
                   宇宙空間
                 </Button>
-                {effectType === "space" && (
+                <Button
+                  variant={effectType === "spaceConstant" ? "contained" : "outlined"}
+                  onClick={() => setEffectType("spaceConstant")}
+                  size="small"
+                >
+                  宇宙空間（等速）
+                </Button>
+                <Button
+                  variant={effectType === "spaceAudio" ? "contained" : "outlined"}
+                  onClick={() => setEffectType("spaceAudio")}
+                  size="small"
+                >
+                  宇宙空間（音源連動）
+                </Button>
+                <Button
+                  variant={effectType === "vignette" ? "contained" : "outlined"}
+                  onClick={() => setEffectType("vignette")}
+                  size="small"
+                >
+                  ビネット
+                </Button>
+                <Button
+                  variant={effectType === "rainbow" ? "contained" : "outlined"}
+                  onClick={() => setEffectType("rainbow")}
+                  size="small"
+                >
+                  レインボー
+                </Button>
+                <Button
+                  variant={effectType === "curtain" ? "contained" : "outlined"}
+                  onClick={() => setEffectType("curtain")}
+                  size="small"
+                >
+                  カーテン
+                </Button>
+                {effectType !== "none" && (
                   <>
                     <Typography variant="caption" color="textSecondary" sx={{ mx: 0.5 }}>
-                      密度:
+                      強度:
                     </Typography>
                     {([1, 2, 3] as EffectDensity[]).map((d) => (
                       <Button
@@ -1022,7 +1063,7 @@ const Home: NextPage = () => {
                         onClick={() => setEffectDensity(d)}
                         size="small"
                       >
-                        {d === 1 ? "少" : d === 2 ? "中" : "多"}
+                        {d === 1 ? "弱" : d === 2 ? "中" : "強"}
                       </Button>
                     ))}
                   </>

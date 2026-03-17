@@ -4,7 +4,12 @@
  */
 
 import type { ModeAdjustments } from './Canvas';
-import { updateAndGetSpaceParticles, type EffectParams } from './Effects';
+import { updateAndGetSpaceParticles, type EffectParams, type EffectType, type AudioReactiveData } from './Effects';
+
+const DENSITY_STRENGTH: Record<1 | 2 | 3, number> = { 1: 0.55, 2: 0.8, 3: 1.0 };
+const EFFECT_TYPE_TO_GL: Record<EffectType, number> = {
+  none: 0, space: 0, spaceConstant: 0, spaceAudio: 0, filmGrain: 1, vignette: 2, rainbow: 3, curtain: 4, glitch: 5,
+};
 
 // 頂点シェーダー（カラー描画用）
 const vertexShaderSource = `
@@ -59,10 +64,90 @@ void main() {
 }
 `;
 
+// エフェクトオーバーレイ用（フルスクリーンクアッド）
+const effectVertexShaderSource = `
+attribute vec2 a_position;
+uniform mediump vec2 u_resolution;
+varying vec2 v_uv;
+
+void main() {
+  vec2 zeroToOne = a_position / u_resolution;
+  vec2 zeroToTwo = zeroToOne * 2.0;
+  vec2 clipSpace = zeroToTwo - 1.0;
+  gl_Position = vec4(clipSpace * vec2(1, -1), 0, 1);
+  v_uv = zeroToOne;
+}
+`;
+
+const effectFragmentShaderSource = `
+precision mediump float;
+varying vec2 v_uv;
+uniform mediump float u_time;
+uniform mediump float u_strength;
+uniform mediump vec2 u_resolution;
+uniform int u_effectType;
+uniform mediump float u_bass;
+uniform mediump float u_volume;
+uniform mediump float u_highFreq;
+
+float hash(vec2 p) {
+  return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+}
+
+void main() {
+  vec2 uv = v_uv;
+  vec2 coord = uv * u_resolution;
+  float pulse = 0.6 + 0.4 * u_bass;
+  float str = u_strength * pulse;
+  
+  if (u_effectType == 1) {
+    float n = hash(floor(coord) + u_time);
+    gl_FragColor = vec4(vec3(n), str * 0.35);
+  } else if (u_effectType == 2) {
+    vec2 c = uv - 0.5;
+    float d = length(c) * 2.0;
+    float dyn = 0.5 + 0.5 * (u_volume * 0.7 + u_bass * 0.3);
+    float v = smoothstep(0.3, 1.2, d) * u_strength * dyn * 1.0;
+    gl_FragColor = vec4(0.0, 0.0, 0.0, v);
+  } else if (u_effectType == 3) {
+    float speed = 0.02 + 0.08 * (0.3 + 0.7 * u_volume);
+    float hue = fract(u_time * speed * 3.0) * 6.0;
+    vec3 rgb = vec3(
+      abs(hue - 3.0) - 1.0,
+      2.0 - abs(hue - 2.0),
+      2.0 - abs(hue - 4.0)
+    );
+    rgb = clamp(rgb, 0.0, 1.0);
+    float alpha = u_strength * (0.5 + 0.5 * u_volume) * 0.18;
+    gl_FragColor = vec4(rgb, alpha);
+  } else if (u_effectType == 4) {
+    float waveSpeed = 0.02 + 0.06 * (0.4 + 0.6 * u_bass);
+    float amp = 0.08 + 0.12 * u_bass;
+    float wave = sin(uv.x * 6.28318 * 1.5 + u_time * waveSpeed * 60.0) * 0.5 + 0.5;
+    float mask = smoothstep(0.3, 0.5, abs(uv.y - 0.5 - wave * amp));
+    float hue = fract(u_time * 0.02 + u_volume * 0.1) * 6.0;
+    vec3 rgb = vec3(
+      abs(hue - 3.0) - 1.0,
+      2.0 - abs(hue - 2.0),
+      2.0 - abs(hue - 4.0)
+    );
+    rgb = clamp(rgb, 0.0, 1.0);
+    gl_FragColor = vec4(rgb, mask * u_strength * (0.35 + 0.4 * u_volume) * 0.7);
+  } else if (u_effectType == 5) {
+    float trigger = 0.3 + 0.7 * (u_highFreq * 0.6 + u_volume * 0.4);
+    float line = step(0.95, hash(coord + vec2(0, u_time * (50.0 + 50.0 * u_highFreq))));
+    gl_FragColor = vec4(1.0, 1.0, 1.0, line * u_strength * trigger * 0.55);
+  } else {
+    gl_FragColor = vec4(0.0, 0.0, 0.0, 0.0);
+  }
+}
+`;
+
 interface WebGLRendererContext {
   gl: WebGLRenderingContext | WebGL2RenderingContext;
   program: WebGLProgram;
   textureProgram: WebGLProgram;
+  effectProgram: WebGLProgram;
   positionBuffer: WebGLBuffer;
   colorBuffer: WebGLBuffer;
   texCoordBuffer: WebGLBuffer;
@@ -73,6 +158,14 @@ interface WebGLRendererContext {
   texCoordLocation: number;
   texResolutionLocation: WebGLUniformLocation | null;
   textureLocation: WebGLUniformLocation | null;
+  effectPositionLocation: number;
+  effectResolutionLocation: WebGLUniformLocation | null;
+  effectTimeLocation: WebGLUniformLocation | null;
+  effectStrengthLocation: WebGLUniformLocation | null;
+  effectTypeLocation: WebGLUniformLocation | null;
+  effectBassLocation: WebGLUniformLocation | null;
+  effectVolumeLocation: WebGLUniformLocation | null;
+  effectHighFreqLocation: WebGLUniformLocation | null;
   imageTexture: WebGLTexture | null;
   imageCache: {
     image: HTMLImageElement | null;
@@ -159,6 +252,19 @@ function initWebGL(canvas: HTMLCanvasElement): WebGLRendererContext | null {
     return null;
   }
 
+  // エフェクトオーバーレイ用シェーダーをコンパイル
+  const effectVertexShader = createShader(gl, gl.VERTEX_SHADER, effectVertexShaderSource);
+  const effectFragmentShader = createShader(gl, gl.FRAGMENT_SHADER, effectFragmentShaderSource);
+  if (!effectVertexShader || !effectFragmentShader) {
+    console.error('Failed to create effect shaders');
+    return null;
+  }
+  const effectProgram = createProgram(gl, effectVertexShader, effectFragmentShader);
+  if (!effectProgram) {
+    console.error('Failed to create effect program');
+    return null;
+  }
+
   // バッファを作成
   const positionBuffer = gl.createBuffer();
   const colorBuffer = gl.createBuffer();
@@ -180,10 +286,20 @@ function initWebGL(canvas: HTMLCanvasElement): WebGLRendererContext | null {
   const texResolutionLocation = gl.getUniformLocation(textureProgram, 'u_resolution');
   const textureLocation = gl.getUniformLocation(textureProgram, 'u_texture');
 
+  const effectPositionLocation = gl.getAttribLocation(effectProgram, 'a_position');
+  const effectResolutionLocation = gl.getUniformLocation(effectProgram, 'u_resolution');
+  const effectTimeLocation = gl.getUniformLocation(effectProgram, 'u_time');
+  const effectStrengthLocation = gl.getUniformLocation(effectProgram, 'u_strength');
+  const effectTypeLocation = gl.getUniformLocation(effectProgram, 'u_effectType');
+  const effectBassLocation = gl.getUniformLocation(effectProgram, 'u_bass');
+  const effectVolumeLocation = gl.getUniformLocation(effectProgram, 'u_volume');
+  const effectHighFreqLocation = gl.getUniformLocation(effectProgram, 'u_highFreq');
+
   return {
     gl,
     program,
     textureProgram,
+    effectProgram,
     positionBuffer,
     colorBuffer,
     texCoordBuffer,
@@ -194,6 +310,14 @@ function initWebGL(canvas: HTMLCanvasElement): WebGLRendererContext | null {
     texCoordLocation,
     texResolutionLocation,
     textureLocation,
+    effectPositionLocation,
+    effectResolutionLocation,
+    effectTimeLocation,
+    effectStrengthLocation,
+    effectTypeLocation,
+    effectBassLocation,
+    effectVolumeLocation,
+    effectHighFreqLocation,
     imageTexture: null,
     imageCache: {
       image: null,
@@ -710,6 +834,43 @@ function drawCircle(
 }
 
 /**
+ * WebGLでエフェクトオーバーレイを描画（filmGrain, vignette, rainbow, curtain, glitch）音源連動
+ */
+function drawEffectOverlayWebGL(
+  ctx: WebGLRendererContext,
+  width: number,
+  height: number,
+  effect: EffectParams,
+  audio: AudioReactiveData
+): void {
+  const glType = EFFECT_TYPE_TO_GL[effect.type];
+  if (glType === 0) return;
+
+  const { gl, effectProgram, effectPositionLocation, effectResolutionLocation,
+          effectTimeLocation, effectStrengthLocation, effectTypeLocation,
+          effectBassLocation, effectVolumeLocation, effectHighFreqLocation,
+          positionBuffer } = ctx;
+  const strength = DENSITY_STRENGTH[effect.density];
+
+  gl.useProgram(effectProgram);
+  if (effectResolutionLocation) gl.uniform2f(effectResolutionLocation, width, height);
+  if (effectTimeLocation) gl.uniform1f(effectTimeLocation, performance.now() * 0.001);
+  if (effectStrengthLocation) gl.uniform1f(effectStrengthLocation, strength);
+  if (effectTypeLocation) gl.uniform1i(effectTypeLocation, glType);
+  if (effectBassLocation) gl.uniform1f(effectBassLocation, audio.bass);
+  if (effectVolumeLocation) gl.uniform1f(effectVolumeLocation, audio.volume);
+  if (effectHighFreqLocation) gl.uniform1f(effectHighFreqLocation, audio.highFreq);
+
+  const positions = new Float32Array([0, 0, width, 0, 0, height, 0, height, width, 0, width, height]);
+  gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+  gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(effectPositionLocation);
+  gl.vertexAttribPointer(effectPositionLocation, 2, gl.FLOAT, false, 0, 0);
+
+  gl.drawArrays(gl.TRIANGLES, 0, 6);
+}
+
+/**
  * アニメーションループの本体
  */
 function renderFrame(): void {
@@ -770,6 +931,24 @@ function renderFrame(): void {
   // スペクトラムデータを取得
   const bufferLength = analyser.frequencyBinCount;
   const bufferData = new Uint8Array(bufferLength);
+  const freqForEffect = new Uint8Array(bufferLength);
+  const needsFreqForEffect = latestEffect && ["spaceAudio", "filmGrain", "vignette", "rainbow", "curtain", "glitch"].includes(latestEffect.type);
+  if (needsFreqForEffect) {
+    analyser.getByteFrequencyData(freqForEffect);
+  }
+
+  // 音声メトリクス（エフェクト連動用）
+  const getAudioReactive = (): AudioReactiveData => {
+    let bass = 0, volume = 0, highFreq = 0;
+    for (let i = 0; i < 16; i++) bass += freqForEffect[i];
+    for (let i = 0; i < bufferLength; i++) volume += freqForEffect[i];
+    for (let i = 200; i < Math.min(256, bufferLength); i++) highFreq += freqForEffect[i];
+    return {
+      bass: Math.min(1, bass / (16 * 200)),
+      volume: Math.min(1, volume / (bufferLength * 180)),
+      highFreq: Math.min(1, highFreq / (56 * 150)),
+    };
+  };
 
   // モードに応じて描画
   switch (mode) {
@@ -811,22 +990,29 @@ function renderFrame(): void {
   }
 
   // エフェクトオーバーレイ（プレビュー/録画中のみアニメーション）
-  if (latestEffect?.type === "space" && latestEffectActive) {
-    const now = performance.now();
-    const deltaTime = Math.min(now - lastEffectTime, 50);
-    lastEffectTime = now;
-    const particles = updateAndGetSpaceParticles(
-      canvasWidth,
-      canvasHeight,
-      latestEffect.density,
-      deltaTime
-    );
-    for (const p of particles) {
-      const r = p.r / 255;
-      const g = p.g / 255;
-      const b = p.b / 255;
-      const radius = Math.max(1, p.size / 2);
-      drawCircle(glContext, p.x, p.y, radius, r, g, b, p.alpha);
+  if (latestEffect && latestEffect.type !== "none" && latestEffectActive) {
+    if (latestEffect.type === "space" || latestEffect.type === "spaceConstant" || latestEffect.type === "spaceAudio") {
+      const now = performance.now();
+      const deltaTime = Math.min(now - lastEffectTime, 50);
+      lastEffectTime = now;
+      const variant = latestEffect.type === "space" ? "space" : latestEffect.type === "spaceConstant" ? "spaceConstant" : "spaceAudio";
+      const particles = updateAndGetSpaceParticles(
+        canvasWidth,
+        canvasHeight,
+        latestEffect.density,
+        deltaTime,
+        variant,
+        variant === "spaceAudio" ? getAudioReactive() : undefined
+      );
+      for (const p of particles) {
+        const r = p.r / 255;
+        const g = p.g / 255;
+        const b = p.b / 255;
+        const radius = Math.max(1, p.size / 2);
+        drawCircle(glContext, p.x, p.y, radius, r, g, b, p.alpha);
+      }
+    } else {
+      drawEffectOverlayWebGL(glContext, canvasWidth, canvasHeight, latestEffect, getAudioReactive());
     }
   }
 
@@ -1253,6 +1439,7 @@ export function cleanupWebGL(): void {
     const { gl, program, textureProgram, positionBuffer, colorBuffer, texCoordBuffer, imageTexture } = glContext;
     gl.deleteProgram(program);
     gl.deleteProgram(textureProgram);
+    gl.deleteProgram(glContext.effectProgram);
     gl.deleteBuffer(positionBuffer);
     gl.deleteBuffer(colorBuffer);
     gl.deleteBuffer(texCoordBuffer);

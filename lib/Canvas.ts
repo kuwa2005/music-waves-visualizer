@@ -1,4 +1,4 @@
-import { drawSpaceEffectCanvas, type EffectParams } from "./Effects";
+import { drawEffectOverlayCanvas, type EffectParams, type AudioReactiveData } from "./Effects";
 
 export type ModeAdjustments = {
   scaleX: number;
@@ -126,9 +126,9 @@ function drawImageToOffscreen(
 
 export const drawBars = (
   canvas: HTMLCanvasElement,
-  imageCtx: HTMLImageElement,
+  imageCtx: HTMLImageElement | null,
   mode: number,
-  analyser: AnalyserNode,
+  analyser: AnalyserNode | null,
   adjustments?: ModeAdjustments,
   effect?: EffectParams,
   isEffectActive?: boolean
@@ -179,7 +179,22 @@ export const drawBars = (
 
   const bufferLength = analyser.frequencyBinCount; // analyser.fftSizeの半分になる(1024)
   const bufferData = new Uint8Array(bufferLength);
-  
+  const freqForEffect = new Uint8Array(bufferLength);
+  analyser.getByteFrequencyData(freqForEffect);
+
+  // 音声メトリクス（エフェクト連動用）: 0〜1正規化（常に周波数データを使用）
+  const getAudioReactive = (): AudioReactiveData => {
+    let bass = 0, volume = 0, highFreq = 0;
+    for (let i = 0; i < 16; i++) bass += freqForEffect[i];
+    for (let i = 0; i < bufferLength; i++) volume += freqForEffect[i];
+    for (let i = 200; i < Math.min(256, bufferLength); i++) highFreq += freqForEffect[i];
+    return {
+      bass: Math.min(1, bass / (16 * 200)),
+      volume: Math.min(1, volume / (bufferLength * 180)),
+      highFreq: Math.min(1, highFreq / (56 * 150)),
+    };
+  };
+
   // 調整パラメータを適用
   // offsetX, offsetYはパーセンテージ（-150%〜150%）なので、Canvasサイズを掛けてピクセルに変換
   const offsetXPixels = (canvasWidth * adj.offsetX) / 100;
@@ -191,7 +206,7 @@ export const drawBars = (
   ctx.translate(-canvasWidth / 2, -canvasHeight / 2);
   
   if (mode === 0) {
-    analyser.getByteFrequencyData(bufferData); //spectrum data
+    analyser.getByteFrequencyData(bufferData);
     ctx.fillStyle = "rgba(255, 255, 255, 0.8)";
     const barsLength = 128;
     const barWidth = canvasWidth / barsLength;
@@ -246,7 +261,6 @@ export const drawBars = (
     }
   } else if (mode === 3) {
     // モード3: 上下対称バー
-    analyser.getByteFrequencyData(bufferData);
     const barsLength = 128;
     const barWidth = canvasWidth / barsLength;
     const centerY = canvasHeight / 2;
@@ -275,7 +289,6 @@ export const drawBars = (
     }
   } else if (mode === 4) {
     // モード4: ドット表示
-    analyser.getByteFrequencyData(bufferData);
     const dotsPerRow = 32;
     const dotsPerCol = 16;
     const dotSize = Math.min(canvasWidth / dotsPerRow, canvasHeight / dotsPerCol);
@@ -330,7 +343,6 @@ export const drawBars = (
     ctx.restore();
   } else if (mode === 6) {
     // モード6: 3D風バー（奥行き効果）
-    analyser.getByteFrequencyData(bufferData);
     const barsLength = 64;
     const barWidth = canvasWidth / barsLength;
     
@@ -371,9 +383,9 @@ export const drawBars = (
   // 最初のsave()に対応するrestore()
   ctx.restore();
 
-  // エフェクトオーバーレイ（プレビュー/録画中のみアニメーション）
-  if (effect?.type === "space" && isEffectActive) {
-    drawSpaceEffectCanvas(ctx, canvasWidth, canvasHeight, effect.density);
+  // エフェクトオーバーレイ（プレビュー/録画中のみ、音源連動）
+  if (effect && effect.type !== "none" && isEffectActive) {
+    drawEffectOverlayCanvas(ctx, canvasWidth, canvasHeight, effect, getAudioReactive());
   }
 
   // FPS測定
