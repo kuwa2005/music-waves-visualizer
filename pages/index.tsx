@@ -142,12 +142,20 @@ const Home: NextPage = () => {
     process.env.NEXT_PUBLIC_DEVELOPER_MODE === "true" ||
     process.env.NEXT_PUBLIC_DEV_MODE === "true";
 
-  // Mode
-  const [mode, setMode] = useState(0);
-  
-  // Canvas Size
+  // Mode（セッション用、エクスポート対象外）
+  const [mode, setMode] = useState<number>(() => {
+    if (typeof window === "undefined") return 0;
+    const saved = localStorage.getItem("session_mode");
+    return saved ? parseInt(saved, 10) : 0;
+  });
+
+  // Canvas Size（セッション用、エクスポート対象外）
   type CanvasSize = "1920x1080" | "1080x1920" | "1920x1920";
-  const [canvasSize, setCanvasSize] = useState<CanvasSize>("1920x1080");
+  const [canvasSize, setCanvasSize] = useState<CanvasSize>(() => {
+    if (typeof window === "undefined") return "1920x1080";
+    const saved = localStorage.getItem("session_canvasSize");
+    return (saved === "1080x1920" || saved === "1920x1920") ? saved : "1920x1080";
+  });
   
   // Mode adjustment parameters
   // offsetX, offsetYはパーセンテージ（-150%〜150%）
@@ -164,49 +172,100 @@ const Home: NextPage = () => {
     offsetY: 0, // パーセンテージ
   });
 
-  // エフェクト（グラフ種類とは独立、ON/OFF可能）
-  const [effectType, setEffectType] = useState<EffectType>("none");
-  const [effectDensity, setEffectDensity] = useState<EffectDensity>(2);
+  // エフェクト（共通設定: 選択中エフェクト + 各エフェクトごとの強度）
+  const EFFECT_TYPES_WITH_STRENGTH: EffectType[] = ["space", "spaceConstant", "spaceAudio", "vignette", "rainbow", "curtain"];
+  const defaultEffectDensities = (): Partial<Record<EffectType, EffectDensity>> => {
+    const o: Partial<Record<EffectType, EffectDensity>> = {};
+    EFFECT_TYPES_WITH_STRENGTH.forEach((t) => { o[t] = 2; });
+    return o;
+  };
+  const [effectType, setEffectType] = useState<EffectType>(() => {
+    if (typeof window === "undefined") return "none";
+    const saved = localStorage.getItem("common_effectType");
+    const valid: EffectType[] = ["none", "space", "spaceConstant", "spaceAudio", "vignette", "rainbow", "curtain"];
+    return saved && valid.includes(saved as EffectType) ? (saved as EffectType) : "none";
+  });
+  const [effectDensities, setEffectDensities] = useState<Partial<Record<EffectType, EffectDensity>>>(() => {
+    if (typeof window === "undefined") return defaultEffectDensities();
+    try {
+      const saved = localStorage.getItem("common_effectDensities");
+      if (saved) {
+        const parsed = JSON.parse(saved) as Partial<Record<EffectType, EffectDensity>>;
+        const result = defaultEffectDensities();
+        EFFECT_TYPES_WITH_STRENGTH.forEach((t) => {
+          if (parsed[t] === 1 || parsed[t] === 2 || parsed[t] === 3) result[t] = parsed[t];
+        });
+        return result;
+      }
+    } catch (_e) { /* ignore */ }
+    return defaultEffectDensities();
+  });
+  const effectDensity = (effectType === "none" ? 2 : (effectDensities[effectType] ?? 2)) as EffectDensity;
 
-  // 音量設定（目標LUFS、null=正規化なし）
+  // 音量設定（共通設定: 目標LUFS、null=正規化なし）
   const [targetLufs, setTargetLufs] = useState<number | null>(() => {
     if (typeof window === "undefined") return null;
-    const saved = localStorage.getItem("targetLufs");
+    const saved = localStorage.getItem("common_targetLufs");
     return saved ? parseFloat(saved) : null;
   });
   const [targetLufsCustom, setTargetLufsCustom] = useState<string>(() => {
     if (typeof window === "undefined") return "";
-    const saved = localStorage.getItem("targetLufs");
+    const saved = localStorage.getItem("common_targetLufs");
     const n = saved ? parseFloat(saved) : null;
     return n != null && n !== -14 && n !== -15 ? String(n) : "";
   });
   useEffect(() => {
-    if (targetLufs != null) localStorage.setItem("targetLufs", String(targetLufs));
-    else localStorage.removeItem("targetLufs");
+    if (typeof window === "undefined") return;
+    if (targetLufs != null) localStorage.setItem("common_targetLufs", String(targetLufs));
+    else localStorage.removeItem("common_targetLufs");
   }, [targetLufs]);
 
-  // 設定の保存キー生成
-  const getSettingsKey = (mode: number, size: CanvasSize) => {
-    return `spectrumSettings_${mode}_${size}`;
+  // 共通設定の保存（音量・エフェクト種類・各エフェクト強度）
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    localStorage.setItem("common_effectType", effectType);
+    localStorage.setItem("common_effectDensities", JSON.stringify(effectDensities));
+  }, [effectType, effectDensities]);
+
+  // セッション用: モード・解像度（エクスポート対象外）
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    localStorage.setItem("session_mode", String(mode));
+    localStorage.setItem("session_canvasSize", canvasSize);
+  }, [mode, canvasSize]);
+
+  // レイアウト別スペアナ設定のキー（縦/横/正方形 × モード）
+  const LAYOUTS: CanvasSize[] = ["1920x1080", "1080x1920", "1920x1920"];
+  const getSettingsKey = (layout: CanvasSize, m: number) => {
+    return `spectrumSettings_${layout}_${m}`;
   };
 
-  // 設定を保存
-  const saveSettings = (mode: number, size: CanvasSize, adjustments: ModeAdjustments) => {
+  // レイアウト×モードの設定を保存
+  const saveSettings = (layout: CanvasSize, m: number, adjustments: ModeAdjustments) => {
     try {
-      const key = getSettingsKey(mode, size);
+      const key = getSettingsKey(layout, m);
       localStorage.setItem(key, JSON.stringify(adjustments));
     } catch (error) {
       console.error("設定の保存に失敗しました:", error);
     }
   };
 
-  // 設定を読み込み
-  const loadSettings = (mode: number, size: CanvasSize): ModeAdjustments | null => {
+  // レイアウト×モードの設定を読み込み
+  const loadSettings = (layout: CanvasSize, m: number): ModeAdjustments | null => {
     try {
-      const key = getSettingsKey(mode, size);
+      const key = getSettingsKey(layout, m);
       const saved = localStorage.getItem(key);
       if (saved) {
         return JSON.parse(saved);
+      }
+      // 旧形式のキー（mode_size）にも対応
+      const legacyKey = `spectrumSettings_${m}_${layout}`;
+      const legacy = localStorage.getItem(legacyKey);
+      if (legacy) {
+        const parsed = JSON.parse(legacy);
+        localStorage.setItem(key, legacy);
+        localStorage.removeItem(legacyKey);
+        return parsed;
       }
     } catch (error) {
       console.error("設定の読み込みに失敗しました:", error);
@@ -214,32 +273,136 @@ const Home: NextPage = () => {
     return null;
   };
 
-  // すべての設定をエクスポート
+  // 設定をエクスポート（共通: 音量・エフェクト強度 / レイアウト別: スペアナ倍率・位置）
   const exportAllSettings = (): string => {
-    const allSettings: Record<string, ModeAdjustments> = {};
-    const modes = [0, 1, 2, 3, 4, 5, 6];
-    const sizes: CanvasSize[] = ["1920x1080", "1080x1920", "1920x1920"];
-
-    modes.forEach((m) => {
-      sizes.forEach((s) => {
-        const key = getSettingsKey(m, s);
-        const saved = localStorage.getItem(key);
-        if (saved) {
-          allSettings[key] = JSON.parse(saved);
-        }
+    const spectrumSettings: Record<string, Record<string, ModeAdjustments>> = {};
+    LAYOUTS.forEach((layout) => {
+      const layoutData: Record<string, ModeAdjustments> = {};
+      [0, 1, 2, 3, 4, 5, 6].forEach((m) => {
+        const loaded = loadSettings(layout, m);
+        if (loaded) layoutData[String(m)] = loaded;
       });
+      if (Object.keys(layoutData).length > 0) spectrumSettings[layout] = layoutData;
     });
-
-    return JSON.stringify(allSettings, null, 2);
+    const output = {
+      common: {
+        targetLufs,
+        effectType,
+        effectDensities,
+      },
+      spectrumSettings: Object.keys(spectrumSettings).length > 0 ? spectrumSettings : undefined,
+    };
+    return JSON.stringify(output, null, 2);
   };
 
-  // 設定をインポート
+  // 設定をインポート（共通設定 + レイアウト別スペアナ設定）
   const importAllSettings = (jsonString: string): boolean => {
     try {
-      const allSettings = JSON.parse(jsonString);
-      Object.keys(allSettings).forEach((key) => {
-        localStorage.setItem(key, JSON.stringify(allSettings[key]));
+      const data = JSON.parse(jsonString);
+
+      // 新形式: common + spectrumSettings
+      if (data.common) {
+        const c = data.common;
+        if (c.targetLufs !== undefined) {
+          if (c.targetLufs === null) {
+            localStorage.removeItem("common_targetLufs");
+            setTargetLufs(null);
+            setTargetLufsCustom("");
+          } else {
+            const v = Number(c.targetLufs);
+            localStorage.setItem("common_targetLufs", String(v));
+            setTargetLufs(v);
+            setTargetLufsCustom(v === -14 || v === -15 ? "" : String(v));
+          }
+        }
+        if (c.effectType && ["none", "space", "spaceConstant", "spaceAudio", "vignette", "rainbow", "curtain"].includes(c.effectType)) {
+          localStorage.setItem("common_effectType", c.effectType);
+          setEffectType(c.effectType);
+        }
+        if (c.effectDensities && typeof c.effectDensities === "object") {
+          const merged = defaultEffectDensities();
+          EFFECT_TYPES_WITH_STRENGTH.forEach((t) => {
+            if (c.effectDensities[t] === 1 || c.effectDensities[t] === 2 || c.effectDensities[t] === 3) {
+              merged[t] = c.effectDensities[t];
+            }
+          });
+          localStorage.setItem("common_effectDensities", JSON.stringify(merged));
+          setEffectDensities(merged);
+        }
+      }
+
+      // レイアウト別スペアナ設定
+      if (data.spectrumSettings && typeof data.spectrumSettings === "object") {
+        LAYOUTS.forEach((layout) => {
+          const layoutData = data.spectrumSettings[layout];
+          if (layoutData && typeof layoutData === "object") {
+            Object.keys(layoutData).forEach((mStr) => {
+              const m = parseInt(mStr, 10);
+              if (!isNaN(m) && m >= 0 && m <= 6 && layoutData[mStr]) {
+                const adj = layoutData[mStr];
+                if (adj && typeof adj.scaleX === "number" && typeof adj.scaleY === "number" && typeof adj.offsetX === "number" && typeof adj.offsetY === "number") {
+                  saveSettings(layout, m, adj);
+                }
+              }
+            });
+          }
+        });
+      }
+
+      // 旧形式: appSettings + spectrumSettings_* の互換
+      if (data.appSettings) {
+        const as = data.appSettings;
+        if (as.targetLufs !== undefined) {
+          if (as.targetLufs === null) {
+            setTargetLufs(null);
+            setTargetLufsCustom("");
+          } else {
+            const v = Number(as.targetLufs);
+            setTargetLufs(v);
+            setTargetLufsCustom(v === -14 || v === -15 ? "" : String(v));
+          }
+        }
+        if (as.effectType) setEffectType(as.effectType);
+        if (as.effectDensities) {
+          setEffectDensities((prev) => {
+            const merged = { ...prev };
+            EFFECT_TYPES_WITH_STRENGTH.forEach((t) => {
+              if (as.effectDensities[t] === 1 || as.effectDensities[t] === 2 || as.effectDensities[t] === 3) {
+                merged[t] = as.effectDensities[t];
+              }
+            });
+            return merged;
+          });
+        } else if (as.effectDensity != null && as.effectType) {
+          setEffectDensities((prev) => ({ ...prev, [as.effectType]: as.effectDensity }));
+        }
+      }
+      // 旧形式 spectrumSettings_{mode}_{layout} または spectrumSettings_{layout}_{mode} の互換
+      Object.keys(data).forEach((key) => {
+        if (key.startsWith("spectrumSettings_") && key !== "spectrumSettings") {
+          const val = data[key];
+          if (val && typeof val === "object" && val.scaleX != null && val.scaleY != null && val.offsetX != null && val.offsetY != null) {
+            const rest = key.replace("spectrumSettings_", "");
+            const parts = rest.split("_");
+            if (parts.length === 2) {
+              const a = parts[0];
+              const b = parts[1];
+              const aIsLayout = LAYOUTS.includes(a as CanvasSize);
+              const bIsLayout = LAYOUTS.includes(b as CanvasSize);
+              const aIsMode = /^\d+$/.test(a);
+              const bIsMode = /^\d+$/.test(b);
+              if (aIsMode && bIsLayout) {
+                saveSettings(b as CanvasSize, parseInt(a, 10), val);
+              } else if (aIsLayout && bIsMode) {
+                saveSettings(a as CanvasSize, parseInt(b, 10), val);
+              }
+            }
+          }
+        }
       });
+
+      const loaded = loadSettings(canvasSize, mode);
+      if (loaded) setModeAdjustments(loaded);
       return true;
     } catch (error) {
       console.error("設定のインポートに失敗しました:", error);
@@ -254,33 +417,25 @@ const Home: NextPage = () => {
         [key]: value,
       };
       // 設定を自動保存
-      saveSettings(mode, canvasSize, newAdjustments);
+      saveSettings(canvasSize, mode, newAdjustments);
       return newAdjustments;
     });
   };
 
   const onChangeMode = (event: SelectChangeEvent<string>) => {
     const newMode = Number(event.target.value);
-    // 現在の設定を保存してからモードを変更
-    saveSettings(mode, canvasSize, modeAdjustments);
+    saveSettings(canvasSize, mode, modeAdjustments);
     setMode(newMode);
-    // 新しいモードの設定を読み込み
-    const loaded = loadSettings(newMode, canvasSize);
-    if (loaded) {
-      setModeAdjustments(loaded);
-    }
+    const loaded = loadSettings(canvasSize, newMode);
+    if (loaded) setModeAdjustments(loaded);
   };
 
   const onChangeCanvasSize = (event: SelectChangeEvent<string>) => {
     const newSize = event.target.value as CanvasSize;
-    // 現在の設定を保存してからサイズを変更
-    saveSettings(mode, canvasSize, modeAdjustments);
+    saveSettings(canvasSize, mode, modeAdjustments);
     setCanvasSize(newSize);
-    // 新しいサイズの設定を読み込み
-    const loaded = loadSettings(mode, newSize);
-    if (loaded) {
-      setModeAdjustments(loaded);
-    }
+    const loaded = loadSettings(newSize, mode);
+    if (loaded) setModeAdjustments(loaded);
   };
 
   const getCanvasDimensions = (size: CanvasSize): { width: number; height: number } => {
@@ -304,10 +459,8 @@ const Home: NextPage = () => {
 
   // 初期設定の読み込み
   useEffect(() => {
-    const loaded = loadSettings(mode, canvasSize);
-    if (loaded) {
-      setModeAdjustments(loaded);
-    }
+    const loaded = loadSettings(canvasSize, mode);
+    if (loaded) setModeAdjustments(loaded);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -792,7 +945,7 @@ const Home: NextPage = () => {
       offsetY: 0,
     });
     setEffectType("none");
-    setEffectDensity(2);
+    setEffectDensities(defaultEffectDensities());
     setTargetLufs(null);
     setTargetLufsCustom("");
     openSnackBar("クリアしました");
@@ -1060,7 +1213,7 @@ const Home: NextPage = () => {
                       <Button
                         key={d}
                         variant={effectDensity === d ? "contained" : "outlined"}
-                        onClick={() => setEffectDensity(d)}
+                        onClick={() => setEffectDensities((prev) => ({ ...prev, [effectType]: d }))}
                         size="small"
                       >
                         {d === 1 ? "弱" : d === 2 ? "中" : "強"}
@@ -1289,7 +1442,7 @@ const Home: NextPage = () => {
                 現在の設定: モード{mode} × {canvasSize}
               </Typography>
               <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 2 }}>
-                設定は自動保存されます。モードや解像度を変更すると、対応する設定が自動的に読み込まれます。
+                共通設定（音量・各エフェクト強度）と、縦/横/正方形ごとのスペアナ倍率・位置を保存。エクスポート/インポートで復元できます。
               </Typography>
               <Divider sx={{ my: 2 }} />
               <Typography variant="subtitle2" gutterBottom>
@@ -1316,7 +1469,7 @@ const Home: NextPage = () => {
                     navigator.clipboard.readText().then((text) => {
                       if (importAllSettings(text)) {
                         // 現在の設定を再読み込み
-                        const loaded = loadSettings(mode, canvasSize);
+                        const loaded = loadSettings(canvasSize, mode);
                         if (loaded) {
                           setModeAdjustments(loaded);
                         }
@@ -1337,12 +1490,12 @@ const Home: NextPage = () => {
                 label="設定JSON（貼り付け用）"
                 variant="outlined"
                 size="small"
-                placeholder='{"spectrumSettings_0_1920x1080": {...}}'
+                placeholder='{"common": {"targetLufs": -14, "effectType": "space", "effectDensities": {...}}, "spectrumSettings": {"1920x1080": {"0": {...}}}}'
                 onChange={(e) => {
                   try {
                     const parsed = JSON.parse(e.target.value);
                     if (importAllSettings(e.target.value)) {
-                      const loaded = loadSettings(mode, canvasSize);
+                      const loaded = loadSettings(canvasSize, mode);
                       if (loaded) {
                         setModeAdjustments(loaded);
                       }
@@ -1360,13 +1513,15 @@ const Home: NextPage = () => {
                   color="error"
                   onClick={() => {
                     if (confirm("すべての保存された設定を削除しますか？")) {
-                      const modes = [0, 1, 2, 3, 4, 5, 6];
-                      const sizes: CanvasSize[] = ["1920x1080", "1080x1920", "1920x1920"];
-                      modes.forEach((m) => {
-                        sizes.forEach((s) => {
-                          localStorage.removeItem(getSettingsKey(m, s));
-                        });
+                      LAYOUTS.forEach((layout) => {
+                        [0, 1, 2, 3, 4, 5, 6].forEach((m) => localStorage.removeItem(getSettingsKey(layout, m)));
                       });
+                      ["common_targetLufs", "common_effectType", "common_effectDensities"].forEach((k) => localStorage.removeItem(k));
+                      setEffectType("none");
+                      setEffectDensities(defaultEffectDensities());
+                      setTargetLufs(null);
+                      setTargetLufsCustom("");
+                      setModeAdjustments({ scaleX: 1.0, scaleY: 1.0, offsetX: 0, offsetY: 0 });
                       openSnackBar("すべての設定を削除しました");
                     }
                   }}
