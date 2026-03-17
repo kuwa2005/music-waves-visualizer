@@ -1,6 +1,6 @@
-# Music Waves Visualizer 一般利用ユーザー規約
+# Music Waves Visualizer（改） 一般利用ユーザー規約
 
-Music Waves Visualizer（以下「本サービス」）は、画像・音声から動画を生成する Web サービスです。  
+Music Waves Visualizer（改）（以下「本サービス」）は、画像・音声から動画を生成する Web サービスです。  
 本サービスの利用者（以下「ユーザー」）は、本サービスを利用することで、以下の内容に同意したものとみなします。
 
 ---

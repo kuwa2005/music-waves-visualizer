@@ -1,7 +1,7 @@
-# Music Waves Visualizer EU 向けGDPR関連通知（案内）
+# Music Waves Visualizer（改） EU 向けGDPR関連通知（案内）
 
 本ドキュメントは、EU/EEA 域内に居住する利用者（以下「EUユーザー」）に対し、  
-Music Waves Visualizer（以下「本サービス」）の利用に関連して適用され得る GDPR 上のポイントを整理したものです。
+Music Waves Visualizer（改）（以下「本サービス」）の利用に関連して適用され得る GDPR 上のポイントを整理したものです。
 
 ---
 
