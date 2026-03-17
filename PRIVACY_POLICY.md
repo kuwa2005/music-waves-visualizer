@@ -1,4 +1,4 @@
-# Music Waves Visualizer プライバシーポリシー（案）
+# Music Waves Visualizer プライバシーポリシー
 
 Music Waves Visualizer（以下「本サービス」）は、画像・音声から動画を生成する Web サービスです。  
 本ポリシーは、本サービスにおけるユーザー情報等の取扱いについて定めます。
