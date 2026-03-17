@@ -273,16 +273,18 @@ const Home: NextPage = () => {
     return null;
   };
 
-  // 設定をエクスポート（共通: 音量・エフェクト強度 / レイアウト別: スペアナ倍率・位置）
+  const DEFAULT_ADJUSTMENTS: ModeAdjustments = { scaleX: 1.0, scaleY: 1.0, offsetX: 0, offsetY: 0 };
+
+  // 全設定を一括エクスポート（共通 + 全レイアウト×全モード）
   const exportAllSettings = (): string => {
     const spectrumSettings: Record<string, Record<string, ModeAdjustments>> = {};
     LAYOUTS.forEach((layout) => {
       const layoutData: Record<string, ModeAdjustments> = {};
       [0, 1, 2, 3, 4, 5, 6].forEach((m) => {
         const loaded = loadSettings(layout, m);
-        if (loaded) layoutData[String(m)] = loaded;
+        layoutData[String(m)] = loaded ?? DEFAULT_ADJUSTMENTS;
       });
-      if (Object.keys(layoutData).length > 0) spectrumSettings[layout] = layoutData;
+      spectrumSettings[layout] = layoutData;
     });
     const output = {
       common: {
@@ -290,17 +292,25 @@ const Home: NextPage = () => {
         effectType,
         effectDensities,
       },
-      spectrumSettings: Object.keys(spectrumSettings).length > 0 ? spectrumSettings : undefined,
+      spectrumSettings,
     };
     return JSON.stringify(output, null, 2);
   };
 
-  // 設定をインポート（共通設定 + レイアウト別スペアナ設定）
+  // 全設定をクリア（インポート前の一括リセット用）
+  const clearAllSettings = () => {
+    LAYOUTS.forEach((layout) => {
+      [0, 1, 2, 3, 4, 5, 6].forEach((m) => localStorage.removeItem(getSettingsKey(layout, m)));
+    });
+    ["common_targetLufs", "common_effectType", "common_effectDensities"].forEach((k) => localStorage.removeItem(k));
+  };
+
+  // 存在する項目のみ上書きインポート
   const importAllSettings = (jsonString: string): boolean => {
     try {
       const data = JSON.parse(jsonString);
 
-      // 新形式: common + spectrumSettings
+      // 新形式: common（存在する項目のみ上書き）
       if (data.common) {
         const c = data.common;
         if (c.targetLufs !== undefined) {
@@ -320,7 +330,7 @@ const Home: NextPage = () => {
           setEffectType(c.effectType);
         }
         if (c.effectDensities && typeof c.effectDensities === "object") {
-          const merged = defaultEffectDensities();
+          const merged = { ...effectDensities };
           EFFECT_TYPES_WITH_STRENGTH.forEach((t) => {
             if (c.effectDensities[t] === 1 || c.effectDensities[t] === 2 || c.effectDensities[t] === 3) {
               merged[t] = c.effectDensities[t];
@@ -402,7 +412,7 @@ const Home: NextPage = () => {
       });
 
       const loaded = loadSettings(canvasSize, mode);
-      if (loaded) setModeAdjustments(loaded);
+      setModeAdjustments(loaded ?? DEFAULT_ADJUSTMENTS);
       return true;
     } catch (error) {
       console.error("設定のインポートに失敗しました:", error);
@@ -1442,7 +1452,7 @@ const Home: NextPage = () => {
                 現在の設定: モード{mode} × {canvasSize}
               </Typography>
               <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 2 }}>
-                共通設定（音量・各エフェクト強度）と、縦/横/正方形ごとのスペアナ倍率・位置を保存。エクスポート/インポートで復元できます。
+                エクスポートは全設定を一括出力。インポートは存在する項目のみ上書きします。
               </Typography>
               <Divider sx={{ my: 2 }} />
               <Typography variant="subtitle2" gutterBottom>
@@ -1455,30 +1465,49 @@ const Home: NextPage = () => {
                   onClick={() => {
                     const json = exportAllSettings();
                     if (json) {
+                      const blob = new Blob([json], { type: "application/json" });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement("a");
+                      a.href = url;
+                      a.download = `music-waves-visualizer-settings-${new Date().toISOString().slice(0, 10)}.json`;
+                      a.click();
+                      URL.revokeObjectURL(url);
                       navigator.clipboard.writeText(json);
-                      openSnackBar("設定をクリップボードにコピーしました");
+                      openSnackBar("全設定をエクスポートしました（ファイル保存・クリップボード）");
                     }
                   }}
                 >
                   エクスポート
                 </Button>
+                <input
+                  type="file"
+                  accept=".json,application/json"
+                  style={{ display: "none" }}
+                  id="import-settings-file"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      const reader = new FileReader();
+                      reader.onload = () => {
+                        const text = reader.result as string;
+                        if (importAllSettings(text)) {
+                          const loaded = loadSettings(canvasSize, mode);
+                          setModeAdjustments(loaded ?? DEFAULT_ADJUSTMENTS);
+                          openSnackBar("設定をインポートしました（存在する項目のみ上書き）");
+                        } else {
+                          openSnackBar("設定のインポートに失敗しました");
+                        }
+                      };
+                      reader.readAsText(file);
+                    }
+                    e.target.value = "";
+                  }}
+                />
                 <Button
                   variant="outlined"
                   size="small"
-                  onClick={() => {
-                    navigator.clipboard.readText().then((text) => {
-                      if (importAllSettings(text)) {
-                        // 現在の設定を再読み込み
-                        const loaded = loadSettings(canvasSize, mode);
-                        if (loaded) {
-                          setModeAdjustments(loaded);
-                        }
-                        openSnackBar("設定をインポートしました");
-                      } else {
-                        openSnackBar("設定のインポートに失敗しました");
-                      }
-                    });
-                  }}
+                  component="label"
+                  htmlFor="import-settings-file"
                 >
                   インポート
                 </Button>
@@ -1493,13 +1522,11 @@ const Home: NextPage = () => {
                 placeholder='{"common": {"targetLufs": -14, "effectType": "space", "effectDensities": {...}}, "spectrumSettings": {"1920x1080": {"0": {...}}}}'
                 onChange={(e) => {
                   try {
-                    const parsed = JSON.parse(e.target.value);
+                    JSON.parse(e.target.value);
                     if (importAllSettings(e.target.value)) {
                       const loaded = loadSettings(canvasSize, mode);
-                      if (loaded) {
-                        setModeAdjustments(loaded);
-                      }
-                      openSnackBar("設定を適用しました");
+                      setModeAdjustments(loaded ?? DEFAULT_ADJUSTMENTS);
+                      openSnackBar("設定を適用しました（存在する項目のみ上書き）");
                     }
                   } catch (err) {
                     // パースエラーは無視（入力中）
@@ -1513,15 +1540,12 @@ const Home: NextPage = () => {
                   color="error"
                   onClick={() => {
                     if (confirm("すべての保存された設定を削除しますか？")) {
-                      LAYOUTS.forEach((layout) => {
-                        [0, 1, 2, 3, 4, 5, 6].forEach((m) => localStorage.removeItem(getSettingsKey(layout, m)));
-                      });
-                      ["common_targetLufs", "common_effectType", "common_effectDensities"].forEach((k) => localStorage.removeItem(k));
+                      clearAllSettings();
                       setEffectType("none");
                       setEffectDensities(defaultEffectDensities());
                       setTargetLufs(null);
                       setTargetLufsCustom("");
-                      setModeAdjustments({ scaleX: 1.0, scaleY: 1.0, offsetX: 0, offsetY: 0 });
+                      setModeAdjustments(DEFAULT_ADJUSTMENTS);
                       openSnackBar("すべての設定を削除しました");
                     }
                   }}
