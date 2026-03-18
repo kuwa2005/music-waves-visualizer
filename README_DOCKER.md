@@ -10,7 +10,25 @@
 
 ## クイックスタート
 
-### 本番モード
+### Docker HTTPS 版（推奨・検証用）
+
+```bash
+# 1. サーバーのIPアドレスで証明書を生成（初回のみ）
+./generate-ssl-cert.sh 192.168.0.234
+
+# 2. コンテナを起動（visualizer をビルドして nginx で配信）
+docker compose -f docker-compose.https.yml up -d --build
+```
+
+- アクセス: `https://<サーバーIP>:8443/visualizer/`（例: https://192.168.0.234:8443/visualizer/）
+- `visualizer/` 静的HTML版のみを nginx で配信するシンプルな構成です
+- リモート接続・SharedArrayBuffer（FFmpeg動画変換）には HTTPS が必須です
+- 自己署名証明書のため、ブラウザで「詳細」→「安全でないサイトへ」で進む必要があります
+- **重要**: 証明書は生成時に指定したIP用です。サーバーのIPが異なる場合は `./generate-ssl-cert.sh <正しいIP>` で再生成してください
+
+> **注意**: HTTP（ポート3000）でのリモート検証は COOP/COEP 制約により動作しません。検証は Docker HTTPS 版で行ってください。
+
+### 本番モード（Next.js スタンドアロン）
 
 ```bash
 docker-compose up --build
@@ -21,23 +39,6 @@ docker-compose up --build
 ```bash
 docker-compose -f docker-compose.dev.yml up --build
 ```
-
-### 他PCからHTTPSでアクセス（SharedArrayBuffer対応）
-
-```bash
-# 1. サーバーのIPアドレスで証明書を生成（初回のみ）
-./generate-ssl-cert.sh 192.168.0.234
-
-# 2. コンテナを起動
-docker compose -f docker-compose.https.yml up -d --build
-```
-
-- アクセス: `https://<サーバーIP>:8443`（例: https://192.168.0.234:8443）
-- 自己署名証明書のため、ブラウザで「詳細」→「安全でないサイトへ」で進む必要があります
-- FFmpeg動画変換（SharedArrayBuffer）が利用可能になります
-- **重要**: 証明書は生成時に指定したIP用です。サーバーのIPが異なる場合は `./generate-ssl-cert.sh <正しいIP>` で再生成してください
-
-上記以外はブラウザで http://localhost:3000 にアクセス
 
 ## 基本的なコマンド
 

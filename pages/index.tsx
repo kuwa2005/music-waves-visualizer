@@ -176,6 +176,13 @@ const Home: NextPage = () => {
   const [effectDensities, setEffectDensities] = useState<Partial<Record<EffectType, EffectDensity>>>(defaultEffectDensities());
   const effectDensity = (effectType === "none" ? 2 : (effectDensities[effectType] ?? 2)) as EffectDensity;
 
+  // スペクトラム調整
+  const [spectrumOpacity, setSpectrumOpacity] = useState<number>(0.9);      // 0.1〜1.0
+  const [spectrumFps, setSpectrumFps] = useState<number>(30);               // 1〜60
+  const [lineWidthWaveform, setLineWidthWaveform] = useState<number>(3.2);  // mode1
+  const [lineWidthCircle, setLineWidthCircle] = useState<number>(3.2);      // mode2
+  const [lineWidthSymWave, setLineWidthSymWave] = useState<number>(3.6);    // mode5
+
   // 音量設定（共通設定: 目標LUFS、null=正規化なし）
   const [targetLufs, setTargetLufs] = useState<number | null>(null);
   const [targetLufsCustom, setTargetLufsCustom] = useState<string>("");
@@ -518,12 +525,21 @@ const Home: NextPage = () => {
     }
 
     // 前のアニメーションを停止
+    // 描画を完全に停止・クリア
     stopCanvas2DAnimation();
     stopWebGLAnimation();
 
     // レンダラータイプに応じて描画関数を選択
     const effect = effectType !== "none" ? { type: effectType, density: effectDensity } : undefined;
     const isEffectActive = isPlaySound || isRecording;
+    const spectrumSettings = {
+      opacity: spectrumOpacity,
+      fps: spectrumFps,
+      lineWidthWaveform,
+      lineWidthCircle,
+      lineWidthSymWave,
+    };
+
     if (rendererType === 'webgl') {
       drawBarsWebGL(
         canvasRef.current,
@@ -532,7 +548,8 @@ const Home: NextPage = () => {
         analyserRef.current,
         modeAdjustments,
         effect,
-        isEffectActive
+        isEffectActive,
+        spectrumSettings
       );
     } else {
       drawBars(
@@ -542,7 +559,8 @@ const Home: NextPage = () => {
         analyserRef.current,
         modeAdjustments,
         effect,
-        isEffectActive
+        isEffectActive,
+        spectrumSettings
       );
     }
 
@@ -785,6 +803,13 @@ const Home: NextPage = () => {
     
     // キャンバスアニメーションを確実に開始（前回ストップで停止している場合に備える）
     const effect = effectType !== "none" ? { type: effectType, density: effectDensity } : undefined;
+    const spectrumSettings = {
+      opacity: spectrumOpacity,
+      fps: spectrumFps,
+      lineWidthWaveform,
+      lineWidthCircle,
+      lineWidthSymWave,
+    };
     if (canvasRef.current && analyserRef.current) {
       if (rendererType === "webgl") {
         drawBarsWebGL(
@@ -794,7 +819,8 @@ const Home: NextPage = () => {
           analyserRef.current,
           modeAdjustments,
           effect,
-          true  // 録画開始時はエフェクトを有効
+          true,  // 録画開始時はエフェクトを有効
+          spectrumSettings
         );
       } else {
         drawBars(
@@ -804,7 +830,8 @@ const Home: NextPage = () => {
           analyserRef.current,
           modeAdjustments,
           effect,
-          true  // 録画開始時はエフェクトを有効
+          true,  // 録画開始時はエフェクトを有効
+          spectrumSettings
         );
       }
     }
@@ -927,8 +954,16 @@ const Home: NextPage = () => {
     }
     mediaElementSourceRef.current?.disconnect();
     mediaElementSourceRef.current = null;
+    // 描画を完全停止し、キャンバスを背景だけの状態にクリア
     stopCanvas2DAnimation();
     stopWebGLAnimation();
+    if (canvasRef.current) {
+      const ctx = canvasRef.current.getContext("2d");
+      if (ctx) {
+        ctx.fillStyle = "rgba(34, 34, 34, 1.0)";
+        ctx.fillRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+      }
+    }
     clearImageCache();
     clearWebGLImageCache();
     if (imageCtx?.src?.startsWith("blob:")) {
@@ -961,60 +996,63 @@ const Home: NextPage = () => {
 
   return (
     <>
+      <div style={{ maxWidth: 900, margin: "0 auto", padding: "0 12px", boxSizing: "border-box" }}>
       <main>
-        {/* 録画・変換中の注意喚起 */}
+        {/* 録画・変換中の注意喚起（スクロール追随）。プログレスバーはその直下に表示 */}
         {(isRecording || encodeStatus !== "idle") && (
           <Box
             sx={{
               position: "sticky",
               top: 0,
               zIndex: 1200,
-              bgcolor: "error.main",
-              color: "error.contrastText",
-              px: 2,
-              py: 2,
               boxShadow: 4,
-              display: "flex",
-              alignItems: "center",
-              gap: 2,
             }}
           >
-            <Warning sx={{ fontSize: 32, flexShrink: 0 }} />
-            <Typography variant="h6" component="div" sx={{ fontWeight: 700 }}>
-              生成中はウィンドウを切り替えたり閉じないでください
-            </Typography>
-          </Box>
-        )}
-        {encodeStatus !== "idle" && (
-          <Box
-            sx={{
-              position: "sticky",
-              top: 0,
-              zIndex: 1100,
-              bgcolor: "primary.main",
-              color: "primary.contrastText",
-              px: 2,
-              py: 1.5,
-              boxShadow: 2,
-            }}
-          >
-            <Typography variant="body2" sx={{ mb: 0.5 }}>
-              {encodeStatus === "loading"
-                ? "FFmpegを読み込み中..."
-                : `MP4変換中... ${encodeProgress}%`}
-            </Typography>
-            <LinearProgress
-              variant={encodeStatus === "loading" ? "indeterminate" : "determinate"}
-              value={encodeProgress}
+            <Box
               sx={{
-                height: 6,
-                borderRadius: 1,
-                bgcolor: "rgba(255,255,255,0.3)",
-                "& .MuiLinearProgress-bar": {
-                  bgcolor: "white",
-                },
-              }}
-            />
+                bgcolor: "error.main",
+                color: "error.contrastText",
+                px: 2,
+                py: 1.5,
+                display: "flex",
+                alignItems: "center",
+                gap: 1.5,
+            }}
+          >
+            <Warning sx={{ fontSize: 28, flexShrink: 0 }} />
+              <Typography variant="h6" component="div" sx={{ fontWeight: 700 }}>
+                生成中はウィンドウを切り替えたり閉じないでください
+              </Typography>
+            </Box>
+            {encodeStatus !== "idle" && (
+              <Box
+                sx={{
+                  bgcolor: "primary.main",
+                  color: "primary.contrastText",
+                  px: 2,
+                  py: 1,
+                  borderTop: "1px solid rgba(255,255,255,0.2)",
+                }}
+              >
+                <Typography variant="body2" sx={{ mb: 0.5 }}>
+                  {encodeStatus === "loading"
+                    ? "FFmpegを読み込み中..."
+                    : `MP4変換中... ${encodeProgress}%`}
+                </Typography>
+                <LinearProgress
+                  variant={encodeStatus === "loading" ? "indeterminate" : "determinate"}
+                  value={encodeProgress}
+                  sx={{
+                    height: 6,
+                    borderRadius: 1,
+                    bgcolor: "rgba(255,255,255,0.3)",
+                    "& .MuiLinearProgress-bar": {
+                      bgcolor: "white",
+                    },
+                  }}
+                />
+              </Box>
+            )}
           </Box>
         )}
         <div className={styles.heading}>
@@ -1029,17 +1067,17 @@ const Home: NextPage = () => {
           onDrop={handleDrop}
           onDragOver={handleDragOver}
         >
-          <Typography variant="body2" sx={{ mb: 2, fontWeight: 500 }}>
+          <Typography variant="body2" sx={{ mb: 0.25, fontWeight: 500 }}>
             ファイルをドラッグ&ドロップ（複数ファイル対応）
           </Typography>
-          <Box sx={{ display: "flex", flexDirection: "column", gap: 2, alignItems: "stretch" }}>
-            <Box sx={{ display: "flex", gap: 2, alignItems: "center", justifyContent: "center", width: "100%" }}>
+          <Box sx={{ display: "flex", flexDirection: "column", gap: 0.75, alignItems: "stretch" }}>
+            <Box sx={{ display: "flex", gap: 1.5, alignItems: "center", justifyContent: "center", width: "100%" }}>
               <Button
                 variant="outlined"
                 component="label"
                 startIcon={<PhotoLibrary />}
                 size="medium"
-                sx={{ flexShrink: 0 }}
+                sx={{ flexShrink: 0, minWidth: 210 }}
               >
                 画像を選ぶ
                 <input
@@ -1065,13 +1103,13 @@ const Home: NextPage = () => {
                 {imageFileName || "未選択"}
               </Typography>
             </Box>
-            <Box sx={{ display: "flex", gap: 2, alignItems: "center", justifyContent: "center", width: "100%" }}>
+            <Box sx={{ display: "flex", gap: 1.5, alignItems: "center", justifyContent: "center", width: "100%" }}>
               <Button
                 variant="outlined"
                 component="label"
                 startIcon={<LibraryMusic />}
                 size="medium"
-                sx={{ flexShrink: 0 }}
+                sx={{ flexShrink: 0, minWidth: 210 }}
               >
                 音楽ファイルを選ぶ
                 <input
@@ -1098,7 +1136,7 @@ const Home: NextPage = () => {
               </Typography>
             </Box>
           </Box>
-          <Typography variant="caption" color="textSecondary" sx={{ mt: 2, display: "block" }}>
+          <Typography variant="caption" color="textSecondary" sx={{ mt: 0, display: "block" }}>
             画像ファイルと音楽ファイルを自動判定します。MP4は音楽ファイルとして扱われます。
           </Typography>
         </div>
@@ -1106,11 +1144,12 @@ const Home: NextPage = () => {
         <div className={styles.menu}>
           <div className={styles.menu__controls}>
             <div className={styles.spectrumButtons}>
-              <Typography variant="body2" sx={{ mb: 1, textAlign: "center", fontWeight: 500 }}>
+              <Typography variant="body2" sx={{ mb: 0, textAlign: "center", fontWeight: 500 }}>
                 スペクトラムアナライザー
               </Typography>
               <Box sx={{ display: "flex", gap: 1, justifyContent: "center", flexWrap: "wrap" }}>
                 {[
+                  { value: -1, label: "OFF" },
                   { value: 0, label: "周波数バー" },
                   { value: 1, label: "折れ線" },
                   { value: 2, label: "円形" },
@@ -1131,7 +1170,7 @@ const Home: NextPage = () => {
               </Box>
             </div>
             <div className={styles.resolutionButtons}>
-              <Typography variant="body2" sx={{ mb: 1, textAlign: "center", fontWeight: 500 }}>
+              <Typography variant="body2" sx={{ mb: 0, textAlign: "center", fontWeight: 500 }}>
                 解像度
               </Typography>
               <Box sx={{ display: "flex", gap: 1, justifyContent: "center", flexWrap: "wrap" }}>
@@ -1159,7 +1198,7 @@ const Home: NextPage = () => {
               </Box>
             </div>
             <div className={styles.effectButtons}>
-              <Typography variant="body2" sx={{ mb: 1, textAlign: "center", fontWeight: 500 }}>
+              <Typography variant="body2" sx={{ mb: 0, textAlign: "center", fontWeight: 500 }}>
                 エフェクト
               </Typography>
               <Box sx={{ display: "flex", gap: 1, justifyContent: "center", flexWrap: "wrap", alignItems: "center" }}>
@@ -1232,37 +1271,6 @@ const Home: NextPage = () => {
               </Box>
             </div>
           </div>
-          <div className={styles.menu__right}>
-            <Box sx={{ display: "flex", gap: 2, justifyContent: "center", flexWrap: "wrap" }}>
-              <Button
-                variant="outlined"
-                startIcon={<VideoLibrary />}
-                disabled={playSoundDisabled}
-                onClick={onPlaySound}
-                size="medium"
-              >
-                {isPlaySound ? "ストップ" : "プレビュー"}
-              </Button>
-              <Button
-                variant="outlined"
-                startIcon={<FiberManualRecord />}
-                disabled={recordMovieDisabled || isPlaySound}
-                onClick={onRecordMovie}
-                size="medium"
-              >
-                動画を生成
-              </Button>
-              <Button
-                variant="outlined"
-                color="inherit"
-                startIcon={<DeleteSweep />}
-                onClick={onClear}
-                size="medium"
-              >
-                クリア
-              </Button>
-            </Box>
-          </div>
         </div>
 
         {isDeveloperMode && (
@@ -1299,20 +1307,22 @@ const Home: NextPage = () => {
                   <Button
                     variant={targetLufs === -14 ? "contained" : "outlined"}
                     size="small"
-                    onClick={() => { setTargetLufs(-14); setTargetLufsCustom(""); }}
+                    onClick={() => { setTargetLufs(-14); setTargetLufsCustom("-14"); }}
+                    sx={{ textTransform: "none" }}
                   >
                     YouTube等 (-14 LUFS)
                   </Button>
                   <Button
                     variant={targetLufs === -15 ? "contained" : "outlined"}
                     size="small"
-                    onClick={() => { setTargetLufs(-15); setTargetLufsCustom(""); }}
+                    onClick={() => { setTargetLufs(-15); setTargetLufsCustom("-15"); }}
+                    sx={{ textTransform: "none" }}
                   >
                     ニコニコ動画 (-15 LUFS)
                   </Button>
                   <TextField
                     size="small"
-                    label="任意の値 (dB)"
+                    label="手動入力 (dB)"
                     type="number"
                     value={targetLufsCustom}
                     onChange={(e) => {
@@ -1326,11 +1336,72 @@ const Home: NextPage = () => {
                       }
                     }}
                     placeholder="-14"
-                    sx={{ width: 100 }}
+                    sx={{ width: 140 }}
                     inputProps={{ min: -60, max: 0, step: 0.5 }}
                   />
                 </Box>
                 <Divider sx={{ my: 3 }} />
+
+                <Typography variant="subtitle2" sx={{ mb: 1.5, fontWeight: 600 }}>
+                  スペクトラム調整
+                </Typography>
+                <Box sx={{ mb: 2 }}>
+                  <Typography gutterBottom>透過率: {spectrumOpacity.toFixed(2)}</Typography>
+                  <Slider
+                    value={spectrumOpacity}
+                    min={0.1}
+                    max={1.0}
+                    step={0.05}
+                    onChange={(_, v) => setSpectrumOpacity(v as number)}
+                  />
+                </Box>
+                <Box sx={{ mb: 2 }}>
+                  <Typography gutterBottom>更新レート: {spectrumFps} fps</Typography>
+                  <Slider
+                    value={spectrumFps}
+                    min={1}
+                    max={60}
+                    step={1}
+                    onChange={(_, v) => setSpectrumFps(v as number)}
+                  />
+                </Box>
+                {mode === 1 && (
+                  <Box sx={{ mb: 3 }}>
+                    <Typography gutterBottom>折れ線の線幅: {lineWidthWaveform.toFixed(1)} px</Typography>
+                    <Slider
+                      value={lineWidthWaveform}
+                      min={1}
+                      max={8}
+                      step={0.1}
+                      onChange={(_, v) => setLineWidthWaveform(v as number)}
+                    />
+                  </Box>
+                )}
+                {mode === 2 && (
+                  <Box sx={{ mb: 3 }}>
+                    <Typography gutterBottom>円形の線幅: {lineWidthCircle.toFixed(1)} px</Typography>
+                    <Slider
+                      value={lineWidthCircle}
+                      min={1}
+                      max={8}
+                      step={0.1}
+                      onChange={(_, v) => setLineWidthCircle(v as number)}
+                    />
+                  </Box>
+                )}
+                {mode === 5 && (
+                  <Box sx={{ mb: 3 }}>
+                    <Typography gutterBottom>波形（上下対称）の線幅: {lineWidthSymWave.toFixed(1)} px</Typography>
+                    <Slider
+                      value={lineWidthSymWave}
+                      min={1}
+                      max={8}
+                      step={0.1}
+                      onChange={(_, v) => setLineWidthSymWave(v as number)}
+                    />
+                  </Box>
+                )}
+
                 <Typography variant="subtitle2" sx={{ mb: 2, fontWeight: 600 }}>
                   表示調整
                 </Typography>
@@ -1424,6 +1495,40 @@ const Home: NextPage = () => {
             ref={canvasRef}
             data-size={canvasSize}
           ></canvas>
+
+          <div className={styles.menu__right}>
+            <Box sx={{ display: "flex", gap: 1.5, justifyContent: "center", flexWrap: "wrap", mt: 1 }}>
+            <Button
+              variant="outlined"
+              startIcon={<VideoLibrary />}
+              disabled={playSoundDisabled}
+              onClick={onPlaySound}
+              size="medium"
+            >
+              {isPlaySound ? "ストップ" : "プレビュー"}
+            </Button>
+            <Button
+              variant="outlined"
+              startIcon={<FiberManualRecord />}
+              disabled={recordMovieDisabled || isPlaySound}
+              onClick={onRecordMovie}
+              size="medium"
+            >
+              動画を生成
+            </Button>
+            <Button
+              variant="outlined"
+              color="inherit"
+              startIcon={<DeleteSweep />}
+              onClick={onClear}
+              size="medium"
+              sx={{ ml: 2 }}
+            >
+              クリア
+            </Button>
+          </Box>
+          </div>
+
           <div className={styles.canvasInfo}>
             <Typography variant="caption" color="textSecondary">
               録画サイズ: {getCanvasDimensions(canvasSize).width}×{getCanvasDimensions(canvasSize).height}px
@@ -1431,11 +1536,6 @@ const Home: NextPage = () => {
           </div>
         </div>
       </main>
-
-      <CustomSnackbar
-        {...snackBarProps}
-        handleClose={handleClose}
-      ></CustomSnackbar>
 
       <div className={styles.developerPanel}>
         <Accordion>
@@ -1653,6 +1753,11 @@ const Home: NextPage = () => {
         </Accordion>
       </div>
 
+      <CustomSnackbar
+        {...snackBarProps}
+        handleClose={handleClose}
+      ></CustomSnackbar>
+
       <footer className={styles.footer}>
         <p>
           Original work ©{" "}
@@ -1675,6 +1780,7 @@ const Home: NextPage = () => {
           </a>
         </p>
       </footer>
+      </div>
     </>
   );
 };

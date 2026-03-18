@@ -10,9 +10,10 @@ body {
 }
 
 body {
-  font-family: sans-serif;
-  color: #565656;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  color: #34343c;
   margin: 0;
+  background: radial-gradient(circle at top left, #fef3e8 0, #f7f7fb 35%, #eef1f8 70%, #e5ecff 100%);
 }
 
 p {

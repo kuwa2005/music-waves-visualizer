@@ -1,0 +1,26 @@
+# visualizer 静的HTML版をHTTPSで配信するDockerイメージ
+# 使い方: docker compose -f docker-compose.https.yml up -d --build
+# アクセス: https://<サーバーIP>:8443/visualizer/
+
+# ビルドステージ
+FROM node:18-alpine AS builder
+WORKDIR /app
+
+RUN apk add --no-cache libc6-compat
+
+COPY package.json package-lock.json* ./
+RUN npm ci
+
+COPY . .
+ENV NEXT_TELEMETRY_DISABLED 1
+ENV BUILD_HTML 1
+
+RUN npm run build:html
+
+# 本番イメージ: nginx で静的ファイルを配信
+FROM nginx:alpine
+COPY --from=builder /app/visualizer /usr/share/nginx/html/visualizer
+COPY nginx-static-https.conf /etc/nginx/nginx.conf
+
+EXPOSE 443
+CMD ["nginx", "-g", "daemon off;"]

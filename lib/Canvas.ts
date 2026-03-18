@@ -1,10 +1,22 @@
 import { drawEffectOverlayCanvas, type EffectParams, type AudioReactiveData } from "./Effects";
 
+const BASE_LINE_WIDTH_WAVEFORM = 2.0;
+const BASE_LINE_WIDTH_CIRCLE   = 2.0;
+const BASE_LINE_WIDTH_SYMWAVE  = 2.4;
+
 export type ModeAdjustments = {
   scaleX: number;
   scaleY: number;
   offsetX: number;
   offsetY: number;
+};
+
+export type SpectrumSettings = {
+  opacity: number;
+  fps: number;
+  lineWidthWaveform: number;
+  lineWidthCircle: number;
+  lineWidthSymWave: number;
 };
 
 // FPS測定用の変数
@@ -131,8 +143,16 @@ export const drawBars = (
   analyser: AnalyserNode | null,
   adjustments?: ModeAdjustments,
   effect?: EffectParams,
-  isEffectActive?: boolean
+  isEffectActive?: boolean,
+  spectrumSettings?: SpectrumSettings
 ) => {
+  const settings: SpectrumSettings = spectrumSettings ?? {
+    opacity: 0.9,
+    fps: 30,
+    lineWidthWaveform: 3.2,
+    lineWidthCircle: 3.2,
+    lineWidthSymWave: 3.6,
+  };
   // GPU加速を有効化（willReadFrequently: falseでGPU最適化）
   const ctx = canvas.getContext("2d", {
     alpha: false, // 透明度を無効化してパフォーマンス向上
@@ -170,11 +190,41 @@ export const drawBars = (
 
   ctx.save();
 
+  // プレビュー/録画中のみスペクトラムを描画（エフェクトと同様）
+  if (!isEffectActive) {
+    ctx.restore();
+    return;
+  }
+
   if (!analyser) {
     animationFrameId = requestAnimationFrame(function () {
       drawBars(canvas, imageCtx, mode, analyser, adjustments, effect, isEffectActive);
     });
     return animationFrameId;
+  }
+
+  // 折れ線/波形モードの描画更新頻度を設定値に合わせて落とす
+  const now = performance.now();
+  const interval = 1000 / settings.fps;
+  if (mode === 1) {
+    const last = (drawBars as any)._lastTimeMode1 ?? 0;
+    if (now - last < interval) {
+      animationFrameId = requestAnimationFrame(function () {
+        drawBars(canvas, imageCtx, mode, analyser, adjustments, effect, isEffectActive);
+      });
+      return animationFrameId;
+    }
+    (drawBars as any)._lastTimeMode1 = now;
+  }
+  if (mode === 5) {
+    const last = (drawBars as any)._lastTimeMode5 ?? 0;
+    if (now - last < interval) {
+      animationFrameId = requestAnimationFrame(function () {
+        drawBars(canvas, imageCtx, mode, analyser, adjustments, effect, isEffectActive);
+      });
+      return animationFrameId;
+    }
+    (drawBars as any)._lastTimeMode5 = now;
   }
 
   const bufferLength = analyser.frequencyBinCount; // analyser.fftSizeの半分になる(1024)
@@ -205,7 +255,15 @@ export const drawBars = (
   ctx.scale(adj.scaleX, adj.scaleY);
   ctx.translate(-canvasWidth / 2, -canvasHeight / 2);
   
-  if (mode === 0) {
+  if (mode === -1) {
+    // OFF: 背景と画像のみ（スペアナ描画なし）
+    ctx.restore();
+    ctx.restore();
+    animationFrameId = requestAnimationFrame(function () {
+      drawBars(canvas, imageCtx, mode, analyser, adjustments, effect, isEffectActive);
+    });
+    return animationFrameId;
+  } else if (mode === 0) {
     analyser.getByteFrequencyData(bufferData);
     ctx.fillStyle = "rgba(255, 255, 255, 0.8)";
     const barsLength = 128;
@@ -216,9 +274,10 @@ export const drawBars = (
       ctx.fillRect(barX, canvasHeight - barHeight, barWidth, barHeight);
       barX += canvasWidth / barsLength;
     }
-  } else if (mode === 1) {
+} else if (mode === 1) {
     analyser.getByteTimeDomainData(bufferData); //Waveform Data
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.8)";
+    ctx.strokeStyle = `rgba(255, 255, 255, ${settings.opacity})`;
+    ctx.lineWidth = BASE_LINE_WIDTH_WAVEFORM * settings.lineWidthWaveform;
     ctx.beginPath();
     const centerY = canvasHeight / 2;
     const scale = (canvasHeight / 2) / 128;
@@ -232,9 +291,9 @@ export const drawBars = (
       }
     }
     ctx.stroke();
-  } else if (mode === 2) {
+} else if (mode === 2) {
     analyser.getByteFrequencyData(bufferData); //spectrum data
-    ctx.fillStyle = "rgba(255, 255, 255, 0.8)";
+    ctx.fillStyle = `rgba(255, 255, 255, ${settings.opacity})`;
 
     ctx.scale(0.5, 0.5);
     ctx.translate(canvasWidth, canvasHeight);
@@ -250,10 +309,11 @@ export const drawBars = (
     for (let i = 0; i < 256; i++) {
       let value = bufferData[i];
       if (value >= threshold) {
+        const barWidth = BASE_LINE_WIDTH_CIRCLE * settings.lineWidthCircle;
         ctx.fillRect(
           0,
           radius,
-          canvasWidth <= 450 ? 2 : 3,
+          barWidth,
           -value / barLengthFactor
         );
         ctx.rotate(((180 / 128) * Math.PI) / 180);
@@ -261,6 +321,7 @@ export const drawBars = (
     }
   } else if (mode === 3) {
     // モード3: 上下対称バー
+    analyser.getByteFrequencyData(bufferData);
     const barsLength = 128;
     const barWidth = canvasWidth / barsLength;
     const centerY = canvasHeight / 2;
@@ -289,6 +350,7 @@ export const drawBars = (
     }
   } else if (mode === 4) {
     // モード4: ドット表示
+    analyser.getByteFrequencyData(bufferData);
     const dotsPerRow = 32;
     const dotsPerCol = 16;
     const dotSize = Math.min(canvasWidth / dotsPerRow, canvasHeight / dotsPerCol);
@@ -317,8 +379,8 @@ export const drawBars = (
   } else if (mode === 5) {
     // モード5: 波形（上下対称）
     analyser.getByteTimeDomainData(bufferData);
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.8)";
-    ctx.lineWidth = 2;
+    ctx.strokeStyle = `rgba(255, 255, 255, ${settings.opacity})`;
+    ctx.lineWidth = settings.lineWidthSymWave;
     ctx.beginPath();
     
     const centerY = canvasHeight / 2;
@@ -343,6 +405,7 @@ export const drawBars = (
     ctx.restore();
   } else if (mode === 6) {
     // モード6: 3D風バー（奥行き効果）
+    analyser.getByteFrequencyData(bufferData);
     const barsLength = 64;
     const barWidth = canvasWidth / barsLength;
     

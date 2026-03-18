@@ -3,8 +3,11 @@
  * GPU加速により高速な描画を実現
  */
 
-import type { ModeAdjustments } from './Canvas';
+import type { ModeAdjustments, SpectrumSettings } from './Canvas';
 import { updateAndGetSpaceParticles, type EffectParams, type EffectType, type AudioReactiveData } from './Effects';
+
+const BASE_LINE_WIDTH_WAVEFORM = 2.0;
+const BASE_LINE_WIDTH_CIRCLE = 2.0;
 
 const DENSITY_STRENGTH: Record<1 | 2 | 3, number> = { 1: 0.55, 2: 0.8, 3: 1.0 };
 const EFFECT_TYPE_TO_GL: Record<EffectType, number> = {
@@ -193,6 +196,7 @@ let latestImageCtx: HTMLImageElement | null = null;
 let latestMode: number = 0;
 let latestAnalyser: AnalyserNode | null = null;
 let latestAdjustments: ModeAdjustments | undefined = undefined;
+let latestSpectrumSettings: SpectrumSettings | undefined = undefined;
 let latestEffect: EffectParams | undefined = undefined;
 let latestEffectActive: boolean = false;
 let lastEffectTime = performance.now();
@@ -915,6 +919,12 @@ function renderFrame(): void {
   // 背景を描画（WebGLでテクスチャとして描画）
   drawBackgroundWebGL(glContext, canvas, imageCtx);
 
+  // プレビュー/録画中のみスペクトラムを描画（エフェクトと同様）
+  if (!latestEffectActive) {
+    isAnimating = false;
+    return;
+  }
+
   // WebGLの準備（スペクトラム描画用）
   gl.viewport(0, 0, canvasWidth, canvasHeight);
   gl.useProgram(program);
@@ -927,6 +937,14 @@ function renderFrame(): void {
   // ブレンディングを有効化
   gl.enable(gl.BLEND);
   gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+  const settings: SpectrumSettings = latestSpectrumSettings ?? {
+    opacity: 0.9,
+    fps: 30,
+    lineWidthWaveform: 3.2,
+    lineWidthCircle: 3.2,
+    lineWidthSymWave: 3.6,
+  };
 
   // スペクトラムデータを取得
   const bufferLength = analyser.frequencyBinCount;
@@ -950,42 +968,60 @@ function renderFrame(): void {
     };
   };
 
+  // 更新レートを設定値に合わせて落とす（約 settings.fps fps）
+  if (mode === 1 || mode === 5) {
+    const now = performance.now();
+    const interval = 1000 / settings.fps;
+    const key = mode === 1 ? '_lastTimeMode1' : '_lastTimeMode5';
+    const last = (renderFrame as any)[key] ?? 0;
+  if (now - last < interval) {
+    if (isAnimating) {
+      requestAnimationFrame(renderFrame);
+    }
+    return;
+  }
+    (renderFrame as any)[key] = now;
+  }
+
   // モードに応じて描画
   switch (mode) {
+    case -1:
+      // OFF: 背景テクスチャのみ（スペアナ描画なし）
+      break;
     case 0:
       // 周波数バー
       analyser.getByteFrequencyData(bufferData);
-      drawMode0(glContext, bufferData, canvasWidth, canvasHeight, adj);
+      drawMode0(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
       break;
     case 1:
       // 波形（折れ線）
       analyser.getByteTimeDomainData(bufferData);
-      drawMode1(glContext, bufferData, canvasWidth, canvasHeight, adj);
+      drawMode1(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
       break;
     case 2:
       // 円形
       analyser.getByteFrequencyData(bufferData);
-      drawMode2(glContext, bufferData, canvasWidth, canvasHeight, adj);
+      drawMode2(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
       break;
     case 3:
       // 上下対称バー
       analyser.getByteFrequencyData(bufferData);
-      drawMode3(glContext, bufferData, canvasWidth, canvasHeight, adj);
+      drawMode3(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
       break;
     case 4:
       // ドット表示
       analyser.getByteFrequencyData(bufferData);
-      drawMode4(glContext, bufferData, canvasWidth, canvasHeight, adj);
+      drawMode4(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
       break;
     case 5:
       // 波形（上下対称）
       analyser.getByteTimeDomainData(bufferData);
-      drawMode5(glContext, bufferData, canvasWidth, canvasHeight, adj);
+      drawMode5(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
       break;
     case 6:
       // 3D風バー
       analyser.getByteFrequencyData(bufferData);
-      drawMode6(glContext, bufferData, canvasWidth, canvasHeight, adj);
+      drawMode6(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
       break;
   }
 
@@ -1039,7 +1075,8 @@ export const drawBarsWebGL = (
   analyser: AnalyserNode,
   adjustments?: ModeAdjustments,
   effect?: EffectParams,
-  isEffectActive?: boolean
+  isEffectActive?: boolean,
+  spectrumSettings?: SpectrumSettings
 ): void => {
   debugLog('drawBarsWebGL called', {
     hasImage: !!imageCtx,
@@ -1057,6 +1094,7 @@ export const drawBarsWebGL = (
   latestAdjustments = adjustments;
   latestEffect = effect;
   latestEffectActive = isEffectActive ?? false;
+  latestSpectrumSettings = spectrumSettings;
 
   // 既にアニメーション中の場合は、パラメータだけ更新して終了
   if (isAnimating) {
@@ -1088,11 +1126,13 @@ function drawMode0(
   bufferData: Uint8Array,
   canvasWidth: number,
   canvasHeight: number,
-  adj: ModeAdjustments
+  adj: ModeAdjustments,
+  settings: SpectrumSettings
 ): void {
   const barsLength = 128;
   const barWidth = canvasWidth / barsLength;
   let barX = 0;
+  const opacity = settings.opacity;
 
   for (let i = 0; i < barsLength; i++) {
     const barHeight = bufferData[i];
@@ -1106,8 +1146,7 @@ function drawMode0(
     const transformedWidth = x2 - x1;
     const transformedHeight = y2 - y1;
 
-    // 白色（rgba(255, 255, 255, 0.8)）
-    drawRect(ctx, x1, y1, transformedWidth, transformedHeight, 1.0, 1.0, 1.0, 0.8);
+    drawRect(ctx, x1, y1, transformedWidth, transformedHeight, 1.0, 1.0, 1.0, opacity);
     barX += barWidth;
   }
 }
@@ -1118,11 +1157,14 @@ function drawMode1(
   bufferData: Uint8Array,
   canvasWidth: number,
   canvasHeight: number,
-  adj: ModeAdjustments
+  adj: ModeAdjustments,
+  settings: SpectrumSettings
 ): void {
   const bufferLength = bufferData.length;
   const centerY = canvasHeight / 2;
   const scale = (canvasHeight / 2) / 128;
+  const opacity = settings.opacity;
+  const lineWidth = BASE_LINE_WIDTH_WAVEFORM * settings.lineWidthWaveform;
 
   for (let i = 0; i < bufferLength - 1; i++) {
     const x1 = (i / bufferLength) * canvasWidth;
@@ -1134,8 +1176,7 @@ function drawMode1(
     const [tx1, ty1] = applyTransform(x1, y1, canvasWidth, canvasHeight, adj);
     const [tx2, ty2] = applyTransform(x2, y2, canvasWidth, canvasHeight, adj);
 
-    // 白色（rgba(255, 255, 255, 0.8)）
-    drawLine(ctx, tx1, ty1, tx2, ty2, 1.0, 1.0, 1.0, 0.8, 2);
+    drawLine(ctx, tx1, ty1, tx2, ty2, 1.0, 1.0, 1.0, opacity, lineWidth);
   }
 }
 
@@ -1145,16 +1186,18 @@ function drawMode2(
   bufferData: Uint8Array,
   canvasWidth: number,
   canvasHeight: number,
-  adj: ModeAdjustments
+  adj: ModeAdjustments,
+  settings: SpectrumSettings
 ): void {
   const bass = Math.floor(bufferData[1]); // 1Hz Freq
   const baseRadius = 0.2 * canvasWidth <= 200 ? 0.2 * canvasWidth : 200;
   const radius = -(bass * 0.25 + baseRadius);  // radius is negative (matching Canvas.ts)
-  const barWidth = canvasWidth <= 450 ? 2 : 3;
+  const barWidth = BASE_LINE_WIDTH_CIRCLE * settings.lineWidthCircle;
 
   // User adjustment offsets in pixels
   const offsetXPixels = (canvasWidth * adj.offsetX) / 100;
   const offsetYPixels = (canvasHeight * adj.offsetY) / 100;
+  const opacity = settings.opacity;
 
   for (let i = 0; i < 256; i++) {
     const value = bufferData[i];
@@ -1176,8 +1219,7 @@ function drawMode2(
     const tx2 = localX2 * adj.scaleX * 0.5 + canvasWidth / 2 + adj.scaleX * offsetXPixels;
     const ty2 = localY2 * adj.scaleY * 0.5 + canvasHeight / 2 + adj.scaleY * offsetYPixels;
 
-    // 白色（rgba(255, 255, 255, 0.8)）
-    drawLine(ctx, tx1, ty1, tx2, ty2, 1.0, 1.0, 1.0, 0.8, barWidth);
+    drawLine(ctx, tx1, ty1, tx2, ty2, 1.0, 1.0, 1.0, opacity, barWidth);
   }
 }
 
@@ -1187,20 +1229,20 @@ function drawMode3(
   bufferData: Uint8Array,
   canvasWidth: number,
   canvasHeight: number,
-  adj: ModeAdjustments
+  adj: ModeAdjustments,
+  settings: SpectrumSettings
 ): void {
   const barsLength = 128;
   const barWidth = canvasWidth / barsLength;
   const centerY = canvasHeight / 2;
+  const opacity = settings.opacity;
 
   for (let i = 0; i < barsLength; i++) {
     const barHeight = bufferData[i] * 2;
     const hue = (i / barsLength) * 360;
 
     // Canvas.tsと同じグラデーション: 上側と下側で色を変える
-    // 上側: hsla(hue, 100%, 50%, 0.8)
     const [r1, g1, b1] = hslToRgb(hue, 1.0, 0.5);
-    // 下側: hsla(hue+60, 100%, 70%, 0.8)
     const [r2, g2, b2] = hslToRgb(hue + 60, 1.0, 0.7);
 
     const x = i * barWidth;
@@ -1213,8 +1255,7 @@ function drawMode3(
     const transformedWidth = x2 - x1;
     const transformedHeight = y2 - y1;
 
-    // グラデーション付きで描画
-    drawRectGradient(ctx, x1, y1, transformedWidth, transformedHeight, r1, g1, b1, 0.8, r2, g2, b2, 0.8);
+    drawRectGradient(ctx, x1, y1, transformedWidth, transformedHeight, r1, g1, b1, opacity, r2, g2, b2, opacity);
   }
 }
 
@@ -1224,12 +1265,14 @@ function drawMode4(
   bufferData: Uint8Array,
   canvasWidth: number,
   canvasHeight: number,
-  adj: ModeAdjustments
+  adj: ModeAdjustments,
+  settings: SpectrumSettings
 ): void {
   const bufferLength = bufferData.length;
   const dotsPerRow = 32;
   const dotsPerCol = 16;
   const dotSize = Math.min(canvasWidth / dotsPerRow, canvasHeight / dotsPerCol);
+  const baseOpacity = settings.opacity;
 
   for (let col = 0; col < dotsPerRow; col++) {
     const freqIndex = Math.floor((col / dotsPerRow) * bufferLength);
@@ -1237,7 +1280,7 @@ function drawMode4(
 
     for (let row = 0; row < dotsPerCol; row++) {
       const threshold = (255 / dotsPerCol) * (dotsPerCol - row);
-      const opacity = value > threshold ? 0.8 : 0.2;
+      const opacity = (value > threshold ? 0.8 : 0.2) * baseOpacity;
       const hue = (col / dotsPerRow) * 360;
       const [r, g, b] = hslToRgb(hue, 1.0, 0.5);
 
@@ -1261,11 +1304,15 @@ function drawMode5(
   bufferData: Uint8Array,
   canvasWidth: number,
   canvasHeight: number,
-  adj: ModeAdjustments
+  adj: ModeAdjustments,
+  settings: SpectrumSettings
 ): void {
   const bufferLength = bufferData.length;
   const centerY = canvasHeight / 2;
   const scale = canvasHeight / 512;
+  const opacity = settings.opacity;
+  // Canvas.ts mode5 と同様に lineWidthSymWave を直接使用
+  const lineWidth = settings.lineWidthSymWave;
 
   for (let i = 0; i < bufferLength - 1; i++) {
     const x1 = (i / bufferLength) * canvasWidth;
@@ -1276,14 +1323,14 @@ function drawMode5(
     // 上側（通常）の変換
     const [tx1, ty1] = applyTransform(x1, y1, canvasWidth, canvasHeight, adj);
     const [tx2, ty2] = applyTransform(x2, y2, canvasWidth, canvasHeight, adj);
-    drawLine(ctx, tx1, ty1, tx2, ty2, 1.0, 1.0, 1.0, 0.8, 2);
+    drawLine(ctx, tx1, ty1, tx2, ty2, 1.0, 1.0, 1.0, opacity, lineWidth);
 
     // 下側（反転）の変換
     const y1Mirror = canvasHeight - y1;
     const y2Mirror = canvasHeight - y2;
     const [tx1m, ty1m] = applyTransform(x1, y1Mirror, canvasWidth, canvasHeight, adj);
     const [tx2m, ty2m] = applyTransform(x2, y2Mirror, canvasWidth, canvasHeight, adj);
-    drawLine(ctx, tx1m, ty1m, tx2m, ty2m, 1.0, 1.0, 1.0, 0.8, 2);
+    drawLine(ctx, tx1m, ty1m, tx2m, ty2m, 1.0, 1.0, 1.0, opacity, lineWidth);
   }
 }
 
@@ -1293,11 +1340,13 @@ function drawMode6(
   bufferData: Uint8Array,
   canvasWidth: number,
   canvasHeight: number,
-  adj: ModeAdjustments
+  adj: ModeAdjustments,
+  settings: SpectrumSettings
 ): void {
   const bufferLength = bufferData.length;
   const barsLength = 64;
   const barWidth = canvasWidth / barsLength;
+  const opacity = settings.opacity;
 
   for (let i = 0; i < barsLength; i++) {
     const value = bufferData[Math.floor((i / barsLength) * bufferLength)];
@@ -1331,7 +1380,7 @@ function drawMode6(
 
     // 平行四辺形を描画
     const vertices = [t1x, t1y, t2x, t2y, t3x, t3y, t4x, t4y];
-    drawPolygon(ctx, vertices, r, g, b, 0.8);
+    drawPolygon(ctx, vertices, r, g, b, opacity);
   }
 }
 

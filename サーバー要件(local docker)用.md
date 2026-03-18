@@ -49,8 +49,11 @@
 
 ### 3.1 ポート
 
-- **HTTPポート**: 3000（デフォルト）
-- **ファイアウォール**: ポート3000へのアクセスを許可
+- **Docker HTTPS 版（推奨・検証用）**: 8443（`docker-compose.https.yml`）
+- **Next.js 本番/開発**: 3000（`docker-compose.yml` / `docker-compose.dev.yml`）
+- **ファイアウォール**: 使用するポートへのアクセスを許可
+
+> リモートからの検証は Docker HTTPS 版（8443）を使用してください。HTTP（3000）は COOP/COEP 制約によりリモートでは動作しません。
 
 ### 3.2 外部通信
 

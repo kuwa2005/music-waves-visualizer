@@ -29,38 +29,44 @@ https://lil.la/visualizer/
 
 ## クイックスタート
 
-### ローカル開発
+### Docker HTTPS 版（推奨・検証用）
 
 ```bash
-npm install
-npm run dev
+./generate-ssl-cert.sh <サーバーIP>   # 初回のみ
+docker compose -f docker-compose.https.yml up -d --build
 ```
 
-ブラウザで http://localhost:3000 にアクセス
+アクセス: `https://<サーバーIP>:8443/visualizer/`
 
-### Docker
+- リモート接続や SharedArrayBuffer（FFmpeg動画変換）を使う場合は HTTPS 必須です
+- 自己署名証明書のため、ブラウザで「詳細」→「安全でないサイトへ」で進んでください
+
+### その他の起動方法
 
 ```bash
-# 本番モード
+# 本番モード（Next.js スタンドアロン）
 docker-compose up --build
 
 # 開発モード
 docker-compose -f docker-compose.dev.yml up --build
 
-# 他PCからHTTPSでアクセス（FFmpeg動画変換対応）
-./generate-ssl-cert.sh <サーバーIP>
-docker compose -f docker-compose.https.yml up -d --build
+# ローカル開発（同一マシンのみ・localhost 必須）
+npm install && npm run dev
 ```
 
 詳細は [README_DOCKER.md](./README_DOCKER.md) を参照
 
-### レンタルサーバー用静的配布
+### レンタルサーバー用静的配布（静的HTML版）
 
 ```bash
 npm run build:html
 ```
 
-`html/` ディレクトリをサーバーの `visualizer` フォルダにアップロードし、`https://あなたのドメイン/visualizer/` でアクセス可能
+- 生成される `visualizer/` は **静的HTML版** です（Next.js の `next export` 結果）。
+- デフォルト設定では **`/visualizer` パスに固定** されているため、
+  サーバー上の `visualizer` ディレクトリにそのままアップロードして使います。
+  - 例: `public_html/visualizer/` に `index.html`, `_next/`, `.htaccess` などをすべて配置
+- 別パスで公開したい場合のカスタマイズ手順は [`HTML_HOSTING.md`](./HTML_HOSTING.md) を参照してください。
 
 ## 使用方法
 

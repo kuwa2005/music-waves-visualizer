@@ -47,4 +47,4 @@ ssl/
 
 # ビルド出力
 out/
-html/
+visualizer/
