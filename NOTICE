@@ -9,14 +9,21 @@ Music Waves Visualizer (改)
 
 === 依存ライブラリのライセンス ===
 
-本ソフトウェアは以下のオープンソースライブラリを使用しています。各ライブラリはそれぞれのライセンスに従います。
+本ソフトウェアは多数のオープンソースライブラリを使用しています。主なライセンス種別は以下のとおりです（npm の依存関係全体で、MIT が大多数、その他は ISC / BSD-2-Clause / BSD-3-Clause / Apache-2.0 / 0BSD 等の permissive ライセンスです）。
 
-- Next.js          - MIT License
-- React / react-dom - MIT License
-- @mui/material, @emotion/react, @emotion/styled - MIT License
-- @mui/icons-material - MIT License
-- @ffmpeg/ffmpeg   - MIT License（本ビルドでは FFmpeg 本体は CDN 等から読み込む構成であり、LGPL 等の FFmpeg 本体ライセンスは本リポジトリにバンドルされるパッケージには含まれません）
-- sass, typescript, eslint, eslint-config-next - 各パッケージのライセンス（多くは MIT）
-- @types/*          - 各パッケージのライセンス（多くは MIT）
+【代表的な直接依存】
+- Next.js, React, react-dom          - MIT
+- @mui/material, @mui/icons-material, @emotion/react, @emotion/styled - MIT
+- @ffmpeg/ffmpeg                    - MIT（FFmpeg 本体は CDN 等から読み込む構成のため、LGPL 等のバイナリは本リポジトリにバンドルされません）
+- sass, typescript, eslint, eslint-config-next, @types/* - 各パッケージのライセンス（多くは MIT）
 
-上記は代表的な依存関係の例です。正確な一覧とライセンス表記は `package.json` および各パッケージの配布元を参照してください。
+【依存ツリー内で他のライセンスを含む例（いずれも再配布・商用利用可能）】
+- MPL-2.0    - 例: axe-core（開発時・テスト用）
+- CC-BY-4.0  - 例: caniuse-lite（データ）
+- ODC-By-1.0 - 例: language-subtag-registry（データ）
+- Python-2.0 - 例: argparse（スクリプト用）
+
+全依存パッケージの一覧とライセンス表記は、リポジトリルートで次のコマンドで確認できます。
+  npx license-checker --summary
+  npx license-checker --csv > dependency-licenses.csv
+各パッケージの詳細は npm または各配布元のライセンス表記に従います。
