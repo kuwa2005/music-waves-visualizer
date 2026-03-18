@@ -92,19 +92,10 @@ npm run build:html
 
 ## ライセンス
 
-本リポジトリは、[komura-c/music-waves-visualizer](https://github.com/komura-c/music-waves-visualizer) をベースに改変を加えたものです。
+本リポジトリは [komura-c/music-waves-visualizer](https://github.com/komura-c/music-waves-visualizer) をベースに改変を加えたものです。  
+**MIT License** で提供します。元プロジェクトも MIT License で公開されています。
 
-2026-03 時点で、元リポジトリには GitHub 上で明示的なオープンソースライセンスファイル（`LICENSE` / `LICENSE.md` 等）が確認できません。
-そのため、このリポジトリとして新たに MIT などのオープンソースライセンスを付与して、
-元実装部分も含めたコード一式の再配布・改変・商用利用等を第三者に包括的に許諾することはできません。
+- オリジナル実装: Copyright (c) 2023 komura-c
+- 改変版: Copyright (c) 2022-2026 KURAGASHI (kuwa2005)
 
-本リポジトリのコードや、このアプリケーションを用いて生成した動画ファイル等を商用利用・再配布・組み込み等に利用したい場合は、
-必ずオリジナル著作権者である komura-c 氏の意向・許諾（または公開ライセンスの提示）を確認してください。
-
-依存ライブラリ（Next.js / React / MUI / Emotion / @ffmpeg/ffmpeg など）はそれぞれのライセンス（多くは MIT ライセンス）に従いますが、
-それらが本リポジトリ全体のコードの利用を自動的に許諾するものではありません。
-
-詳細な注意点や背景については [`NOTICE`](./NOTICE) を参照してください。
-
-Original work © komura-c  
-Modified version © [KURAGASHI](https://github.com/kuwa2005/music-waves-visualizer)
+詳細は [LICENSE](./LICENSE) を参照してください。依存ライブラリのライセンス一覧は [NOTICE](./NOTICE) を参照してください。

@@ -1,19 +1,22 @@
 Music Waves Visualizer (改)
 
-本リポジトリは、以下のコードを含みます。
+本リポジトリは MIT License の下で配布されています。LICENSE ファイルを参照してください。
 
-- オリジナル実装: https://github.com/komura-c/music-waves-visualizer （著作権者: komura-c）
-- 改変・追加実装: KURAGASHI (https://github.com/kuwa2005) ほか
+=== 著作権の帰属 ===
 
-現時点で、オリジナル実装には GitHub 上で明示的なオープンソースライセンスファイル（LICENSE, LICENSE.md 等）が確認できません。
-そのため、本リポジトリ全体として第三者に対して再配布・改変・商用利用等を包括的に許諾するオープンソースライセンスを付与することはできません。
+- オリジナル実装: https://github.com/komura-c/music-waves-visualizer （Copyright (c) 2023 komura-c）
+- 改変・追加実装: KURAGASHI (https://github.com/kuwa2005/music-waves-visualizer)
 
-本リポジトリのコードや生成物（本アプリケーションを用いて生成した動画ファイルなど）を商用利用・再配布・組み込み等に用いる場合は、
-必ず事前にオリジナル著作権者 komura-c 氏からの明示的な許諾、または公開ライセンスの提示を確認してください。
+=== 依存ライブラリのライセンス ===
 
-依存ライブラリ（Next.js, React, MUI, Emotion, @ffmpeg/ffmpeg 等）はそれぞれのライセンス（多くは MIT ライセンス）に従いますが、
-それらのライセンスが本リポジトリ全体のコードの利用を自動的に許諾するものではありません。
+本ソフトウェアは以下のオープンソースライブラリを使用しています。各ライブラリはそれぞれのライセンスに従います。
 
-この NOTICE は、ライセンス条件を定義するものではなく、本リポジトリに含まれるコードの出自と、
-現時点で確認できている権利関係上の制約・留意点を明示することのみを目的としています。
+- Next.js          - MIT License
+- React / react-dom - MIT License
+- @mui/material, @emotion/react, @emotion/styled - MIT License
+- @mui/icons-material - MIT License
+- @ffmpeg/ffmpeg   - MIT License（本ビルドでは FFmpeg 本体は CDN 等から読み込む構成であり、LGPL 等の FFmpeg 本体ライセンスは本リポジトリにバンドルされるパッケージには含まれません）
+- sass, typescript, eslint, eslint-config-next - 各パッケージのライセンス（多くは MIT）
+- @types/*          - 各パッケージのライセンス（多くは MIT）
 
+上記は代表的な依存関係の例です。正確な一覧とライセンス表記は `package.json` および各パッケージの配布元を参照してください。
