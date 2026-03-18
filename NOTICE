@@ -14,8 +14,11 @@ Music Waves Visualizer (改)
 【代表的な直接依存】
 - Next.js, React, react-dom          - MIT
 - @mui/material, @mui/icons-material, @emotion/react, @emotion/styled - MIT
-- @ffmpeg/ffmpeg                    - MIT（FFmpeg 本体は CDN 等から読み込む構成のため、LGPL 等のバイナリは本リポジトリにバンドルされません）
+- @ffmpeg/ffmpeg                    - MIT（JavaScript ラッパーのみ。下記「FFmpeg WASM について」を参照）
 - sass, typescript, eslint, eslint-config-next, @types/* - 各パッケージのライセンス（多くは MIT）
+
+【FFmpeg WASM について】
+動画の MP4 変換機能利用時、ユーザーのブラウザが第三者 CDN（unpkg）から FFmpeg の WebAssembly ビルド（@ffmpeg/core）を実行時に取得します。当リポジトリはその WASM をバンドル・配布していません。当該コードの著作権とライセンス（LGPL/GPL 等）は FFmpeg プロジェクトおよび ffmpeg.wasm の配布元に帰属し、当プロジェクトはそれを「頒布」していません。利用時は配布元のライセンス表記に従ってください。
 
 【依存ツリー内で他のライセンスを含む例（いずれも再配布・商用利用可能）】
 - MPL-2.0    - 例: axe-core（開発時・テスト用）
