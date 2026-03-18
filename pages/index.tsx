@@ -74,6 +74,7 @@ const Home: NextPage = () => {
 
   // GPU関連State
   const [gpuInfo, setGpuInfo] = useState<GpuInfo | null>(null);
+  // 起動時は互換性優先で Canvas 2D を標準にする
   const [rendererType, setRendererType] = useState<'canvas2d' | 'webgl'>('canvas2d');
   const [webCodecsSupported, setWebCodecsSupported] = useState<boolean>(false);
   const [hardwareEncoderSupport, setHardwareEncoderSupport] = useState<{
@@ -485,9 +486,7 @@ const Home: NextPage = () => {
       const info = getGpuInfo();
       setGpuInfo(info);
 
-      // 推奨レンダラーを設定
-      const recommended = getRecommendedRenderer(info);
-      setRendererType(recommended);
+      // 起動時に推奨レンダラーへ自動変更はしない（ユーザーが選択）
 
       // WebCodecsサポート確認
       const webCodecsAvailable = isWebCodecsSupported();
@@ -1735,7 +1734,7 @@ const Home: NextPage = () => {
                     onClick={() => setRendererType('canvas2d')}
                     size="small"
                   >
-                    Canvas 2D (互換性優先)
+                    CANVAS 2d(標準)
                   </Button>
                   <Button
                     variant={rendererType === 'webgl' ? 'contained' : 'outlined'}
@@ -1743,8 +1742,7 @@ const Home: NextPage = () => {
                     size="small"
                     disabled={!gpuInfo?.isWebGLSupported}
                   >
-                    WebGL (GPU加速)
-                    {gpuInfo && getRecommendedRenderer(gpuInfo) === 'webgl' && ' 🎯推奨'}
+                    WEBGL(GPU加速)
                   </Button>
                 </Box>
               </Box>
