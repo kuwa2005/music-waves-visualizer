@@ -30,3 +30,15 @@ Music Waves Visualizer (改)
   npx license-checker --summary
   npx license-checker --csv > dependency-licenses.csv
 各パッケージの詳細は npm または各配布元のライセンス表記に従います。
+
+=== GPL 汚染の有無について ===
+
+本リポジトリおよび npm 依存関係に GPL ライセンスのコードは含まれていません（npx license-checker で確認可能）。本プロジェクトが頒布するのは MIT 等の permissive ライセンスのコードのみです。
+
+GPL/LGPL が関係し得るのは上記の FFmpeg WASM（@ffmpeg/core）のみですが、当プロジェクトは次の理由により GPL の「頒布」を行っておらず、本リポジトリのコードが GPL の派生著作物となることもありません。
+
+- 当リポジトリおよびビルド成果物に @ffmpeg/core（WASM）はバンドル・同梱していない。
+- 当該 WASM はユーザー環境において第三者 CDN から実行時に取得される。頒布者は CDN およびその配布元であり、当プロジェクトではない。
+- 当プロジェクトのコードは FFmpeg のソースを包含・リンクしておらず、著作権法上の「二次的著作物」を構成しない。
+
+以上により、本プロジェクトは GPL の義務（ソース提供等）の対象とはなっておらず、MIT ライセンスのまま配布しています。
