@@ -1,13 +1,25 @@
 import Head from "next/head";
 import type { AppProps } from "next/app";
-import React from "react";
+import React, { useEffect } from "react";
 import "../styles/globals.scss";
+import i18n from "../lib/i18n";
 import { GoogleAnalytics, usePageView } from "../lib/Gtag";
 
 const baseURL = process.env.NEXT_PUBLIC_DOMAIN ?? "";
 
+// ハイドレーション完了後にブラウザ言語で切り替え（サーバー/クライアント不一致を防ぐ）
+const useBrowserLanguage = () => {
+  useEffect(() => {
+    const browserLang = navigator.language?.toLowerCase() ?? "";
+    if (!browserLang.startsWith("ja")) {
+      i18n.changeLanguage("en");
+    }
+  }, []);
+};
+
 const App = ({ Component, pageProps }: AppProps) => {
   usePageView();
+  useBrowserLanguage();
 
   return (
     <>

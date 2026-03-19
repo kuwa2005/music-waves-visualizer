@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- Bilingual UI (Japanese / English) via i18next. Language auto-detected from browser.
 - ライセンス対応: 元作者 (komura-c) が MIT License を付与したため、本リポジトリに LICENSE（MIT）を追加し、README / NOTICE を更新
 - 設定の保存・エクスポート/インポートを新仕様に変更
   - 共通設定: 音量調整、各エフェクトの強度（エフェクトごとに個別保存）
@@ -29,6 +30,9 @@
 - 開発者モード機能（設定の保存・読み込み、エクスポート/インポート）
 
 ### Changed
+- モード6を3D風バーからグライコ風（1980年代コンポ風ピークホールド）に変更
+  - ピークレベルを「-」ダッシュでホールド、約350ms保持後にゆっくり減衰
+  - アンバー色のVUメーター風表示
 - 検証方法を Docker HTTPS 版に統一: ポート3000でのリモート検証は COOP/COEP 制約により廃止
 - Docker HTTPS版を整理: `visualizer/` 静的HTMLのみを nginx で配信するシンプル構成に変更
   - `html/` フォルダを廃止、`visualizer/` を開発の正とする
@@ -44,6 +48,7 @@
 - レイアウトをレスポンシブに改善（横幅フル使用）
 
 ### Fixed
+- React hydration errors (#418, #423, #425) when browser language is English (language switch moved to useEffect after hydration)
 - スペクトラムアナライザーをプレビュー/録画中のみ描画するよう変更（エフェクトと同様の動作）
 - Canvas 2D: モード3（上下対称バー）・モード4（ドット表示）・モード6（3D風バー）で getByteFrequencyData が呼ばれていなかった問題を修正
 - Docker HTTPS版: nginx に mime.types を追加し、CSS が正しい Content-Type で配信されるよう修正
@@ -59,9 +64,18 @@
 - faviconのbaseURL未設定時の404エラー（`undefinedfavicon.ico`）
 
 ### Documentation
+- Documentation unified: English main + Japanese section for all docs
 - README.mdを更新（新機能の説明を追加）
 - DEVELOPER_MODE.mdを追加（開発者モード機能の説明）
 - フッターに元記事へのリンクを追加
+
+---
+
+## 日本語（変更履歴の概要）
+
+- バイリンガルUI（日本語/英語）を追加。ブラウザ言語で自動切り替え。
+- Reactハイドレーションエラーを修正（英語環境での言語切り替えをuseEffectに移動）。
+- ドキュメントを英語メイン＋日本語セクションに統一。
 
 ## [Original Version]
 

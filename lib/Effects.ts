@@ -59,10 +59,11 @@ const DENSITY_COUNTS: Record<EffectDensity, number> = {
 // 音源連動用の最大星数（密度でスケール、表示数は音源で動的制御）
 const SPACE_AUDIO_MAX_COUNTS: Record<EffectDensity, number> = { 1: 100, 2: 180, 3: 280 };
 
-// 解像度に応じた星のサイズ（プレビュー縮小時も見えるように）
+// 解像度に応じた星のサイズ（最小4px、最大は従来の半分、大きい星は少なく）
 function getParticleSize(width: number, height: number): number {
   const minDim = Math.min(width, height);
-  return Math.max(6, minDim / 120) * (0.8 + Math.random() * 0.5);
+  const baseMax = Math.max(6, minDim / 180); // 従来の半分程度
+  return 4 + (baseMax - 4) * Math.pow(Math.random(), 1.5); // 最小4、大きい星は少なく
 }
 
 function initSpaceParticles(width: number, height: number, density: EffectDensity, variant: SpaceVariant): void {

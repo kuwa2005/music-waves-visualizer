@@ -1,29 +1,41 @@
-レンタルサーバー用 静的ファイル配布パック（/visualizer 前提）
-===============================================
+Static HTML deployment pack for shared hosting (/visualizer)
+===========================================================
 
-このディレクトリは **Next.js の静的エクスポート結果（完全な静的HTML版）** です。
-ビルド時の設定で **`/visualizer` パスに固定** されているため、
-そのまま使う場合は必ずサーバールート直下の `visualizer` ディレクトリに配置してください。
+This directory is the **Next.js static export output** (complete static HTML build).
+It is configured for the **/visualizer** path. Place contents in the server's
+`visualizer` directory.
 
-配置方法:
----------
-1. この visualizer フォルダの中身を、サーバーの visualizer ディレクトリにアップロード
-   例: public_html/visualizer/ に index.html, _next/, .htaccess 等をすべて配置
-
-2. アクセスURL: https://あなたのドメイン/visualizer/
-   例: https://hogehoge.com/visualizer/
-
-※ `/visualizer` 以外のパス（/mwv など）で公開したい場合は、そのままでは動きません。  
-　`next.config.js` の `basePath` / `assetPrefix` を変更して `npm run build:html` し直す必要があります。  
-　詳しくはリポジトリの `HTML_HOSTING.md` を参照してください。
-
-ビルド方法:
+Deployment:
 -----------
-プロジェクトルートで以下を実行:
+1. Upload contents of this visualizer folder to the server's visualizer directory
+   Example: public_html/visualizer/ with index.html, _next/, .htaccess, etc.
+
+2. Access URL: https://your-domain/visualizer/
+   Example: https://example.com/visualizer/
+
+※ For a different path (e.g. /mwv), edit basePath/assetPrefix in next.config.js
+   and run `npm run build:html` again. See HTML_HOSTING.md in the repository.
+
+Build:
+------
+From project root:
   npm run build:html
 
-注意事項:
----------
-- .htaccess は SharedArrayBuffer（FFmpeg動画変換）用のヘッダーを設定します
-- Apache で mod_headers が有効な場合のみ動作します
-- ヘッダーが設定できない環境では、波形表示・再生は動きますが MP4 ダウンロードは利用できません
+Notes:
+------
+- .htaccess sets headers for SharedArrayBuffer (FFmpeg video conversion)
+- Requires Apache mod_headers. Without these headers, waveform display works
+  but MP4 download may not be available.
+
+---
+
+日本語
+------
+このディレクトリは Next.js の静的エクスポート結果です。`/visualizer` パス用です。
+サーバーの visualizer ディレクトリに配置してください。
+
+配置: public_html/visualizer/ に index.html, _next/, .htaccess 等をすべて配置
+アクセス: https://あなたのドメイン/visualizer/
+
+別パスで公開する場合は next.config.js の basePath/assetPrefix を変更して
+`npm run build:html` を再実行してください。リポジトリの HTML_HOSTING.md を参照。

@@ -4,6 +4,7 @@
  */
 
 import type { ModeAdjustments, SpectrumSettings } from './Canvas';
+import { GLYCO_COLOR_SETS, GLYCO_GRADIENT_SETS } from './Canvas';
 import { updateAndGetSpaceParticles, type EffectParams, type EffectType, type AudioReactiveData } from './Effects';
 
 const BASE_LINE_WIDTH_WAVEFORM = 2.0;
@@ -200,6 +201,11 @@ let latestSpectrumSettings: SpectrumSettings | undefined = undefined;
 let latestEffect: EffectParams | undefined = undefined;
 let latestEffectActive: boolean = false;
 let lastEffectTime = performance.now();
+
+// グライコ風（モード6）ピークホールド用
+let glycoPeak: number[] = [];
+let glycoLastPeakTime: number[] = [];
+let lastGlycoMode = -1;
 
 // デバッグログ用フラグ
 const DEBUG_WEBGL = false;
@@ -1019,9 +1025,9 @@ function renderFrame(): void {
       drawMode5(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
       break;
     case 6:
-      // 3D風バー
+      // グライコ風（ピークホールド）
       analyser.getByteFrequencyData(bufferData);
-      drawMode6(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
+      drawMode6Glyco(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
       break;
   }
 
@@ -1259,7 +1265,7 @@ function drawMode3(
   }
 }
 
-// モード4: ドット表示（Canvas.tsに合わせる）
+// モード4: ドット表示（32列×16行をキャンバス全幅・全高で使い切る）
 function drawMode4(
   ctx: WebGLRendererContext,
   bufferData: Uint8Array,
@@ -1271,7 +1277,9 @@ function drawMode4(
   const bufferLength = bufferData.length;
   const dotsPerRow = 32;
   const dotsPerCol = 16;
-  const dotSize = Math.min(canvasWidth / dotsPerRow, canvasHeight / dotsPerCol);
+  const dotSizeX = canvasWidth / dotsPerRow;
+  const dotSizeY = canvasHeight / dotsPerCol;
+  const dotRadius = Math.min(dotSizeX, dotSizeY) / 3;
   const baseOpacity = settings.opacity;
 
   for (let col = 0; col < dotsPerRow; col++) {
@@ -1284,14 +1292,14 @@ function drawMode4(
       const hue = (col / dotsPerRow) * 360;
       const [r, g, b] = hslToRgb(hue, 1.0, 0.5);
 
-      const x = col * dotSize + dotSize / 2;
-      const y = row * dotSize + dotSize / 2;
+      const x = col * dotSizeX + dotSizeX / 2;
+      const y = row * dotSizeY + dotSizeY / 2;
 
       // 変換を適用
       const [tx, ty] = applyTransform(x, y, canvasWidth, canvasHeight, adj);
 
       // スケールに応じて半径も調整
-      const radius = (dotSize / 3) * Math.min(adj.scaleX, adj.scaleY);
+      const radius = dotRadius * Math.min(adj.scaleX, adj.scaleY);
 
       drawCircle(ctx, tx, ty, radius, r, g, b, opacity);
     }
@@ -1334,8 +1342,39 @@ function drawMode5(
   }
 }
 
-// モード6: 3D風バー（Canvas.tsに合わせる）
-function drawMode6(
+// 縦グラデ固定: t(0=下,1=上)で青→黄緑→黄→橙→赤、表示エリア最大高さを100%とする
+function getVerticalEQFixedColor(t: number): [number, number, number] {
+  if (t <= 0.6) return [50 / 255, 80 / 255, 180 / 255];
+  const u = (t - 0.61) / 0.39; // 0.61→0, 1→1
+  const stops = [0, 0.282, 0.538, 0.769, 1]; // 0.61,0.72,0.82,0.91,1に対応
+  const colors: [number, number, number][] = [
+    [50 / 255, 80 / 255, 180 / 255],
+    [150 / 255, 220 / 255, 50 / 255],
+    [255 / 255, 220 / 255, 0 / 255],
+    [255 / 255, 150 / 255, 50 / 255],
+    [220 / 255, 50 / 255, 50 / 255],
+  ];
+  let i = 0;
+  while (i < stops.length - 1 && u > stops[i + 1]) i++;
+  const local = Math.max(0, Math.min(1, (u - stops[i]) / (stops[i + 1] - stops[i])));
+  const c0 = colors[i], c1 = colors[i + 1];
+  return [
+    c0[0] + (c1[0] - c0[0]) * local,
+    c0[1] + (c1[1] - c0[1]) * local,
+    c0[2] + (c1[2] - c0[2]) * local,
+  ];
+}
+
+// 縦グラデーション用カラー（下→上: 青紫→シアン→緑→赤橙）
+const VERTICAL_EQ_COLORS = [
+  [60 / 255, 50 / 255, 120 / 255] as [number, number, number],
+  [0 / 255, 160 / 255, 180 / 255] as [number, number, number],
+  [0 / 255, 220 / 255, 100 / 255] as [number, number, number],
+  [255 / 255, 100 / 255, 50 / 255] as [number, number, number],
+];
+
+// モード6: グライコ風（1980年代コンポ風ピークホールド）
+function drawMode6Glyco(
   ctx: WebGLRendererContext,
   bufferData: Uint8Array,
   canvasWidth: number,
@@ -1346,41 +1385,110 @@ function drawMode6(
   const bufferLength = bufferData.length;
   const barsLength = 64;
   const barWidth = canvasWidth / barsLength;
-  const opacity = settings.opacity;
+  const scale = (canvasHeight / 255) * 1.2;
+  const holdMs = 350;
+  const decayPerFrame = 2.5;
+  const now = performance.now();
+  const baseOpacity = settings.opacity;
+  const colorSet = settings.glycoColorSet ?? "amber";
+  const useVerticalGradient = colorSet === "verticalEQ";
+  const useVerticalGradientFixed = colorSet === "verticalEQFixed";
+  const peakLineWidth = 5; // ピーク「-」を太く
+
+  const getAdjustedValue = (i: number, rawValue: number) => {
+    const t = i / barsLength;
+    const gain = 1 + t * 0.25; // 高音域で最大1.25倍
+    return Math.min(255, rawValue * gain);
+  };
+
+  const effAdj: ModeAdjustments = { ...adj, scaleY: adj.scaleY / 3, scaleX: adj.scaleX };
+
+  if (lastGlycoMode !== 6) {
+    glycoPeak = new Array(barsLength).fill(0);
+    glycoLastPeakTime = new Array(barsLength).fill(0);
+  }
+  lastGlycoMode = 6;
+
+  const getColor = (i: number) => {
+    if (GLYCO_COLOR_SETS[colorSet]) {
+      const c = GLYCO_COLOR_SETS[colorSet];
+      return { bar: c.bar, dash: c.dash };
+    }
+    if (GLYCO_GRADIENT_SETS[colorSet]) {
+      const c = GLYCO_GRADIENT_SETS[colorSet](i, barsLength);
+      const dash: [number, number, number] = [Math.min(255, c[0] + 40), Math.min(255, c[1] + 40), Math.min(255, c[2] + 40)];
+      return { bar: c, dash };
+    }
+    const c = GLYCO_COLOR_SETS.amber;
+    return { bar: c.bar, dash: c.dash };
+  };
 
   for (let i = 0; i < barsLength; i++) {
-    const value = bufferData[Math.floor((i / barsLength) * bufferLength)];
-    const barHeight = value * 1.5;
+    const rawValue = bufferData[Math.floor((i / barsLength) * bufferLength)];
+    const value = getAdjustedValue(i, rawValue);
+    const barHeight = Math.min(value * scale, canvasHeight);
     const x = i * barWidth;
-    const offset = (i - barsLength / 2) * 2;
 
-    // Canvas.tsと同じ色: グラデーションの中間色を使用
-    const hue = (i / barsLength) * 360;
-    const [r, g, b] = hslToRgb(hue, 1.0, 0.5);
+    if (value >= glycoPeak[i]) {
+      glycoPeak[i] = value;
+      glycoLastPeakTime[i] = now;
+    } else if (now - glycoLastPeakTime[i] > holdMs) {
+      glycoPeak[i] = Math.max(0, glycoPeak[i] - decayPerFrame);
+    }
 
-    // Canvas.tsの平行四辺形の頂点:
-    // (x, canvasHeight)
-    // (x + barWidth, canvasHeight)
-    // (x + barWidth + offset * 0.3, canvasHeight - barHeight)
-    // (x + offset * 0.3, canvasHeight - barHeight)
-    const v1x = x;
-    const v1y = canvasHeight;
-    const v2x = x + barWidth;
-    const v2y = canvasHeight;
-    const v3x = x + barWidth + offset * 0.3;
-    const v3y = canvasHeight - barHeight;
-    const v4x = x + offset * 0.3;
-    const v4y = canvasHeight - barHeight;
+    const barOpacity = 0.6 * baseOpacity;
 
-    // 各頂点に変換を適用
-    const [t1x, t1y] = applyTransform(v1x, v1y, canvasWidth, canvasHeight, adj);
-    const [t2x, t2y] = applyTransform(v2x, v2y, canvasWidth, canvasHeight, adj);
-    const [t3x, t3y] = applyTransform(v3x, v3y, canvasWidth, canvasHeight, adj);
-    const [t4x, t4y] = applyTransform(v4x, v4y, canvasWidth, canvasHeight, adj);
+    if (useVerticalGradient) {
+      const [x1, y1] = applyTransform(x, canvasHeight - barHeight, canvasWidth, canvasHeight, effAdj);
+      const [x2, y2] = applyTransform(x + barWidth, canvasHeight, canvasWidth, canvasHeight, effAdj);
+      const rectW = Math.abs(x2 - x1);
+      const rectH = Math.abs(y2 - y1);
+      const segH = rectH / 3;
+      const rectX = Math.min(x1, x2);
+      const rectY = Math.min(y1, y2);
+      // 下→上: 青紫→シアン→緑→赤橙（各セグメント: 上側色→下側色）
+      drawRectGradient(ctx, rectX, rectY + segH * 2, rectW, segH, ...VERTICAL_EQ_COLORS[1], barOpacity, ...VERTICAL_EQ_COLORS[0], barOpacity);
+      drawRectGradient(ctx, rectX, rectY + segH, rectW, segH, ...VERTICAL_EQ_COLORS[2], barOpacity, ...VERTICAL_EQ_COLORS[1], barOpacity);
+      drawRectGradient(ctx, rectX, rectY, rectW, segH, ...VERTICAL_EQ_COLORS[3], barOpacity, ...VERTICAL_EQ_COLORS[2], barOpacity);
+    } else if (useVerticalGradientFixed) {
+      const rectW = Math.abs(applyTransform(x + barWidth, 0, canvasWidth, canvasHeight, effAdj)[0] - applyTransform(x, 0, canvasWidth, canvasHeight, effAdj)[0]);
+      const segCount = 16;
+      for (let s = 0; s < segCount; s++) {
+        const segBottom = canvasHeight - ((s + 1) / segCount) * barHeight;
+        const segTop = canvasHeight - (s / segCount) * barHeight;
+        const midY = (segBottom + segTop) / 2;
+        const t = (canvasHeight - midY) / canvasHeight;
+        const [r, g, b] = getVerticalEQFixedColor(t);
+        const [sx1, sy1] = applyTransform(x, segBottom, canvasWidth, canvasHeight, effAdj);
+        const [sx2, sy2] = applyTransform(x + barWidth, segTop, canvasWidth, canvasHeight, effAdj);
+        const segX = Math.min(sx1, sx2);
+        const segY = Math.min(sy1, sy2);
+        const segW = Math.abs(sx2 - sx1);
+        const segH = Math.abs(sy2 - sy1);
+        drawRect(ctx, segX, segY, segW, segH, r, g, b, barOpacity);
+      }
+    } else {
+      const { bar, dash } = getColor(i);
+      const [x1, y1] = applyTransform(x, canvasHeight - barHeight, canvasWidth, canvasHeight, effAdj);
+      const [x2, y2] = applyTransform(x + barWidth, canvasHeight, canvasWidth, canvasHeight, effAdj);
+      const rectX = Math.min(x1, x2);
+      const rectY = Math.min(y1, y2);
+      drawRect(ctx, rectX, rectY, Math.abs(x2 - x1), Math.abs(y2 - y1), bar[0] / 255, bar[1] / 255, bar[2] / 255, barOpacity);
+    }
 
-    // 平行四辺形を描画
-    const vertices = [t1x, t1y, t2x, t2y, t3x, t3y, t4x, t4y];
-    drawPolygon(ctx, vertices, r, g, b, opacity);
+    const peakHeight = Math.min(glycoPeak[i] * scale, canvasHeight);
+    const dashWidth = barWidth * 0.7;
+    const dashX = x + (barWidth - dashWidth) / 2;
+    const dashY = canvasHeight - peakHeight;
+    const [dx1, dy1] = applyTransform(dashX, dashY, canvasWidth, canvasHeight, effAdj);
+    const [dx2, dy2] = applyTransform(dashX + dashWidth, dashY, canvasWidth, canvasHeight, effAdj);
+    const dashOpacity = 0.95 * baseOpacity;
+    if (useVerticalGradient || useVerticalGradientFixed) {
+      drawLine(ctx, dx1, dy1, dx2, dy2, 100 / 255, 200 / 255, 255 / 255, dashOpacity, peakLineWidth);
+    } else {
+      const { dash } = getColor(i);
+      drawLine(ctx, dx1, dy1, dx2, dy2, dash[0] / 255, dash[1] / 255, dash[2] / 255, dashOpacity, peakLineWidth);
+    }
   }
 }
 

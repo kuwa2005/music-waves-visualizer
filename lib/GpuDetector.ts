@@ -141,37 +141,81 @@ export function getRecommendedRenderer(info: GpuInfo): 'webgl' | 'canvas2d' {
   return 'canvas2d';
 }
 
-/**
- * パフォーマンステスト（簡易版）
- */
-export async function benchmarkGpu(): Promise<{ fps: number; renderer: string }> {
+const BENCHMARK_DURATION = 800;
+
+/** Canvas 2DのFPS測定 */
+async function benchmarkCanvas2D(): Promise<number> {
   const canvas = document.createElement('canvas');
   canvas.width = 1920;
   canvas.height = 1080;
-
-  const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
-  if (!gl) {
-    return { fps: 0, renderer: 'none' };
-  }
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return 0;
 
   let frameCount = 0;
   const startTime = performance.now();
-  const duration = 1000; // 1秒間測定
 
   return new Promise((resolve) => {
     function render() {
-      if (performance.now() - startTime < duration) {
-        // 簡易的な描画テスト
+      if (performance.now() - startTime < BENCHMARK_DURATION) {
+        ctx.fillStyle = `rgb(${Math.random() * 255},${Math.random() * 255},${Math.random() * 255})`;
+        ctx.fillRect(0, 0, 1920, 1080);
+        frameCount++;
+        requestAnimationFrame(render);
+      } else {
+        const elapsed = performance.now() - startTime;
+        resolve(Math.round((frameCount / elapsed) * 1000));
+      }
+    }
+    render();
+  });
+}
+
+/** WebGLのFPS測定 */
+async function benchmarkWebGL(): Promise<number> {
+  const canvas = document.createElement('canvas');
+  canvas.width = 1920;
+  canvas.height = 1080;
+  const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
+  if (!gl) return 0;
+
+  let frameCount = 0;
+  const startTime = performance.now();
+
+  return new Promise((resolve) => {
+    function render() {
+      if (performance.now() - startTime < BENCHMARK_DURATION) {
         gl.clearColor(Math.random(), Math.random(), Math.random(), 1.0);
         gl.clear(gl.COLOR_BUFFER_BIT);
         frameCount++;
         requestAnimationFrame(render);
       } else {
         const elapsed = performance.now() - startTime;
-        const fps = Math.round((frameCount / elapsed) * 1000);
-        resolve({ fps, renderer: 'webgl' });
+        resolve(Math.round((frameCount / elapsed) * 1000));
       }
     }
     render();
   });
+}
+
+/**
+ * Canvas 2DとWebGLの両方をベンチマークし、高速な方を返す
+ */
+export async function benchmarkRenderers(): Promise<'canvas2d' | 'webgl'> {
+  const info = getGpuInfo();
+  if (!info.isWebGLSupported) return 'canvas2d';
+
+  const [canvasFps, webglFps] = await Promise.all([
+    benchmarkCanvas2D(),
+    benchmarkWebGL(),
+  ]);
+
+  return webglFps >= canvasFps ? 'webgl' : 'canvas2d';
+}
+
+/**
+ * @deprecated 互換性のため残す。benchmarkRenderersを使用すること
+ */
+export async function benchmarkGpu(): Promise<{ fps: number; renderer: string }> {
+  const fps = await benchmarkWebGL();
+  return { fps, renderer: 'webgl' };
 }

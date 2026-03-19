@@ -2,9 +2,11 @@ import "./@types/window.d";
 import type { NextPage } from "next";
 import styles from "../styles/Home.module.scss";
 
-import { useState, useRef, useEffect, useLayoutEffect } from "react";
+import { useState, useRef, useEffect, useLayoutEffect, useCallback } from "react";
 import {
   Button,
+  FormControl,
+  InputLabel,
   MenuItem,
   Select,
   SelectChangeEvent,
@@ -27,11 +29,12 @@ import {
   DeleteSweep,
   Warning,
 } from "@mui/icons-material";
+import i18n from "i18next";
 import { CustomSnackbar } from "../components/CustomSnackbar";
-import { drawBars, clearImageCache, getFPS, stopCanvas2DAnimation } from "../lib/Canvas";
+import { drawBars, clearImageCache, getFPS, stopCanvas2DAnimation, GLYCO_COLOR_SETS, GLYCO_GRADIENT_SETS } from "../lib/Canvas";
 import { drawBarsWebGL, getFPSWebGL, cleanupWebGL, stopWebGLAnimation, clearWebGLImageCache } from "../lib/WebGLRenderer";
 import type { EffectType, EffectDensity } from "../lib/Effects";
-import { getGpuInfo, getGpuDisplayName, getRecommendedRenderer, type GpuInfo } from "../lib/GpuDetector";
+import { getGpuInfo, getGpuDisplayName, benchmarkRenderers, type GpuInfo } from "../lib/GpuDetector";
 import { isWebCodecsSupported, checkHardwareEncoderSupport, getBestEncodingMethod } from "../lib/WebCodecsEncoder";
 import { generateMp4Video } from "../lib/Ffmpeg";
 
@@ -40,6 +43,7 @@ const hasWindow = () => {
 };
 
 const Home: NextPage = () => {
+  const t = useCallback((key: string, options?: Record<string, unknown>) => i18n.t(key, options), []);
   // クライアントサイドのみ
   if (hasWindow()) {
     // ブラウザによって異なる関数名を定義
@@ -52,11 +56,6 @@ const Home: NextPage = () => {
       window.webkitAudioContext ||
       window.mozAudioContext;
 
-    // 離脱ガード
-    window.addEventListener("beforeunload", (e) => {
-      e.preventDefault();
-      e.returnValue = "作成した動画は保存されませんが、よろしいですか？";
-    });
   }
 
   // UI State
@@ -76,6 +75,7 @@ const Home: NextPage = () => {
   const [gpuInfo, setGpuInfo] = useState<GpuInfo | null>(null);
   // 起動時は互換性優先で Canvas 2D を標準にする
   const [rendererType, setRendererType] = useState<'canvas2d' | 'webgl'>('canvas2d');
+  const exitConfirmRef = useRef(false);
   const [webCodecsSupported, setWebCodecsSupported] = useState<boolean>(false);
   const [hardwareEncoderSupport, setHardwareEncoderSupport] = useState<{
     h264: boolean;
@@ -83,6 +83,18 @@ const Home: NextPage = () => {
     vp9: boolean;
     av1: boolean;
   }>({ h264: false, h265: false, vp9: false, av1: false });
+
+  // 離脱ガード（画像/音楽選択時のみ、MP4ダウンロード完了またはクリアで解除）
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => {
+      if (exitConfirmRef.current) {
+        e.preventDefault();
+        e.returnValue = t("beforeUnload");
+      }
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [t]);
 
   // Audio State
   const audioCtxRef = useRef<AudioContext>(null);
@@ -178,11 +190,12 @@ const Home: NextPage = () => {
   const effectDensity = (effectType === "none" ? 2 : (effectDensities[effectType] ?? 2)) as EffectDensity;
 
   // スペクトラム調整
-  const [spectrumOpacity, setSpectrumOpacity] = useState<number>(0.9);      // 0.1〜1.0
+  const [spectrumOpacityPercent, setSpectrumOpacityPercent] = useState<number>(10);  // 透過率0-100%、0=完全表示
   const [spectrumFps, setSpectrumFps] = useState<number>(30);               // 1〜60
   const [lineWidthWaveform, setLineWidthWaveform] = useState<number>(3.2);  // mode1
   const [lineWidthCircle, setLineWidthCircle] = useState<number>(3.2);      // mode2
   const [lineWidthSymWave, setLineWidthSymWave] = useState<number>(3.6);    // mode5
+  const [glycoColorSet, setGlycoColorSet] = useState<string>("amber");
 
   // 音量設定（共通設定: 目標LUFS、null=正規化なし）
   const [targetLufs, setTargetLufs] = useState<number | null>(null);
@@ -193,12 +206,14 @@ const Home: NextPage = () => {
     else localStorage.removeItem("common_targetLufs");
   }, [targetLufs]);
 
-  // 共通設定の保存（音量・エフェクト種類・各エフェクト強度）
+  // 共通設定の保存（音量・エフェクト種類・各エフェクト強度・グライコ色・透過率）
   useEffect(() => {
     if (typeof window === "undefined") return;
     localStorage.setItem("common_effectType", effectType);
     localStorage.setItem("common_effectDensities", JSON.stringify(effectDensities));
-  }, [effectType, effectDensities]);
+    localStorage.setItem("common_glycoColorSet", glycoColorSet);
+    localStorage.setItem("common_spectrumOpacityPercent", String(spectrumOpacityPercent));
+  }, [effectType, effectDensities, glycoColorSet, spectrumOpacityPercent]);
 
   // セッション用: モード・解像度（エクスポート対象外）
   useEffect(() => {
@@ -264,6 +279,9 @@ const Home: NextPage = () => {
         targetLufs,
         effectType,
         effectDensities,
+        glycoColorSet,
+        spectrumOpacityPercent,
+        rendererType,
       },
       spectrumSettings,
     };
@@ -275,7 +293,7 @@ const Home: NextPage = () => {
     LAYOUTS.forEach((layout) => {
       [0, 1, 2, 3, 4, 5, 6].forEach((m) => localStorage.removeItem(getSettingsKey(layout, m)));
     });
-    ["common_targetLufs", "common_effectType", "common_effectDensities"].forEach((k) => localStorage.removeItem(k));
+    ["common_targetLufs", "common_effectType", "common_effectDensities", "common_glycoColorSet", "common_spectrumOpacityPercent"].forEach((k) => localStorage.removeItem(k));
   };
 
   // 存在する項目のみ上書きインポート
@@ -311,6 +329,21 @@ const Home: NextPage = () => {
           });
           localStorage.setItem("common_effectDensities", JSON.stringify(merged));
           setEffectDensities(merged);
+        }
+        if (c.glycoColorSet && (GLYCO_COLOR_SETS[c.glycoColorSet] || GLYCO_GRADIENT_SETS[c.glycoColorSet] || c.glycoColorSet === "verticalEQ" || c.glycoColorSet === "verticalEQFixed")) {
+          localStorage.setItem("common_glycoColorSet", c.glycoColorSet);
+          setGlycoColorSet(c.glycoColorSet);
+        }
+        if (c.spectrumOpacityPercent !== undefined) {
+          const v = Number(c.spectrumOpacityPercent);
+          if (!isNaN(v) && v >= 0 && v <= 100) {
+            localStorage.setItem("common_spectrumOpacityPercent", String(v));
+            setSpectrumOpacityPercent(v);
+          }
+        }
+        if (c.rendererType === "canvas2d" || c.rendererType === "webgl") {
+          localStorage.setItem("common_rendererType", c.rendererType);
+          setRendererType(c.rendererType);
         }
       }
 
@@ -468,6 +501,23 @@ const Home: NextPage = () => {
       }
     } catch (_e) { /* ignore */ }
 
+    const savedGlyco = localStorage.getItem("common_glycoColorSet");
+    if (savedGlyco && (GLYCO_COLOR_SETS[savedGlyco] || GLYCO_GRADIENT_SETS[savedGlyco] || savedGlyco === "verticalEQ" || savedGlyco === "verticalEQFixed")) {
+      setGlycoColorSet(savedGlyco);
+    }
+
+    const savedOpacity = localStorage.getItem("common_spectrumOpacityPercent");
+    if (savedOpacity) {
+      const n = parseInt(savedOpacity, 10);
+      if (!isNaN(n) && n >= 0 && n <= 100) setSpectrumOpacityPercent(n);
+    } else {
+      const oldOpacity = localStorage.getItem("common_spectrumOpacity");
+      if (oldOpacity) {
+        const o = parseFloat(oldOpacity);
+        if (!isNaN(o) && o >= 0.1 && o <= 1) setSpectrumOpacityPercent(Math.round((1 - o) * 100));
+      }
+    }
+
     const savedLufs = localStorage.getItem("common_targetLufs");
     if (savedLufs) {
       const n = parseFloat(savedLufs);
@@ -475,20 +525,29 @@ const Home: NextPage = () => {
       setTargetLufsCustom(n !== -14 && n !== -15 ? String(n) : "");
     }
 
+    const savedRenderer = localStorage.getItem("common_rendererType");
+    if (savedRenderer === "canvas2d" || savedRenderer === "webgl") {
+      setRendererType(savedRenderer);
+    }
+
     const adj = loadSettings(sizeVal as CanvasSize, modeVal);
     if (adj) setModeAdjustments(adj);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // GPU情報を取得して推奨レンダラーを設定
+  // GPU情報取得・初回はベンチマークで高速なレンダラーを自動選択
   useEffect(() => {
     const initGpu = async () => {
       const info = getGpuInfo();
       setGpuInfo(info);
 
-      // 起動時に推奨レンダラーへ自動変更はしない（ユーザーが選択）
+      const savedRenderer = localStorage.getItem("common_rendererType");
+      if (!savedRenderer && info.isWebGLSupported) {
+        const faster = await benchmarkRenderers();
+        setRendererType(faster);
+        localStorage.setItem("common_rendererType", faster);
+      }
 
-      // WebCodecsサポート確認
       const webCodecsAvailable = isWebCodecsSupported();
       setWebCodecsSupported(webCodecsAvailable);
 
@@ -532,11 +591,12 @@ const Home: NextPage = () => {
     const effect = effectType !== "none" ? { type: effectType, density: effectDensity } : undefined;
     const isEffectActive = isPlaySound || isRecording;
     const spectrumSettings = {
-      opacity: spectrumOpacity,
+      opacity: 1 - spectrumOpacityPercent / 100,
       fps: spectrumFps,
       lineWidthWaveform,
       lineWidthCircle,
       lineWidthSymWave,
+      glycoColorSet,
     };
 
     if (rendererType === 'webgl') {
@@ -567,7 +627,7 @@ const Home: NextPage = () => {
       stopCanvas2DAnimation();
       stopWebGLAnimation();
     };
-  }, [imageCtx, mode, modeAdjustments, rendererType, effectType, effectDensity, isPlaySound, isRecording]);
+  }, [imageCtx, mode, modeAdjustments, rendererType, effectType, effectDensity, isPlaySound, isRecording, glycoColorSet, spectrumOpacityPercent]);
 
   // FPS表示更新（1秒ごとに更新）
   useEffect(() => {
@@ -610,11 +670,12 @@ const Home: NextPage = () => {
       }
       setImageCtx(image);
       setImageFileName(file.name);
-      openSnackBar("画像を読み込みました");
+      exitConfirmRef.current = true;
+      openSnackBar(t("snackbar.imageLoaded"));
     };
     image.onerror = (e) => {
       console.error("画像の読み込みに失敗しました:", e);
-      openSnackBar("画像の読み込みに失敗しました");
+      openSnackBar(t("snackbar.imageLoadFailed"));
     };
     image.src = URL.createObjectURL(file);
   };
@@ -629,9 +690,10 @@ const Home: NextPage = () => {
       setPlaySoundDisabled(false);
       setRecordMovieDisabled(false);
       setAudioFileName(file.name);
-      openSnackBar("音楽を読み込みました");
+      exitConfirmRef.current = true;
+      openSnackBar(t("snackbar.audioLoaded"));
     } catch (error) {
-      openSnackBar("音楽の読み込みに失敗しました: " + error);
+      openSnackBar(t("snackbar.audioLoadFailed", { error }));
     }
   };
 
@@ -663,7 +725,8 @@ const Home: NextPage = () => {
             }
             setImageCtx(image);
             setImageFileName(file.name);
-            openSnackBar("動画ファイルから静止画を抽出しました");
+            exitConfirmRef.current = true;
+            openSnackBar(t("snackbar.videoFrameExtracted"));
           };
           image.src = canvas.toDataURL();
         }
@@ -709,14 +772,14 @@ const Home: NextPage = () => {
           setPlaySoundDisabled(false);
           setRecordMovieDisabled(false);
           setAudioFileName(file.name);
-          openSnackBar("動画ファイルから音声を読み込みました");
+          openSnackBar(t("snackbar.videoAudioLoaded"));
         } catch (error) {
-          openSnackBar("動画ファイルの音声読み込みに失敗しました: " + error);
+          openSnackBar(t("snackbar.videoAudioFailed", { error }));
           videoElementRef.current = null;
         }
       };
       video.onerror = () => {
-        openSnackBar("動画ファイルの読み込みに失敗しました");
+        openSnackBar(t("snackbar.videoLoadFailed"));
         videoElementRef.current = null;
       };
       return;
@@ -793,7 +856,7 @@ const Home: NextPage = () => {
   // RecordMovieEvent
   const onRecordMovie = () => {
     if (!canvasRef.current) {
-      openSnackBar("canvasが初期化されていません");
+      openSnackBar(t("snackbar.canvasNotReady"));
       return;
     }
     
@@ -803,11 +866,12 @@ const Home: NextPage = () => {
     // キャンバスアニメーションを確実に開始（前回ストップで停止している場合に備える）
     const effect = effectType !== "none" ? { type: effectType, density: effectDensity } : undefined;
     const spectrumSettings = {
-      opacity: spectrumOpacity,
+      opacity: 1 - spectrumOpacityPercent / 100,
       fps: spectrumFps,
       lineWidthWaveform,
       lineWidthCircle,
       lineWidthSymWave,
+      glycoColorSet,
     };
     if (canvasRef.current && analyserRef.current) {
       if (rendererType === "webgl") {
@@ -882,16 +946,17 @@ const Home: NextPage = () => {
           a.download = mp4Name;
           a.click();
           a.remove();
-          openSnackBar("動画の変換が完了しました！");
+          exitConfirmRef.current = false;
+          openSnackBar(t("snackbar.convertComplete"));
         } catch (error) {
-          openSnackBar("動画の変換に失敗しました: " + (error as Error).message);
+          openSnackBar(t("snackbar.convertFailed", { error: (error as Error).message }));
           setEncodeStatus("idle");
         } finally {
           setRecordMovieDisabled(false);
         }
       });
       recorder.start();
-      openSnackBar("動画を録画しています...");
+      openSnackBar(t("snackbar.recording"));
       onPlaySound();
       setRecordMovieDisabled(true);
       
@@ -990,7 +1055,8 @@ const Home: NextPage = () => {
     setEffectDensities(defaultEffectDensities());
     setTargetLufs(null);
     setTargetLufsCustom("");
-    openSnackBar("クリアしました");
+    exitConfirmRef.current = false;
+    openSnackBar(t("snackbar.cleared"));
   };
 
   return (
@@ -1020,7 +1086,7 @@ const Home: NextPage = () => {
           >
             <Warning sx={{ fontSize: 28, flexShrink: 0 }} />
               <Typography variant="h6" component="div" sx={{ fontWeight: 700 }}>
-                生成中はウィンドウを切り替えたり閉じないでください
+                {t("encode.warning")}
               </Typography>
             </Box>
             {encodeStatus !== "idle" && (
@@ -1035,8 +1101,8 @@ const Home: NextPage = () => {
               >
                 <Typography variant="body2" sx={{ mb: 0.5 }}>
                   {encodeStatus === "loading"
-                    ? "FFmpegを読み込み中..."
-                    : `MP4変換中... ${encodeProgress}%`}
+                    ? t("encode.loadingFfmpeg")
+                    : t("encode.converting", { progress: encodeProgress })}
                 </Typography>
                 <LinearProgress
                   variant={encodeStatus === "loading" ? "indeterminate" : "determinate"}
@@ -1055,9 +1121,9 @@ const Home: NextPage = () => {
           </Box>
         )}
         <div className={styles.heading}>
-          <h1 className={styles.heading__title}>Music Waves Visualizer(改)</h1>
+          <h1 className={styles.heading__title}>{t("heading.title")}</h1>
           <div className={styles.heading__text}>
-            <p>画像と音楽を読み込んで音声波形動画を作成するWebページです。動画はmp4形式で出力されます。</p>
+            <p>{t("heading.description")}</p>
           </div>
         </div>
 
@@ -1067,7 +1133,7 @@ const Home: NextPage = () => {
           onDragOver={handleDragOver}
         >
           <Typography variant="body2" sx={{ mb: 0.25, fontWeight: 500 }}>
-            ファイルをドラッグ&ドロップ（複数ファイル対応）
+            {t("dropZone.hint")}
           </Typography>
           <Box sx={{ display: "flex", flexDirection: "column", gap: 0.75, alignItems: "stretch" }}>
             <Box sx={{ display: "flex", gap: 1.5, alignItems: "center", justifyContent: "center", width: "100%" }}>
@@ -1078,7 +1144,7 @@ const Home: NextPage = () => {
                 size="medium"
                 sx={{ flexShrink: 0, minWidth: 210 }}
               >
-                画像を選ぶ
+                {t("dropZone.selectImage")}
                 <input
                   type="file"
                   accept="image/*,video/*"
@@ -1099,7 +1165,7 @@ const Home: NextPage = () => {
                   textAlign: "left"
                 }}
               >
-                {imageFileName || "未選択"}
+                {imageFileName || t("dropZone.unselected")}
               </Typography>
             </Box>
             <Box sx={{ display: "flex", gap: 1.5, alignItems: "center", justifyContent: "center", width: "100%" }}>
@@ -1110,7 +1176,7 @@ const Home: NextPage = () => {
                 size="medium"
                 sx={{ flexShrink: 0, minWidth: 210 }}
               >
-                音楽ファイルを選ぶ
+                {t("dropZone.selectAudio")}
                 <input
                   type="file"
                   accept="audio/*,video/*"
@@ -1131,12 +1197,12 @@ const Home: NextPage = () => {
                   textAlign: "left"
                 }}
               >
-                {audioFileName || "未選択"}
+                {audioFileName || t("dropZone.unselected")}
               </Typography>
             </Box>
           </Box>
           <Typography variant="caption" color="textSecondary" sx={{ mt: 0, display: "block" }}>
-            画像ファイルと音楽ファイルを自動判定します。MP4は音楽ファイルとして扱われます。
+            {t("dropZone.caption")}
           </Typography>
         </div>
 
@@ -1144,18 +1210,18 @@ const Home: NextPage = () => {
           <div className={styles.menu__controls}>
             <div className={styles.spectrumButtons}>
               <Typography variant="body2" sx={{ mb: 0, textAlign: "center", fontWeight: 500 }}>
-                スペクトラムアナライザー
+                {t("spectrum.title")}
               </Typography>
               <Box sx={{ display: "flex", gap: 1, justifyContent: "center", flexWrap: "wrap" }}>
                 {[
-                  { value: -1, label: "OFF" },
-                  { value: 0, label: "周波数バー" },
-                  { value: 1, label: "折れ線" },
-                  { value: 2, label: "円形" },
-                  { value: 3, label: "上下対称バー" },
-                  { value: 4, label: "ドット表示" },
-                  { value: 5, label: "波形（上下対称）" },
-                  { value: 6, label: "3D風バー" },
+                  { value: -1, label: t("spectrum.off") },
+                  { value: 0, label: t("spectrum.freqBar") },
+                  { value: 1, label: t("spectrum.line") },
+                  { value: 2, label: t("spectrum.circle") },
+                  { value: 3, label: t("spectrum.symBar") },
+                  { value: 4, label: t("spectrum.dot") },
+                  { value: 5, label: t("spectrum.symWave") },
+                  { value: 6, label: t("spectrum.glyco") },
                 ].map((item) => (
                   <Button
                     key={item.value}
@@ -1170,7 +1236,7 @@ const Home: NextPage = () => {
             </div>
             <div className={styles.resolutionButtons}>
               <Typography variant="body2" sx={{ mb: 0, textAlign: "center", fontWeight: 500 }}>
-                解像度
+                {t("resolution.title")}
               </Typography>
               <Box sx={{ display: "flex", gap: 1, justifyContent: "center", flexWrap: "wrap" }}>
                 <Button
@@ -1178,27 +1244,27 @@ const Home: NextPage = () => {
                   onClick={() => onChangeCanvasSize({ target: { value: "1920x1080" } } as SelectChangeEvent<string>)}
                   size="small"
                 >
-                  横長 1920×1080 (16:9)
+                  {t("resolution.landscape")}
                 </Button>
                 <Button
                   variant={canvasSize === "1080x1920" ? "contained" : "outlined"}
                   onClick={() => onChangeCanvasSize({ target: { value: "1080x1920" } } as SelectChangeEvent<string>)}
                   size="small"
                 >
-                  縦長 1080×1920 (9:16)
+                  {t("resolution.portrait")}
                 </Button>
                 <Button
                   variant={canvasSize === "1920x1920" ? "contained" : "outlined"}
                   onClick={() => onChangeCanvasSize({ target: { value: "1920x1920" } } as SelectChangeEvent<string>)}
                   size="small"
                 >
-                  正方形 1920×1920 (1:1)
+                  {t("resolution.square")}
                 </Button>
               </Box>
             </div>
             <div className={styles.effectButtons}>
               <Typography variant="body2" sx={{ mb: 0, textAlign: "center", fontWeight: 500 }}>
-                エフェクト
+                {t("effect.title")}
               </Typography>
               <Box sx={{ display: "flex", gap: 1, justifyContent: "center", flexWrap: "wrap", alignItems: "center" }}>
                 <Button
@@ -1206,54 +1272,54 @@ const Home: NextPage = () => {
                   onClick={() => setEffectType("none")}
                   size="small"
                 >
-                  OFF
+                  {t("effect.off")}
                 </Button>
                 <Button
                   variant={effectType === "space" ? "contained" : "outlined"}
                   onClick={() => setEffectType("space")}
                   size="small"
                 >
-                  宇宙空間
+                  {t("effect.space1")}
                 </Button>
                 <Button
                   variant={effectType === "spaceConstant" ? "contained" : "outlined"}
                   onClick={() => setEffectType("spaceConstant")}
                   size="small"
                 >
-                  宇宙空間（等速）
+                  {t("effect.space2")}
                 </Button>
                 <Button
                   variant={effectType === "spaceAudio" ? "contained" : "outlined"}
                   onClick={() => setEffectType("spaceAudio")}
                   size="small"
                 >
-                  宇宙空間（音源連動）
+                  {t("effect.space3")}
                 </Button>
                 <Button
                   variant={effectType === "vignette" ? "contained" : "outlined"}
                   onClick={() => setEffectType("vignette")}
                   size="small"
                 >
-                  ビネット
+                  {t("effect.vignette")}
                 </Button>
                 <Button
                   variant={effectType === "rainbow" ? "contained" : "outlined"}
                   onClick={() => setEffectType("rainbow")}
                   size="small"
                 >
-                  レインボー
+                  {t("effect.rainbow")}
                 </Button>
                 <Button
                   variant={effectType === "curtain" ? "contained" : "outlined"}
                   onClick={() => setEffectType("curtain")}
                   size="small"
                 >
-                  カーテン
+                  {t("effect.curtain")}
                 </Button>
                 {effectType !== "none" && (
                   <>
                     <Typography variant="caption" color="textSecondary" sx={{ mx: 0.5 }}>
-                      強度:
+                      {t("effect.strength")}
                     </Typography>
                     {([1, 2, 3] as EffectDensity[]).map((d) => (
                       <Button
@@ -1262,7 +1328,7 @@ const Home: NextPage = () => {
                         onClick={() => setEffectDensities((prev) => ({ ...prev, [effectType]: d }))}
                         size="small"
                       >
-                        {d === 1 ? "弱" : d === 2 ? "中" : "強"}
+                        {d === 1 ? t("effect.weak") : d === 2 ? t("effect.medium") : t("effect.strong")}
                       </Button>
                     ))}
                   </>
@@ -1285,43 +1351,44 @@ const Home: NextPage = () => {
         <div className={styles.adjustments}>
           <Accordion>
             <AccordionSummary expandIcon={<ExpandMore />}>
-              <Typography>表示・音量設定</Typography>
+              <Typography>{t("displayVolume.title")}</Typography>
             </AccordionSummary>
             <AccordionDetails>
               <Box sx={{ width: "100%", maxWidth: 600, margin: "0 auto" }}>
                 <Typography variant="subtitle2" sx={{ mb: 2, fontWeight: 600 }}>
-                  音量設定（目標LUFS）
+                  {t("displayVolume.volumeTitle")}
                 </Typography>
                 <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 1 }}>
-                  動画サイトの推奨値に合わせて音量を正規化します。MP4変換時に適用されます。
+                  {t("displayVolume.volumeCaption")}
                 </Typography>
                 <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap", alignItems: "center", mb: 3 }}>
                   <Button
                     variant={targetLufs === null ? "contained" : "outlined"}
                     size="small"
                     onClick={() => { setTargetLufs(null); setTargetLufsCustom(""); }}
+                    sx={{ height: 36 }}
                   >
-                    なし
+                    {t("displayVolume.none")}
                   </Button>
                   <Button
                     variant={targetLufs === -14 ? "contained" : "outlined"}
                     size="small"
                     onClick={() => { setTargetLufs(-14); setTargetLufsCustom("-14"); }}
-                    sx={{ textTransform: "none" }}
+                    sx={{ textTransform: "none", height: 36 }}
                   >
-                    YouTube等 (-14 LUFS)
+                    {t("displayVolume.youtube")}
                   </Button>
                   <Button
                     variant={targetLufs === -15 ? "contained" : "outlined"}
                     size="small"
                     onClick={() => { setTargetLufs(-15); setTargetLufsCustom("-15"); }}
-                    sx={{ textTransform: "none" }}
+                    sx={{ textTransform: "none", height: 36 }}
                   >
-                    ニコニコ動画 (-15 LUFS)
+                    {t("displayVolume.nicovideo")}
                   </Button>
                   <TextField
                     size="small"
-                    label="手動入力 (dB)"
+                    label={t("displayVolume.manualLabel")}
                     type="number"
                     value={targetLufsCustom}
                     onChange={(e) => {
@@ -1334,28 +1401,28 @@ const Home: NextPage = () => {
                         setTargetLufs(n);
                       }
                     }}
-                    placeholder="-14"
-                    sx={{ width: 140 }}
+                    placeholder={t("displayVolume.manualPlaceholder")}
+                    sx={{ width: 140, "& .MuiInputBase-root": { height: 36 } }}
                     inputProps={{ min: -60, max: 0, step: 0.5 }}
                   />
                 </Box>
                 <Divider sx={{ my: 3 }} />
 
                 <Typography variant="subtitle2" sx={{ mb: 1.5, fontWeight: 600 }}>
-                  スペクトラム調整
+                  {t("displayVolume.spectrumTitle")}
                 </Typography>
                 <Box sx={{ mb: 2 }}>
-                  <Typography gutterBottom>透過率: {spectrumOpacity.toFixed(2)}</Typography>
+                  <Typography gutterBottom>{t("displayVolume.opacity", { value: spectrumOpacityPercent })}</Typography>
                   <Slider
-                    value={spectrumOpacity}
-                    min={0.1}
-                    max={1.0}
-                    step={0.05}
-                    onChange={(_, v) => setSpectrumOpacity(v as number)}
+                    value={spectrumOpacityPercent}
+                    min={0}
+                    max={100}
+                    step={5}
+                    onChange={(_, v) => setSpectrumOpacityPercent(v as number)}
                   />
                 </Box>
                 <Box sx={{ mb: 2 }}>
-                  <Typography gutterBottom>更新レート: {spectrumFps} fps</Typography>
+                  <Typography gutterBottom>{t("displayVolume.fps", { value: spectrumFps })}</Typography>
                   <Slider
                     value={spectrumFps}
                     min={1}
@@ -1366,7 +1433,7 @@ const Home: NextPage = () => {
                 </Box>
                 {mode === 1 && (
                   <Box sx={{ mb: 3 }}>
-                    <Typography gutterBottom>折れ線の線幅: {lineWidthWaveform.toFixed(1)} px</Typography>
+                    <Typography gutterBottom>{t("displayVolume.lineWidthWaveform", { value: lineWidthWaveform.toFixed(1) })}</Typography>
                     <Slider
                       value={lineWidthWaveform}
                       min={1}
@@ -1378,7 +1445,7 @@ const Home: NextPage = () => {
                 )}
                 {mode === 2 && (
                   <Box sx={{ mb: 3 }}>
-                    <Typography gutterBottom>円形の線幅: {lineWidthCircle.toFixed(1)} px</Typography>
+                    <Typography gutterBottom>{t("displayVolume.lineWidthCircle", { value: lineWidthCircle.toFixed(1) })}</Typography>
                     <Slider
                       value={lineWidthCircle}
                       min={1}
@@ -1390,7 +1457,7 @@ const Home: NextPage = () => {
                 )}
                 {mode === 5 && (
                   <Box sx={{ mb: 3 }}>
-                    <Typography gutterBottom>波形（上下対称）の線幅: {lineWidthSymWave.toFixed(1)} px</Typography>
+                    <Typography gutterBottom>{t("displayVolume.lineWidthSymWave", { value: lineWidthSymWave.toFixed(1) })}</Typography>
                     <Slider
                       value={lineWidthSymWave}
                       min={1}
@@ -1400,11 +1467,41 @@ const Home: NextPage = () => {
                     />
                   </Box>
                 )}
+                {mode === 6 && (
+                  <Box sx={{ mb: 3 }}>
+                    <Typography gutterBottom>{t("displayVolume.glycoColor")}</Typography>
+                    <FormControl size="small" fullWidth sx={{ mt: 1 }}>
+                      <InputLabel>{t("displayVolume.colorSet")}</InputLabel>
+                      <Select
+                        value={glycoColorSet}
+                        label={t("displayVolume.colorSet")}
+                        onChange={(e) => setGlycoColorSet(e.target.value)}
+                      >
+                        <MenuItem value="amber">{t("glycoColors.amber")}</MenuItem>
+                        <MenuItem value="green">{t("glycoColors.green")}</MenuItem>
+                        <MenuItem value="red">{t("glycoColors.red")}</MenuItem>
+                        <MenuItem value="blue">{t("glycoColors.blue")}</MenuItem>
+                        <MenuItem value="yellow">{t("glycoColors.yellow")}</MenuItem>
+                        <MenuItem value="white">{t("glycoColors.white")}</MenuItem>
+                        <MenuItem value="cyan">{t("glycoColors.cyan")}</MenuItem>
+                        <MenuItem value="magenta">{t("glycoColors.magenta")}</MenuItem>
+                        <MenuItem value="neonGreen">{t("glycoColors.neonGreen")}</MenuItem>
+                        <MenuItem value="neonPink">{t("glycoColors.neonPink")}</MenuItem>
+                        <MenuItem value="neonCyan">{t("glycoColors.neonCyan")}</MenuItem>
+                        <MenuItem value="rainbow">{t("glycoColors.rainbow")}</MenuItem>
+                        <MenuItem value="blueGreen">{t("glycoColors.blueGreen")}</MenuItem>
+                        <MenuItem value="redYellow">{t("glycoColors.redYellow")}</MenuItem>
+                        <MenuItem value="verticalEQ">{t("glycoColors.verticalEQ")}</MenuItem>
+                        <MenuItem value="verticalEQFixed">{t("glycoColors.verticalEQFixed")}</MenuItem>
+                      </Select>
+                    </FormControl>
+                  </Box>
+                )}
 
                 <Typography variant="subtitle2" sx={{ mb: 2, fontWeight: 600 }}>
-                  表示調整
+                  {t("displayVolume.adjustTitle")}
                 </Typography>
-                <Typography gutterBottom>横幅倍率: {modeAdjustments.scaleX.toFixed(2)}</Typography>
+                <Typography gutterBottom>{t("displayVolume.scaleX", { value: modeAdjustments.scaleX.toFixed(2) })}</Typography>
                 <Slider
                   value={modeAdjustments.scaleX}
                   onChange={(_, value) =>
@@ -1420,7 +1517,7 @@ const Home: NextPage = () => {
                   ]}
                 />
                 <Typography gutterBottom sx={{ mt: 3 }}>
-                  縦幅倍率: {modeAdjustments.scaleY.toFixed(2)}
+                  {t("displayVolume.scaleY", { value: modeAdjustments.scaleY.toFixed(2) })}
                 </Typography>
                 <Slider
                   value={modeAdjustments.scaleY}
@@ -1437,13 +1534,10 @@ const Home: NextPage = () => {
                   ]}
                 />
                 <Typography gutterBottom sx={{ mt: 3 }}>
-                  横位置: {modeAdjustments.offsetX.toFixed(1)}% (実際:{" "}
-                  {Math.round(
-                    (getCanvasDimensions(canvasSize).width *
-                      modeAdjustments.offsetX) /
-                      100
-                  )}
-                  px)
+                  {t("displayVolume.offsetX", {
+                    value: modeAdjustments.offsetX.toFixed(1),
+                    px: Math.round((getCanvasDimensions(canvasSize).width * modeAdjustments.offsetX) / 100),
+                  })}
                 </Typography>
                 <Slider
                   value={modeAdjustments.offsetX}
@@ -1460,13 +1554,10 @@ const Home: NextPage = () => {
                   ]}
                 />
                 <Typography gutterBottom sx={{ mt: 3 }}>
-                  縦位置: {modeAdjustments.offsetY.toFixed(1)}% (実際:{" "}
-                  {Math.round(
-                    (getCanvasDimensions(canvasSize).height *
-                      modeAdjustments.offsetY) /
-                      100
-                  )}
-                  px)
+                  {t("displayVolume.offsetY", {
+                    value: modeAdjustments.offsetY.toFixed(1),
+                    px: Math.round((getCanvasDimensions(canvasSize).height * modeAdjustments.offsetY) / 100),
+                  })}
                 </Typography>
                 <Slider
                   value={modeAdjustments.offsetY}
@@ -1504,7 +1595,7 @@ const Home: NextPage = () => {
               onClick={onPlaySound}
               size="medium"
             >
-              {isPlaySound ? "ストップ" : "プレビュー"}
+              {isPlaySound ? t("buttons.stop") : t("buttons.preview")}
             </Button>
             <Button
               variant="outlined"
@@ -1513,7 +1604,7 @@ const Home: NextPage = () => {
               onClick={onRecordMovie}
               size="medium"
             >
-              動画を生成
+              {t("buttons.generateVideo")}
             </Button>
             <Button
               variant="outlined"
@@ -1523,37 +1614,145 @@ const Home: NextPage = () => {
               size="medium"
               sx={{ ml: 2 }}
             >
-              クリア
+              {t("buttons.clear")}
             </Button>
           </Box>
           </div>
 
           <div className={styles.canvasInfo}>
             <Typography variant="caption" color="textSecondary">
-              録画サイズ: {getCanvasDimensions(canvasSize).width}×{getCanvasDimensions(canvasSize).height}px
+              {t("recordSize", {
+              width: getCanvasDimensions(canvasSize).width,
+              height: getCanvasDimensions(canvasSize).height,
+            })}
             </Typography>
           </div>
         </div>
       </main>
 
+      {/* GPU設定パネル */}
       <div className={styles.developerPanel}>
         <Accordion>
           <AccordionSummary expandIcon={<ExpandMore />}>
             <Typography variant="subtitle2" color="primary">
-              設定管理
+              {t("gpu.title")}
+            </Typography>
+          </AccordionSummary>
+          <AccordionDetails>
+            <Box sx={{ width: "100%", maxWidth: 800, margin: "0 auto" }}>
+              {/* GPU情報表示 */}
+              {gpuInfo && (
+                <Box sx={{ mb: 3, p: 2, bgcolor: 'background.paper', borderRadius: 1 }}>
+                  <Typography variant="h6" gutterBottom>
+                    {t("gpu.detected")}
+                  </Typography>
+                  <Typography variant="body2" color="textSecondary" gutterBottom>
+                    {getGpuDisplayName(gpuInfo)}
+                  </Typography>
+                  <Box sx={{ mt: 1, display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                    <Typography variant="caption" sx={{
+                      px: 1,
+                      py: 0.5,
+                      bgcolor: gpuInfo.isWebGL2Supported ? 'success.main' : 'error.main',
+                      color: 'white',
+                      borderRadius: 1
+                    }}>
+                      WebGL2: {gpuInfo.isWebGL2Supported ? t("gpu.supported") : t("gpu.unsupported")}
+                    </Typography>
+                    <Typography variant="caption" sx={{
+                      px: 1,
+                      py: 0.5,
+                      bgcolor: gpuInfo.isWebGPUSupported ? 'success.main' : 'warning.main',
+                      color: 'white',
+                      borderRadius: 1
+                    }}>
+                      WebGPU: {gpuInfo.isWebGPUSupported ? t("gpu.supported") : t("gpu.unsupported")}
+                    </Typography>
+                    <Typography variant="caption" sx={{
+                      px: 1,
+                      py: 0.5,
+                      bgcolor: webCodecsSupported ? 'success.main' : 'warning.main',
+                      color: 'white',
+                      borderRadius: 1
+                    }}>
+                      WebCodecs: {webCodecsSupported ? t("gpu.supported") : t("gpu.unsupported")}
+                    </Typography>
+                    {webCodecsSupported && hardwareEncoderSupport.h264 && (
+                      <Typography variant="caption" sx={{
+                        px: 1,
+                        py: 0.5,
+                        bgcolor: 'info.main',
+                        color: 'white',
+                        borderRadius: 1
+                      }}>
+                        {t("gpu.h264hw")}
+                      </Typography>
+                    )}
+                  </Box>
+                  <Typography variant="caption" color="textSecondary" sx={{ mt: 1, display: 'block' }}>
+                    {t("gpu.vendor", {
+                    name: gpuInfo.vendorType === 'nvidia' ? 'NVIDIA' : gpuInfo.vendorType === 'intel' ? 'Intel' : gpuInfo.vendorType === 'amd' ? 'AMD' : gpuInfo.vendorType === 'apple' ? 'Apple' : t("gpu.vendorUnknown")
+                  })}
+                  </Typography>
+                </Box>
+              )}
+
+              {/* レンダラー選択 */}
+              <Box sx={{ mb: 2 }}>
+                <Typography variant="body1" gutterBottom fontWeight={500}>
+                  {t("gpu.renderEngine")}
+                </Typography>
+                <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 1 }}>
+                  {t("gpu.renderCaption")}
+                </Typography>
+                <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
+                  <Button
+                    variant={rendererType === 'canvas2d' ? 'contained' : 'outlined'}
+                    onClick={() => {
+                      setRendererType('canvas2d');
+                      localStorage.setItem("common_rendererType", "canvas2d");
+                    }}
+                    size="small"
+                  >
+                    {t("buttons.canvas2d")}
+                  </Button>
+                  <Button
+                    variant={rendererType === 'webgl' ? 'contained' : 'outlined'}
+                    onClick={() => {
+                      setRendererType('webgl');
+                      localStorage.setItem("common_rendererType", "webgl");
+                    }}
+                    size="small"
+                    disabled={!gpuInfo?.isWebGLSupported}
+                  >
+                    {t("buttons.webgl")}
+                  </Button>
+                </Box>
+              </Box>
+            </Box>
+          </AccordionDetails>
+        </Accordion>
+      </div>
+
+      {/* 設定管理（GPU設定の下） */}
+      <div className={styles.developerPanel}>
+        <Accordion>
+          <AccordionSummary expandIcon={<ExpandMore />}>
+            <Typography variant="subtitle2" color="primary">
+              {t("settings.title")}
             </Typography>
           </AccordionSummary>
           <AccordionDetails>
             <Box sx={{ width: "100%", maxWidth: 600, margin: "0 auto" }}>
               <Typography variant="body2" gutterBottom>
-                現在の設定: モード{mode} × {canvasSize}
+                {t("settings.current", { mode, size: canvasSize })}
               </Typography>
               <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 2 }}>
-                エクスポートは全設定を一括出力。インポートは存在する項目のみ上書きします。
+                {t("settings.caption")}
               </Typography>
               <Divider sx={{ my: 2 }} />
               <Typography variant="subtitle2" gutterBottom>
-                設定のエクスポート/インポート
+                {t("settings.exportImport")}
               </Typography>
               <Box sx={{ display: "flex", gap: 1, mb: 2 }}>
                 <Button
@@ -1569,12 +1768,11 @@ const Home: NextPage = () => {
                       a.download = `music-waves-visualizer-settings-${new Date().toISOString().slice(0, 10)}.json`;
                       a.click();
                       URL.revokeObjectURL(url);
-                      navigator.clipboard.writeText(json);
-                      openSnackBar("全設定をエクスポートしました（ファイル保存・クリップボード）");
+                      openSnackBar(t("snackbar.exportSuccess"));
                     }
                   }}
                 >
-                  エクスポート
+                  {t("buttons.export")}
                 </Button>
                 <input
                   type="file"
@@ -1590,9 +1788,9 @@ const Home: NextPage = () => {
                         if (importAllSettings(text)) {
                           const loaded = loadSettings(canvasSize, mode);
                           setModeAdjustments(loaded ?? DEFAULT_ADJUSTMENTS);
-                          openSnackBar("設定をインポートしました（存在する項目のみ上書き）");
+                          openSnackBar(t("snackbar.importSuccess"));
                         } else {
-                          openSnackBar("設定のインポートに失敗しました");
+                          openSnackBar(t("snackbar.importFailed"));
                         }
                       };
                       reader.readAsText(file);
@@ -1606,146 +1804,29 @@ const Home: NextPage = () => {
                   component="label"
                   htmlFor="import-settings-file"
                 >
-                  インポート
+                  {t("buttons.import")}
                 </Button>
               </Box>
-              <TextField
-                fullWidth
-                multiline
-                rows={4}
-                label="設定JSON（貼り付け用）"
-                variant="outlined"
-                size="small"
-                placeholder='{"common": {"targetLufs": -14, "effectType": "space", "effectDensities": {...}}, "spectrumSettings": {"1920x1080": {"0": {...}}}}'
-                onChange={(e) => {
-                  try {
-                    JSON.parse(e.target.value);
-                    if (importAllSettings(e.target.value)) {
-                      const loaded = loadSettings(canvasSize, mode);
-                      setModeAdjustments(loaded ?? DEFAULT_ADJUSTMENTS);
-                      openSnackBar("設定を適用しました（存在する項目のみ上書き）");
-                    }
-                  } catch (err) {
-                    // パースエラーは無視（入力中）
-                  }
-                }}
-              />
               <Typography variant="caption" color="textSecondary" sx={{ mt: 1, display: "block" }}>
-                すべての設定をクリア:{" "}
+                {t("settings.clearAllHint")}{" "}
                 <Button
                   size="small"
                   color="error"
                   onClick={() => {
-                    if (confirm("すべての保存された設定を削除しますか？")) {
+                    if (confirm(t("settings.clearConfirm"))) {
                       clearAllSettings();
                       setEffectType("none");
                       setEffectDensities(defaultEffectDensities());
                       setTargetLufs(null);
                       setTargetLufsCustom("");
                       setModeAdjustments(DEFAULT_ADJUSTMENTS);
-                      openSnackBar("すべての設定を削除しました");
+                      openSnackBar(t("snackbar.allCleared"));
                     }
                   }}
                 >
-                  クリア
+                  {t("buttons.clearAll")}
                 </Button>
               </Typography>
-            </Box>
-          </AccordionDetails>
-        </Accordion>
-      </div>
-
-      {/* GPU設定パネル */}
-      <div className={styles.developerPanel}>
-        <Accordion>
-          <AccordionSummary expandIcon={<ExpandMore />}>
-            <Typography variant="subtitle2" color="primary">
-              GPU設定
-            </Typography>
-          </AccordionSummary>
-          <AccordionDetails>
-            <Box sx={{ width: "100%", maxWidth: 800, margin: "0 auto" }}>
-              {/* GPU情報表示 */}
-              {gpuInfo && (
-                <Box sx={{ mb: 3, p: 2, bgcolor: 'background.paper', borderRadius: 1 }}>
-                  <Typography variant="h6" gutterBottom>
-                    検出されたGPU
-                  </Typography>
-                  <Typography variant="body2" color="textSecondary" gutterBottom>
-                    {getGpuDisplayName(gpuInfo)}
-                  </Typography>
-                  <Box sx={{ mt: 1, display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                    <Typography variant="caption" sx={{
-                      px: 1,
-                      py: 0.5,
-                      bgcolor: gpuInfo.isWebGL2Supported ? 'success.main' : 'error.main',
-                      color: 'white',
-                      borderRadius: 1
-                    }}>
-                      WebGL2: {gpuInfo.isWebGL2Supported ? '対応' : '非対応'}
-                    </Typography>
-                    <Typography variant="caption" sx={{
-                      px: 1,
-                      py: 0.5,
-                      bgcolor: gpuInfo.isWebGPUSupported ? 'success.main' : 'warning.main',
-                      color: 'white',
-                      borderRadius: 1
-                    }}>
-                      WebGPU: {gpuInfo.isWebGPUSupported ? '対応' : '非対応'}
-                    </Typography>
-                    <Typography variant="caption" sx={{
-                      px: 1,
-                      py: 0.5,
-                      bgcolor: webCodecsSupported ? 'success.main' : 'warning.main',
-                      color: 'white',
-                      borderRadius: 1
-                    }}>
-                      WebCodecs: {webCodecsSupported ? '対応' : '非対応'}
-                    </Typography>
-                    {webCodecsSupported && hardwareEncoderSupport.h264 && (
-                      <Typography variant="caption" sx={{
-                        px: 1,
-                        py: 0.5,
-                        bgcolor: 'info.main',
-                        color: 'white',
-                        borderRadius: 1
-                      }}>
-                        H.264ハードウェアエンコード対応
-                      </Typography>
-                    )}
-                  </Box>
-                  <Typography variant="caption" color="textSecondary" sx={{ mt: 1, display: 'block' }}>
-                    GPUベンダー: {gpuInfo.vendorType === 'nvidia' ? 'NVIDIA' : gpuInfo.vendorType === 'intel' ? 'Intel' : gpuInfo.vendorType === 'amd' ? 'AMD' : gpuInfo.vendorType === 'apple' ? 'Apple' : '不明'}
-                  </Typography>
-                </Box>
-              )}
-
-              {/* レンダラー選択 */}
-              <Box sx={{ mb: 2 }}>
-                <Typography variant="body1" gutterBottom fontWeight={500}>
-                  レンダリングエンジン
-                </Typography>
-                <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 1 }}>
-                  WebGLを使用するとGPU加速により高速なレンダリングが可能です
-                </Typography>
-                <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
-                  <Button
-                    variant={rendererType === 'canvas2d' ? 'contained' : 'outlined'}
-                    onClick={() => setRendererType('canvas2d')}
-                    size="small"
-                  >
-                    CANVAS 2d(標準)
-                  </Button>
-                  <Button
-                    variant={rendererType === 'webgl' ? 'contained' : 'outlined'}
-                    onClick={() => setRendererType('webgl')}
-                    size="small"
-                    disabled={!gpuInfo?.isWebGLSupported}
-                  >
-                    WEBGL(GPU加速)
-                  </Button>
-                </Box>
-              </Box>
             </Box>
           </AccordionDetails>
         </Accordion>

@@ -1,102 +1,108 @@
-# Dockerセットアップガイド
+# Docker Setup Guide
 
-このプロジェクトをDockerで実行する方法です。
+How to run this project with Docker.
 
-詳細な要件とトラブルシューティングは [サーバー要件(local docker)用.md](./サーバー要件(local%20docker)用.md) を参照してください。
+For detailed requirements and troubleshooting, see [SERVER_REQUIREMENTS_DOCKER.md](./SERVER_REQUIREMENTS_DOCKER.md).
 
-## 前提条件
+## Prerequisites
 
-- Docker Desktop（またはDocker Engine + Docker Compose）がインストールされていること
+- Docker Desktop (or Docker Engine + Docker Compose)
 
-## クイックスタート
+## Quick Start
 
-### Docker HTTPS 版（推奨・検証用）
+### Docker HTTPS (recommended for testing)
 
 ```bash
-# 1. サーバーのIPアドレスで証明書を生成（初回のみ）
+# 1. Generate certificate (first time only)
 ./generate-ssl-cert.sh 192.168.0.234
 
-# 2. コンテナを起動（visualizer をビルドして nginx で配信）
+# 2. Start container (builds visualizer, serves via nginx)
 docker compose -f docker-compose.https.yml up -d --build
 ```
 
-- アクセス: `https://<サーバーIP>:8443/visualizer/`（例: https://192.168.0.234:8443/visualizer/）
-- `visualizer/` 静的HTML版のみを nginx で配信するシンプルな構成です
-- リモート接続・SharedArrayBuffer（FFmpeg動画変換）には HTTPS が必須です
-- 自己署名証明書のため、ブラウザで「詳細」→「安全でないサイトへ」で進む必要があります
-- **重要**: 証明書は生成時に指定したIP用です。サーバーのIPが異なる場合は `./generate-ssl-cert.sh <正しいIP>` で再生成してください
+- Access: `https://<server-IP>:8443/visualizer/` (e.g. https://192.168.0.234:8443/visualizer/)
+- Serves static HTML from `visualizer/` via nginx
+- HTTPS required for remote access and SharedArrayBuffer (FFmpeg)
+- Self-signed cert: In browser, choose "Advanced" → "Proceed to site"
+- **Important**: Certificate is bound to the IP used at generation. Regenerate with `./generate-ssl-cert.sh <correct-IP>` if the server IP changes
 
-> **注意**: HTTP（ポート3000）でのリモート検証は COOP/COEP 制約により動作しません。検証は Docker HTTPS 版で行ってください。
+> **Note**: Remote testing over HTTP (port 3000) does not work due to COOP/COEP. Use Docker HTTPS for verification.
 
-### 本番モード（Next.js スタンドアロン）
+### Production (Next.js standalone)
 
 ```bash
 docker-compose up --build
 ```
 
-### 開発モード
+### Development
 
 ```bash
 docker-compose -f docker-compose.dev.yml up --build
 ```
 
-## 基本的なコマンド
+## Commands
 
-### 起動
+### Start
 
 ```bash
-# 本番モード（バックグラウンド）
 docker-compose up -d --build
-
-# 開発モード（バックグラウンド）
-docker-compose -f docker-compose.dev.yml up -d --build
+docker-compose -f docker-compose.dev.yml up -d --build  # dev
 ```
 
-### 停止
+### Stop
 
 ```bash
-# 本番モード
 docker-compose down
-
-# 開発モード
-docker-compose -f docker-compose.dev.yml down
-
-# HTTPSモード
-docker compose -f docker-compose.https.yml down
+docker compose -f docker-compose.https.yml down  # HTTPS
 ```
 
-### ログ確認
+### Logs
 
 ```bash
 docker-compose logs -f
 ```
 
-## トラブルシューティング
+## Troubleshooting
 
-### ポートが既に使用されている場合
+### Port in use
 
-`docker-compose.yml`の`ports`セクションを変更：
+Edit `ports` in `docker-compose.yml`:
 
 ```yaml
 ports:
-  - "3001:3000"  # ホスト側のポートを変更
+  - "3001:3000"
 ```
 
-### キャッシュをクリアして再ビルド
+### Rebuild without cache
 
 ```bash
 docker-compose build --no-cache
 ```
 
-### コンテナ内でコマンドを実行
+### Run command in container
 
 ```bash
 docker-compose exec app sh
 ```
 
-## 注意事項
+---
 
-- 開発モードでは、コードの変更が自動的に反映されます（ホットリロード）
-- 本番モードでは、変更を反映するには再ビルドが必要です
-- 詳細な設定やトラブルシューティングは [サーバー要件(local docker)用.md](./サーバー要件(local%20docker)用.md) を参照してください
+## 日本語
 
+### Docker HTTPS版（推奨）
+
+```bash
+./generate-ssl-cert.sh <サーバーIP>   # 初回のみ
+docker compose -f docker-compose.https.yml up -d --build
+```
+
+アクセス: `https://<サーバーIP>:8443/visualizer/`
+
+### 本番・開発モード
+
+```bash
+docker-compose up --build              # 本番
+docker-compose -f docker-compose.dev.yml up --build  # 開発
+```
+
+詳細は [サーバー要件(local docker)用.md](./サーバー要件(local%20docker)用.md) を参照してください。

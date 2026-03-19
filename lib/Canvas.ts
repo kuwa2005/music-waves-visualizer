@@ -17,6 +17,49 @@ export type SpectrumSettings = {
   lineWidthWaveform: number;
   lineWidthCircle: number;
   lineWidthSymWave: number;
+  glycoColorSet?: string;
+};
+
+/** グライコ風の色セット: バー色・ピーク色 [r,g,b] 0-255 */
+export const GLYCO_COLOR_SETS: Record<string, { bar: [number, number, number]; dash: [number, number, number] }> = {
+  amber: { bar: [255, 180, 0], dash: [255, 220, 100] },
+  green: { bar: [34, 139, 34], dash: [144, 238, 144] },
+  red: { bar: [180, 50, 50], dash: [255, 100, 100] },
+  blue: { bar: [50, 80, 180], dash: [100, 150, 255] },
+  yellow: { bar: [200, 180, 0], dash: [255, 255, 150] },
+  white: { bar: [200, 200, 200], dash: [255, 255, 255] },
+  cyan: { bar: [0, 160, 160], dash: [100, 255, 255] },
+  magenta: { bar: [160, 0, 160], dash: [255, 100, 255] },
+  neonGreen: { bar: [0, 255, 100], dash: [150, 255, 200] },
+  neonPink: { bar: [255, 0, 128], dash: [255, 150, 200] },
+  neonCyan: { bar: [0, 255, 255], dash: [150, 255, 255] },
+};
+function hslToRgb(h: number, s: number, l: number): [number, number, number] {
+  h = h / 360;
+  const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+  const p = 2 * l - q;
+  const hue2rgb = (t: number) => {
+    if (t < 0) t += 1;
+    if (t > 1) t -= 1;
+    if (t < 1 / 6) return p + (q - p) * 6 * t;
+    if (t < 1 / 2) return q;
+    if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+    return p;
+  };
+  return [Math.round(hue2rgb(h + 1 / 3) * 255), Math.round(hue2rgb(h) * 255), Math.round(hue2rgb(h - 1 / 3) * 255)];
+}
+
+/** グラデーション系: (barIndex, totalBars) => [r,g,b] */
+export const GLYCO_GRADIENT_SETS: Record<string, (i: number, n: number) => [number, number, number]> = {
+  rainbow: (i, n) => hslToRgb((i / n) * 360, 1, 0.5),
+  blueGreen: (i, n) => {
+    const t = i / n;
+    return [Math.round(50 * (1 - t)), Math.round(80 + 120 * t), Math.round(180 * (1 - t) + 80 * t)];
+  },
+  redYellow: (i, n) => {
+    const t = i / n;
+    return [Math.round(180 + 75 * t), Math.round(50 + 130 * t), Math.round(50 * (1 - t))];
+  },
 };
 
 // FPS測定用の変数
@@ -162,7 +205,7 @@ export const drawBars = (
   
   if (!ctx) {
     animationFrameId = requestAnimationFrame(function () {
-      drawBars(canvas, imageCtx, mode, analyser, adjustments, effect, isEffectActive);
+      drawBars(canvas, imageCtx, mode, analyser, adjustments, effect, isEffectActive, spectrumSettings);
     });
     return animationFrameId;
   }
@@ -198,7 +241,7 @@ export const drawBars = (
 
   if (!analyser) {
     animationFrameId = requestAnimationFrame(function () {
-      drawBars(canvas, imageCtx, mode, analyser, adjustments, effect, isEffectActive);
+      drawBars(canvas, imageCtx, mode, analyser, adjustments, effect, isEffectActive, spectrumSettings);
     });
     return animationFrameId;
   }
@@ -210,7 +253,7 @@ export const drawBars = (
     const last = (drawBars as any)._lastTimeMode1 ?? 0;
     if (now - last < interval) {
       animationFrameId = requestAnimationFrame(function () {
-        drawBars(canvas, imageCtx, mode, analyser, adjustments, effect, isEffectActive);
+        drawBars(canvas, imageCtx, mode, analyser, adjustments, effect, isEffectActive, spectrumSettings);
       });
       return animationFrameId;
     }
@@ -220,7 +263,7 @@ export const drawBars = (
     const last = (drawBars as any)._lastTimeMode5 ?? 0;
     if (now - last < interval) {
       animationFrameId = requestAnimationFrame(function () {
-        drawBars(canvas, imageCtx, mode, analyser, adjustments, effect, isEffectActive);
+        drawBars(canvas, imageCtx, mode, analyser, adjustments, effect, isEffectActive, spectrumSettings);
       });
       return animationFrameId;
     }
@@ -246,13 +289,16 @@ export const drawBars = (
   };
 
   // 調整パラメータを適用
-  // offsetX, offsetYはパーセンテージ（-150%〜150%）なので、Canvasサイズを掛けてピクセルに変換
-  const offsetXPixels = (canvasWidth * adj.offsetX) / 100;
-  const offsetYPixels = (canvasHeight * adj.offsetY) / 100;
-  
+  // グライコ(6): 縦倍率3.0=現在の1.0相当、横倍率1.0=横幅いっぱい
+  const effAdj = mode === 6
+    ? { ...adj, scaleY: adj.scaleY / 3, scaleX: adj.scaleX }
+    : adj;
+  const offsetXPixels = (canvasWidth * effAdj.offsetX) / 100;
+  const offsetYPixels = (canvasHeight * effAdj.offsetY) / 100;
+
   ctx.save();
   ctx.translate(canvasWidth / 2 + offsetXPixels, canvasHeight / 2 + offsetYPixels);
-  ctx.scale(adj.scaleX, adj.scaleY);
+  ctx.scale(effAdj.scaleX, effAdj.scaleY);
   ctx.translate(-canvasWidth / 2, -canvasHeight / 2);
   
   if (mode === -1) {
@@ -260,7 +306,7 @@ export const drawBars = (
     ctx.restore();
     ctx.restore();
     animationFrameId = requestAnimationFrame(function () {
-      drawBars(canvas, imageCtx, mode, analyser, adjustments, effect, isEffectActive);
+      drawBars(canvas, imageCtx, mode, analyser, adjustments, effect, isEffectActive, spectrumSettings);
     });
     return animationFrameId;
   } else if (mode === 0) {
@@ -349,11 +395,13 @@ export const drawBars = (
       );
     }
   } else if (mode === 4) {
-    // モード4: ドット表示
+    // モード4: ドット表示（32列×16行をキャンバス全幅・全高で使い切る）
     analyser.getByteFrequencyData(bufferData);
     const dotsPerRow = 32;
     const dotsPerCol = 16;
-    const dotSize = Math.min(canvasWidth / dotsPerRow, canvasHeight / dotsPerCol);
+    const dotSizeX = canvasWidth / dotsPerRow;
+    const dotSizeY = canvasHeight / dotsPerCol;
+    const dotRadius = Math.min(dotSizeX, dotSizeY) / 3;
     
     for (let col = 0; col < dotsPerRow; col++) {
       const freqIndex = Math.floor((col / dotsPerRow) * bufferLength);
@@ -367,9 +415,9 @@ export const drawBars = (
         ctx.fillStyle = `hsla(${hue}, 100%, 50%, ${opacity})`;
         ctx.beginPath();
         ctx.arc(
-          col * dotSize + dotSize / 2,
-          row * dotSize + dotSize / 2,
-          dotSize / 3,
+          col * dotSizeX + dotSizeX / 2,
+          row * dotSizeY + dotSizeY / 2,
+          dotRadius,
           0,
           Math.PI * 2
         );
@@ -404,39 +452,105 @@ export const drawBars = (
     ctx.stroke();
     ctx.restore();
   } else if (mode === 6) {
-    // モード6: 3D風バー（奥行き効果）
+    // モード6: グライコ風（1980年代コンポ風ピークホールド）
     analyser.getByteFrequencyData(bufferData);
     const barsLength = 64;
     const barWidth = canvasWidth / barsLength;
-    
+    const scale = (canvasHeight / 255) * 1.2;
+    const holdMs = 350;
+    const decayPerFrame = 2.5;
+    const now = performance.now();
+    const colorSet = settings.glycoColorSet ?? "amber";
+
+    // 高音域ほどわずかに感度アップ（全帯域MAXにならない程度）
+    const getAdjustedValue = (i: number, rawValue: number) => {
+      const t = i / barsLength; // 0=低音, 1=高音
+      const gain = 1 + t * 0.25; // 高音域で最大1.25倍
+      return Math.min(255, rawValue * gain);
+    };
+
+    const peakState = (drawBars as any)._glycoPeak ?? { peak: [] as number[], lastPeakTime: [] as number[], lastMode: -1 };
+    if (peakState.lastMode !== 6) {
+      peakState.peak = new Array(barsLength).fill(0);
+      peakState.lastPeakTime = new Array(barsLength).fill(0);
+    }
+    peakState.lastMode = 6;
+    (drawBars as any)._glycoPeak = peakState;
+
+    const peak = peakState.peak;
+    const lastPeakTime = peakState.lastPeakTime;
+
+    const getColor = (i: number) => {
+      if (GLYCO_COLOR_SETS[colorSet]) {
+        const c = GLYCO_COLOR_SETS[colorSet];
+        return { bar: c.bar, dash: c.dash };
+      }
+      if (GLYCO_GRADIENT_SETS[colorSet]) {
+        const c = GLYCO_GRADIENT_SETS[colorSet](i, barsLength);
+        const dash: [number, number, number] = [Math.min(255, c[0] + 40), Math.min(255, c[1] + 40), Math.min(255, c[2] + 40)];
+        return { bar: c, dash };
+      }
+      const c = GLYCO_COLOR_SETS.amber;
+      return { bar: c.bar, dash: c.dash };
+    };
+
+    const useVerticalGradient = colorSet === "verticalEQ";
+    const useVerticalGradientFixed = colorSet === "verticalEQFixed";
+    const opacity = 0.6 * settings.opacity;
+    const peakLineWidth = 5; // ピーク「-」を太く
+
     for (let i = 0; i < barsLength; i++) {
-      const value = bufferData[Math.floor((i / barsLength) * bufferLength)];
-      const barHeight = value * 1.5;
+      const rawValue = bufferData[Math.floor((i / barsLength) * bufferLength)];
+      const value = getAdjustedValue(i, rawValue);
+      const barHeight = Math.min(value * scale, canvasHeight);
       const x = i * barWidth;
-      const offset = (i - barsLength / 2) * 2;
-      
-      // 奥行き効果のためのグラデーション
-      const gradient = ctx.createLinearGradient(
-        x,
-        canvasHeight,
-        x,
-        canvasHeight - barHeight
-      );
-      const hue = (i / barsLength) * 360;
-      gradient.addColorStop(0, `hsla(${hue}, 100%, 30%, 0.9)`);
-      gradient.addColorStop(0.5, `hsla(${hue}, 100%, 50%, 0.8)`);
-      gradient.addColorStop(1, `hsla(${hue}, 100%, 70%, 0.7)`);
-      
-      ctx.fillStyle = gradient;
-      
-      // 3D風の平行四辺形
+
+      if (value >= peak[i]) {
+        peak[i] = value;
+        lastPeakTime[i] = now;
+      } else if (now - lastPeakTime[i] > holdMs) {
+        peak[i] = Math.max(0, peak[i] - decayPerFrame);
+      }
+
+      const { bar, dash } = getColor(i);
+
+      if (useVerticalGradient) {
+        // 縦グラデーション（下:青紫→シアン→緑→上:赤橙、EQ風）
+        const grad = ctx.createLinearGradient(x, canvasHeight, x, canvasHeight - barHeight);
+        grad.addColorStop(0, `rgba(60, 50, 120, ${opacity})`);
+        grad.addColorStop(0.35, `rgba(0, 160, 180, ${opacity})`);
+        grad.addColorStop(0.65, `rgba(0, 220, 100, ${opacity})`);
+        grad.addColorStop(1, `rgba(255, 100, 50, ${opacity})`);
+        ctx.fillStyle = grad;
+      } else if (useVerticalGradientFixed) {
+        // 縦グラデーション固定: 表示エリア最大高さを100%とする（バー高さに依存しない）
+        // 下60%: 青、61%〜上: 青→黄緑→黄→橙→赤
+        const grad = ctx.createLinearGradient(x, canvasHeight, x, 0);
+        grad.addColorStop(0, `rgba(50, 80, 180, ${opacity})`);
+        grad.addColorStop(0.6, `rgba(50, 80, 180, ${opacity})`);
+        grad.addColorStop(0.61, `rgba(50, 80, 180, ${opacity})`);
+        grad.addColorStop(0.72, `rgba(150, 220, 50, ${opacity})`);
+        grad.addColorStop(0.82, `rgba(255, 220, 0, ${opacity})`);
+        grad.addColorStop(0.91, `rgba(255, 150, 50, ${opacity})`);
+        grad.addColorStop(1, `rgba(220, 50, 50, ${opacity})`);
+        ctx.fillStyle = grad;
+      } else {
+        ctx.fillStyle = `rgba(${bar[0]}, ${bar[1]}, ${bar[2]}, ${opacity})`;
+      }
+      ctx.fillRect(x, canvasHeight - barHeight, barWidth, barHeight);
+
+      const peakHeight = Math.min(peak[i] * scale, canvasHeight);
+      const dashWidth = barWidth * 0.7;
+      const dashX = x + (barWidth - dashWidth) / 2;
+      const dashY = canvasHeight - peakHeight;
+      ctx.strokeStyle = (useVerticalGradient || useVerticalGradientFixed)
+        ? `rgba(100, 200, 255, ${0.95 * settings.opacity})`
+        : `rgba(${dash[0]}, ${dash[1]}, ${dash[2]}, ${0.95 * settings.opacity})`;
+      ctx.lineWidth = peakLineWidth;
       ctx.beginPath();
-      ctx.moveTo(x, canvasHeight);
-      ctx.lineTo(x + barWidth, canvasHeight);
-      ctx.lineTo(x + barWidth + offset * 0.3, canvasHeight - barHeight);
-      ctx.lineTo(x + offset * 0.3, canvasHeight - barHeight);
-      ctx.closePath();
-      ctx.fill();
+      ctx.moveTo(dashX, dashY);
+      ctx.lineTo(dashX + dashWidth, dashY);
+      ctx.stroke();
     }
   }
 
@@ -462,7 +576,7 @@ export const drawBars = (
   }
 
   animationFrameId = requestAnimationFrame(function () {
-    drawBars(canvas, imageCtx, mode, analyser, adjustments, effect, isEffectActive);
+    drawBars(canvas, imageCtx, mode, analyser, adjustments, effect, isEffectActive, spectrumSettings);
   });
   return animationFrameId;
 };

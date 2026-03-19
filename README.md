@@ -1,107 +1,145 @@
-# Music Waves Visualizer(改)
+# Music Waves Visualizer (Modified)
 
-画像と音楽ファイルを読み込んで、音声波形を可視化した動画を作成するWebアプリケーションです。
+A web application that creates audio waveform videos by loading image and music files.
 
-## デモ
+## Demo
 
 https://lil.la/visualizer/
 
-### Music Waves Visualizer(改) 実行イメージ
+### Screenshot
 
 <a href="./Image.jpg" target="_blank">
-  <img src="./Image.jpg" alt="Music Waves Visualizer 実行イメージ" width="600" style="max-width: 100%; height: auto;">
+  <img src="./Image.jpg" alt="Music Waves Visualizer screenshot" width="600" style="max-width: 100%; height: auto;">
 </a>
 
-*画像をクリックすると原寸大で表示されます*
+*Click the image for full size*
 
-## 主な機能
+## Features
 
-- **ファイル読み込み**: ドラッグ&ドロップまたはボタンから画像・音楽ファイルを読み込み
-- **画像の自動スケーリング**: 読み込んだ画像を推奨解像度（1920×1080等）に自動拡大・縮小（アスペクト比維持、隙間なしで最大表示）
-- **7つのスペクトラムアナライザーモード**: 様々な波形表示スタイルを選択可能
-- **3つの解像度**: 1920×1080、1080×1920、1920×1920から選択
-- **表示・音量設定**: 倍率・位置の調整（レイアウト別に保存）、目標LUFS（YouTube -14、ニコニコ -15、任意値）で音量正規化
-- **エフェクト**: 宇宙空間（3種）、ビネット、レインボー、カーテン。プレビュー/録画中のみ表示、各エフェクトごとに強度（弱・中・強）を個別保存
-- **プレビュー機能**: 音楽を再生しながら波形をリアルタイム表示
-- **動画生成**: MP4形式で動画を出力
-- **設定管理**: 全設定の一括エクスポート、存在する項目のみ上書きインポート
-- **クリア**: 画像・音楽の選択解除や設定を初期状態に戻す
+- **File loading**: Drag & drop or button to load image and audio files
+- **Auto image scaling**: Loaded images are scaled to recommended resolution (1920×1080, etc.) with aspect ratio preserved
+- **7 spectrum analyzer modes**: Various waveform display styles
+- **3 resolutions**: 1920×1080, 1080×1920, 1920×1920
+- **Display & volume settings**: Scale/position adjustment (saved per layout), target LUFS (YouTube -14, NicoNico -15, custom)
+- **Effects**: Space (3 types), vignette, rainbow, curtain. Shown during preview/recording only. Per-effect strength (weak/medium/strong)
+- **Preview**: Real-time waveform display while playing music
+- **Video generation**: MP4 output
+- **Settings management**: Export all settings, import with overwrite of existing keys only
+- **Clear**: Reset image/music selection and settings to initial state
+- **Bilingual UI**: Japanese / English (auto-detected from browser language)
 
-## クイックスタート
+## Quick Start
 
-### Docker HTTPS 版（推奨・検証用）
+### Docker HTTPS (recommended for testing)
 
 ```bash
-./generate-ssl-cert.sh <サーバーIP>   # 初回のみ
+./generate-ssl-cert.sh <server-IP>   # First time only
 docker compose -f docker-compose.https.yml up -d --build
 ```
 
-アクセス: `https://<サーバーIP>:8443/visualizer/`
+Access: `https://<server-IP>:8443/visualizer/`
 
-- リモート接続や SharedArrayBuffer（FFmpeg動画変換）を使う場合は HTTPS 必須です
-- 自己署名証明書のため、ブラウザで「詳細」→「安全でないサイトへ」で進んでください
+- HTTPS is required for remote access and SharedArrayBuffer (FFmpeg video conversion)
+- Self-signed certificate: In browser, choose "Advanced" → "Proceed to site"
 
-### その他の起動方法
+### Other run methods
 
 ```bash
-# 本番モード（Next.js スタンドアロン）
+# Production (Next.js standalone)
 docker-compose up --build
 
-# 開発モード
+# Development
 docker-compose -f docker-compose.dev.yml up --build
 
-# ローカル開発（同一マシンのみ・localhost 必須）
+# Local development (localhost only)
 npm install && npm run dev
 ```
 
-詳細は [README_DOCKER.md](./README_DOCKER.md) を参照
+See [README_DOCKER.md](./README_DOCKER.md) for details.
 
-### レンタルサーバー用静的配布（静的HTML版）
+### Static HTML for shared hosting
 
 ```bash
 npm run build:html
 ```
 
-- 生成される `visualizer/` は **静的HTML版** です（Next.js の `next export` 結果）。
-- デフォルト設定では **`/visualizer` パスに固定** されているため、
-  サーバー上の `visualizer` ディレクトリにそのままアップロードして使います。
-  - 例: `public_html/visualizer/` に `index.html`, `_next/`, `.htaccess` などをすべて配置
-- 別パスで公開したい場合のカスタマイズ手順は [`HTML_HOSTING.md`](./HTML_HOSTING.md) を参照してください。
+- The generated `visualizer/` is a **static HTML build** (Next.js `next export` output).
+- Default config uses **`/visualizer` path**. Upload to the server's `visualizer` directory.
+  - Example: Place `index.html`, `_next/`, `.htaccess` in `public_html/visualizer/`
+- For custom paths, see [HTML_HOSTING.md](./HTML_HOSTING.md).
 
-## 使用方法
+## Usage
 
-1. **ファイルの読み込み**: ドラッグ&ドロップまたはボタンから画像・音楽ファイルを選択
-2. **スペクトラムアナライザーを選択**: 7つのモードから選択
-3. **解像度を選択**: 3つの解像度から選択
-4. **表示・音量設定（オプション）**: 倍率・位置の調整、目標LUFSで音量正規化
-5. **エフェクト（オプション）**: 宇宙空間・ビネット・レインボー・カーテンから選択
-6. **プレビュー**: 音楽を再生しながら波形を確認
-7. **動画を生成**: MP4形式で動画を出力（生成中はウィンドウを切り替えないでください）
-8. **クリア**: 初期状態に戻す
+1. **Load files**: Drag & drop or use buttons to select image and audio
+2. **Select spectrum analyzer**: Choose from 7 modes
+3. **Select resolution**: Choose from 3 resolutions
+4. **Display & volume (optional)**: Scale, position, target LUFS
+5. **Effects (optional)**: Space, vignette, rainbow, curtain
+6. **Preview**: Play music and view waveform
+7. **Generate video**: Output MP4 (do not switch windows during generation)
+8. **Clear**: Reset to initial state
 
-詳細は [仕様書.md](./仕様書.md) を参照
+See [SPECIFICATION.md](./SPECIFICATION.md) for details.
 
-## ドキュメント
+## Documentation
 
-- **[仕様書.md](./仕様書.md)**: 技術仕様と機能詳細
-- **[README_DOCKER.md](./README_DOCKER.md)**: Dockerの使い方
-- **[サーバー要件.md](./サーバー要件.md)**: レンタルサーバー・共有ホスティング用の要件
-- **[サーバー要件(local docker)用.md](./サーバー要件(local%20docker)用.md)**: ローカル・Docker環境用の詳細要件
-- **[DEVELOPER_MODE.md](./DEVELOPER_MODE.md)**: 開発者モードの説明
-- **[CHANGELOG.md](./CHANGELOG.md)**: 変更履歴
+- **[SPECIFICATION.md](./SPECIFICATION.md)**: Technical spec and feature details
+- **[README_DOCKER.md](./README_DOCKER.md)**: Docker usage
+- **[SERVER_REQUIREMENTS.md](./SERVER_REQUIREMENTS.md)**: Shared hosting requirements
+- **[SERVER_REQUIREMENTS_DOCKER.md](./SERVER_REQUIREMENTS_DOCKER.md)**: Local/Docker requirements
+- **[DEVELOPER_MODE.md](./DEVELOPER_MODE.md)**: Developer mode
+- **[CHANGELOG.md](./CHANGELOG.md)**: Changelog
 
-## クレジット
+## Credits
 
-このプロジェクトは [komura-c/music-waves-visualizer](https://github.com/komura-c/music-waves-visualizer) をベースにしています。
+Based on [komura-c/music-waves-visualizer](https://github.com/komura-c/music-waves-visualizer).
 
-元記事: [オーディオ波形動画を生成するWebぺージの作り方](https://tech-blog.voicy.jp/entry/2022/12/11/235929)
+Original article: [Creating a Web Page for Audio Waveform Videos](https://tech-blog.voicy.jp/entry/2022/12/11/235929)
 
-## ライセンス
+## License
 
-本リポジトリは [komura-c/music-waves-visualizer](https://github.com/komura-c/music-waves-visualizer) をベースに改変を加えたものです。  
-**MIT License** で提供します。元プロジェクトも MIT License で公開されています。
+MIT License. See [LICENSE](./LICENSE). Dependencies: [NOTICE](./NOTICE).
 
-- オリジナル実装: Copyright (c) 2023 komura-c
-- 改変版: Copyright (c) 2022-2026 KURAGASHI (kuwa2005)
+- Original: Copyright (c) 2023 komura-c
+- Modified: Copyright (c) 2022-2026 KURAGASHI (kuwa2005)
 
-詳細は [LICENSE](./LICENSE) を参照してください。依存ライブラリのライセンス一覧は [NOTICE](./NOTICE) を参照してください。
+---
+
+## 日本語
+
+### 概要
+
+画像と音楽ファイルを読み込んで、音声波形を可視化した動画を作成するWebアプリケーションです。
+
+### 主な機能
+
+- **ファイル読み込み**: ドラッグ&ドロップまたはボタンから画像・音楽ファイルを読み込み
+- **画像の自動スケーリング**: 読み込んだ画像を推奨解像度に自動拡大・縮小
+- **7つのスペクトラムアナライザーモード**: 様々な波形表示スタイル
+- **3つの解像度**: 1920×1080、1080×1920、1920×1920
+- **表示・音量設定**: 倍率・位置の調整、目標LUFS（YouTube -14、ニコニコ -15、任意値）
+- **エフェクト**: 宇宙空間（3種）、ビネット、レインボー、カーテン
+- **プレビュー・動画生成・設定管理・クリア**
+- **バイリンガルUI**: ブラウザ言語に応じて日本語/英語を自動切り替え
+
+### クイックスタート
+
+```bash
+# Docker HTTPS版（推奨）
+./generate-ssl-cert.sh <サーバーIP>
+docker compose -f docker-compose.https.yml up -d --build
+# アクセス: https://<サーバーIP>:8443/visualizer/
+
+# 静的HTML版（レンタルサーバー用）
+npm run build:html
+# visualizer/ の中身をサーバーにアップロード
+```
+
+### ドキュメント（日本語）
+
+- [仕様書.md](./仕様書.md): 技術仕様と機能詳細
+- [README_DOCKER.md](./README_DOCKER.md): Dockerの使い方
+- [サーバー要件.md](./サーバー要件.md): レンタルサーバー用要件
+- [サーバー要件(local docker)用.md](./サーバー要件(local%20docker)用.md): ローカル・Docker用
+- [DEVELOPER_MODE.md](./DEVELOPER_MODE.md): 開発者モード
+- [CHANGELOG.md](./CHANGELOG.md): 変更履歴
