@@ -1,7 +1,8 @@
 {
   "heading": {
     "title": "Music Waves Visualizer (Modified)",
-    "description": "Create audio waveform videos by loading image and music. Output format is MP4."
+    "description": "Create audio waveform videos by loading image and music. Output format is MP4.",
+    "termsLink": "Terms of Service"
   },
   "dropZone": {
     "hint": "Drag & drop files (multiple files supported)",

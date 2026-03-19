@@ -21,6 +21,18 @@
       margin: 0;
     }
   }
+  &__terms {
+    text-align: right;
+    margin: 4px 0 0 0;
+    font-size: 11px;
+    a {
+      color: #ff7a3c;
+      text-decoration: none;
+      &:hover {
+        text-decoration: underline;
+      }
+    }
+  }
 }
 
 .dropZone {

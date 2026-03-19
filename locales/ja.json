@@ -1,7 +1,8 @@
 {
   "heading": {
     "title": "Music Waves Visualizer(改)",
-    "description": "画像と音楽を読み込んで音声波形動画を作成するWebページです。動画はmp4形式で出力されます。"
+    "description": "画像と音楽を読み込んで音声波形動画を作成するWebページです。動画はmp4形式で出力されます。",
+    "termsLink": "ユーザー利用規約"
   },
   "dropZone": {
     "hint": "ファイルをドラッグ&ドロップ（複数ファイル対応）",

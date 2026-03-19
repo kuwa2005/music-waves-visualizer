@@ -1124,6 +1124,15 @@ const Home: NextPage = () => {
           <h1 className={styles.heading__title}>{t("heading.title")}</h1>
           <div className={styles.heading__text}>
             <p>{t("heading.description")}</p>
+            <p className={styles.heading__terms}>
+              <a
+                href="https://github.com/kuwa2005/music-waves-visualizer/blob/master/USER_TERMS.md"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                {t("heading.termsLink")}
+              </a>
+            </p>
           </div>
         </div>
 
