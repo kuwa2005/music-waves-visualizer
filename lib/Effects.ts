@@ -354,7 +354,7 @@ function drawCurtainCanvas(
   ctx.restore();
 }
 
-// --- きらきら（白+透明度のみ。ラジアルグロー・二重ストローク・中心芯・ゆるい自転。＋/X/＊）---
+// --- きらきら（白+透明度のみ。二重ストローク・中心芯・ゆるい自転。＋/X/＊。ラジアルグロウは使わない）---
 interface SparkleParticle {
   x: number;
   y: number;
@@ -569,27 +569,6 @@ export function updateAndGetSparkleParticles(
   return out;
 }
 
-/** 外側のソフトグロー（白のみ・透明度で濃淡。明背景でも黒芯にならない） */
-function drawSparkleRadialGlowCanvas(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  radius: number,
-  alpha: number
-): void {
-  const glowR = radius * 3.5;
-  const base = alpha * 0.28;
-  const grd = ctx.createRadialGradient(x, y, 0, x, y, glowR);
-  grd.addColorStop(0, `rgba(255,255,255,${Math.min(1, base * 2.0)})`);
-  grd.addColorStop(0.3, `rgba(255,255,255,${base * 0.65})`);
-  grd.addColorStop(0.6, `rgba(255,255,255,${base * 0.22})`);
-  grd.addColorStop(1, "rgba(255,255,255,0)");
-  ctx.fillStyle = grd;
-  ctx.beginPath();
-  ctx.arc(x, y, glowR, 0, Math.PI * 2);
-  ctx.fill();
-}
-
 /** ＋ / X / ＊（8方向）＋中心の白い芯（すべて rgba(255,255,255,a)） */
 function drawSparkleStarShape(
   ctx: CanvasRenderingContext2D,
@@ -660,7 +639,6 @@ function drawSparkleCanvas(
   ctx.save();
   ctx.globalCompositeOperation = "source-over";
   for (const p of list) {
-    drawSparkleRadialGlowCanvas(ctx, p.x, p.y, p.radius, p.alpha);
     drawSparkleStarShape(
       ctx,
       p.x,

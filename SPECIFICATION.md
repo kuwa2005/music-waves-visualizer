@@ -47,6 +47,8 @@ https://music-waves-visualizer.vercel.app/
 - **Vignette**: Darken edges
 - **Rainbow**: Hue-shifting overlay
 - **Curtain**: Flowing curtain
+- **Sparkle** (きらきら): White +/X/* star shapes with twinkle; **no radial glow** (Canvas 2D and WebGL both draw star strokes + core only)
+- **Dust** (空気感 / atmosphere): Low-contrast drifting particles; Canvas uses solid circles + `lighter` blend; WebGL uses additive circles (no large soft bloom)
 
 Effects are shown during preview/recording only. Strength: weak / medium / strong per effect.
 
@@ -77,4 +79,5 @@ Effects are shown during preview/recording only. Strength: weak / medium / stron
 ## 日本語
 
 - スペクトラムは内部で7モードあるが、**UI では OFF＋5種**（折れ線・波形上下対称のボタンは非表示。描画は残す）。
+- **きらきら**はラジアルグロウなし（星形のみ）。**空気感（ほこり）**は単色の小さな円で表現（Canvas/WebGL で方針を揃えた記述は上記）。
 - 詳細は [仕様書.md](./仕様書.md) を参照。

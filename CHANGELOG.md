@@ -33,6 +33,7 @@
 
 ### Changed
 - **Dust (atmosphere) effect**: particle sizes biased toward smaller circles; max size scaled; Canvas 2D draws solid circles with `lighter` blend to match WebGL (no radial glow)
+- **Sparkle (きらきら) effect**: removed radial / layered soft glow; Canvas 2D and WebGL draw star shape (+/X/*) and core only, aligned between renderers
 - **Spectrum UI**: line mode (1) and symmetric waveform (5) buttons hidden; saved `session_mode` 1/5 falls back to 0
 - **Meta tags (`_app.tsx`)**: `description` / `og:description` bilingual (JA + EN) for crawlers and sharing
 - モード6を3D風バーからグライコ風（1980年代コンポ風ピークホールド）に変更
@@ -69,6 +70,7 @@
 - faviconのbaseURL未設定時の404エラー（`undefinedfavicon.ico`）
 
 ### Documentation
+- README / SPECIFICATION / 仕様書: sparkle & dust effects and rendering policy (no radial glow for sparkle; dust particle notes)
 - Documentation unified: English main + Japanese section for all docs
 - README.mdを更新（新機能の説明を追加）
 - DEVELOPER_MODE.mdを追加（開発者モード機能の説明）
@@ -84,6 +86,7 @@
 - 利用規約（CPU/GPU/メモリ）・READMEに USER_TERMS / PRIVACY へのリンク。
 - スペクトラム: 折れ線・波形上下対称のボタン非表示、仕様書・SPECIFICATION に記載。
 - 空気感（ほこり）: 粒サイズ調整・Canvas2D を WebGL に寄せた描画。
+- きらきら: ラジアル・重ねグロウを廃止し星形のみ（Canvas/WebGL 揃え）。
 - `meta` / `og:description` を日英併記に整理。
 
 ## [Original Version]

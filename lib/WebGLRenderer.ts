@@ -810,28 +810,6 @@ function drawLine(
   gl.drawArrays(gl.TRIANGLES, 0, 6);
 }
 
-/** きらきら用ソフトグロー（重ね円・白＋透明度のみ） */
-function drawSparkleGlowLayersWebGL(
-  ctx: WebGLRendererContext,
-  cx: number,
-  cy: number,
-  radius: number,
-  r: number,
-  g: number,
-  b: number,
-  a: number
-): void {
-  const layers: { scale: number; amul: number }[] = [
-    { scale: 3.5, amul: 0.15 },
-    { scale: 2.1, amul: 0.075 },
-    { scale: 1.22, amul: 0.048 },
-  ];
-  for (const { scale, amul } of layers) {
-    const R = Math.max(1.2, radius * scale);
-    drawCircle(ctx, cx, cy, R, r, g, b, Math.min(1, a * amul));
-  }
-}
-
 /**
  * きらきら: ＋ / X / ＊（8方向）を線で描画。
  * lineWidthMul / alphaMul で外側の淡いストローク用に再利用。
@@ -1170,7 +1148,6 @@ function renderFrame(): void {
           const g = p.g / 255;
           const b = p.b / 255;
           const a = p.alpha;
-          drawSparkleGlowLayersWebGL(glContext, p.x, p.y, rad, r, g, b, a);
           drawSparkleStarWebGL(
             glContext,
             p.x,
