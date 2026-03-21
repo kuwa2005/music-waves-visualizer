@@ -178,11 +178,29 @@ const Home: NextPage = () => {
     offsetY: 0, // パーセンテージ
   });
 
-  // エフェクト（共通設定: 選択中エフェクト + 各エフェクトごとの強度）
-  const EFFECT_TYPES_WITH_STRENGTH: EffectType[] = ["space", "spaceConstant", "spaceAudio", "vignette", "rainbow", "curtain"];
+  // エフェクト強度スライダー対象（UI表示するもの + 非表示だが旧設定互換のもの）
+  const EFFECT_TYPES_STRENGTH_UI: EffectType[] = ["space", "spaceConstant", "spaceAudio", "sparkle", "dust"];
+  const EFFECT_TYPES_STRENGTH_LEGACY_HIDDEN: EffectType[] = ["vignette", "rainbow", "curtain"];
+  const ALL_EFFECT_STRENGTH_TYPES: EffectType[] = [
+    ...EFFECT_TYPES_STRENGTH_UI,
+    ...EFFECT_TYPES_STRENGTH_LEGACY_HIDDEN,
+  ];
+  const VALID_SAVED_EFFECT_TYPES: EffectType[] = [
+    "none",
+    "space",
+    "spaceConstant",
+    "spaceAudio",
+    "vignette",
+    "rainbow",
+    "curtain",
+    "sparkle",
+    "dust",
+  ];
   const defaultEffectDensities = (): Partial<Record<EffectType, EffectDensity>> => {
     const o: Partial<Record<EffectType, EffectDensity>> = {};
-    EFFECT_TYPES_WITH_STRENGTH.forEach((t) => { o[t] = 2; });
+    ALL_EFFECT_STRENGTH_TYPES.forEach((t) => {
+      o[t] = 2;
+    });
     return o;
   };
   const [effectType, setEffectType] = useState<EffectType>("none");
@@ -316,13 +334,13 @@ const Home: NextPage = () => {
             setTargetLufsCustom(v === -14 || v === -15 ? "" : String(v));
           }
         }
-        if (c.effectType && ["none", "space", "spaceConstant", "spaceAudio", "vignette", "rainbow", "curtain"].includes(c.effectType)) {
+        if (c.effectType && VALID_SAVED_EFFECT_TYPES.includes(c.effectType)) {
           localStorage.setItem("common_effectType", c.effectType);
           setEffectType(c.effectType);
         }
         if (c.effectDensities && typeof c.effectDensities === "object") {
           const merged = { ...effectDensities };
-          EFFECT_TYPES_WITH_STRENGTH.forEach((t) => {
+          ALL_EFFECT_STRENGTH_TYPES.forEach((t) => {
             if (c.effectDensities[t] === 1 || c.effectDensities[t] === 2 || c.effectDensities[t] === 3) {
               merged[t] = c.effectDensities[t];
             }
@@ -378,11 +396,13 @@ const Home: NextPage = () => {
             setTargetLufsCustom(v === -14 || v === -15 ? "" : String(v));
           }
         }
-        if (as.effectType) setEffectType(as.effectType);
+        if (as.effectType && VALID_SAVED_EFFECT_TYPES.includes(as.effectType as EffectType)) {
+          setEffectType(as.effectType as EffectType);
+        }
         if (as.effectDensities) {
           setEffectDensities((prev) => {
             const merged = { ...prev };
-            EFFECT_TYPES_WITH_STRENGTH.forEach((t) => {
+            ALL_EFFECT_STRENGTH_TYPES.forEach((t) => {
               if (as.effectDensities[t] === 1 || as.effectDensities[t] === 2 || as.effectDensities[t] === 3) {
                 merged[t] = as.effectDensities[t];
               }
@@ -476,7 +496,12 @@ const Home: NextPage = () => {
   // マウント後にlocalStorageから設定を読み込み（ハイドレーション一致のためクライアントのみ）
   useEffect(() => {
     const savedMode = localStorage.getItem("session_mode");
-    const modeVal = savedMode ? parseInt(savedMode, 10) : 0;
+    let modeVal = savedMode ? parseInt(savedMode, 10) : 0;
+    // UI 非表示のモード（折れ線=1・波形上下対称=5）は周波数バーへ
+    if (modeVal === 1 || modeVal === 5) {
+      modeVal = 0;
+      localStorage.setItem("session_mode", "0");
+    }
     setMode(modeVal);
 
     const savedSize = localStorage.getItem("session_canvasSize");
@@ -484,8 +509,7 @@ const Home: NextPage = () => {
     setCanvasSize(sizeVal);
 
     const savedEffectType = localStorage.getItem("common_effectType");
-    const valid: EffectType[] = ["none", "space", "spaceConstant", "spaceAudio", "vignette", "rainbow", "curtain"];
-    if (savedEffectType && valid.includes(savedEffectType as EffectType)) {
+    if (savedEffectType && VALID_SAVED_EFFECT_TYPES.includes(savedEffectType as EffectType)) {
       setEffectType(savedEffectType as EffectType);
     }
 
@@ -494,7 +518,7 @@ const Home: NextPage = () => {
       if (savedDensities) {
         const parsed = JSON.parse(savedDensities) as Partial<Record<EffectType, EffectDensity>>;
         const result = defaultEffectDensities();
-        EFFECT_TYPES_WITH_STRENGTH.forEach((t) => {
+        ALL_EFFECT_STRENGTH_TYPES.forEach((t) => {
           if (parsed[t] === 1 || parsed[t] === 2 || parsed[t] === 3) result[t] = parsed[t];
         });
         setEffectDensities(result);
@@ -703,35 +727,14 @@ const Home: NextPage = () => {
     if (!file) {
       return;
     }
-    // MP4ファイルの場合、静止画として扱う（ビデオの最初のフレームを抽出する必要があるが、簡易的に画像として扱う）
     if (isVideoFile(file.name)) {
-      // MP4を画像として扱う場合、HTMLVideoElementを使用してフレームを抽出
-      const video = document.createElement("video");
-      video.preload = "metadata";
-      video.onloadedmetadata = () => {
-        video.currentTime = 0.1; // 最初のフレームを取得
-      };
-      video.onloadeddata = () => {
-        const canvas = document.createElement("canvas");
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-        const ctx = canvas.getContext("2d");
-        if (ctx) {
-          ctx.drawImage(video, 0, 0);
-          const image = new Image();
-          image.onload = () => {
-            if (!canvasRef.current) {
-              return;
-            }
-            setImageCtx(image);
-            setImageFileName(file.name);
-            exitConfirmRef.current = true;
-            openSnackBar(t("snackbar.videoFrameExtracted"));
-          };
-          image.src = canvas.toDataURL();
-        }
-      };
-      video.src = URL.createObjectURL(file);
+      openSnackBar(t("snackbar.imageVideoNotAllowed"));
+      event.target.value = "";
+      return;
+    }
+    if (!isImageFile(file.name)) {
+      openSnackBar(t("snackbar.imageTypeNotSupported"));
+      event.target.value = "";
       return;
     }
     loadImageFile(file);
@@ -1156,7 +1159,7 @@ const Home: NextPage = () => {
                 {t("dropZone.selectImage")}
                 <input
                   type="file"
-                  accept="image/*,video/*"
+                  accept="image/*"
                   onChange={imageLoad}
                   hidden
                 />
@@ -1225,11 +1228,10 @@ const Home: NextPage = () => {
                 {[
                   { value: -1, label: t("spectrum.off") },
                   { value: 0, label: t("spectrum.freqBar") },
-                  { value: 1, label: t("spectrum.line") },
+                  // 折れ線(1)・波形上下対称(5)は UI から非表示（描画ロジックは残す）
                   { value: 2, label: t("spectrum.circle") },
                   { value: 3, label: t("spectrum.symBar") },
                   { value: 4, label: t("spectrum.dot") },
-                  { value: 5, label: t("spectrum.symWave") },
                   { value: 6, label: t("spectrum.glyco") },
                 ].map((item) => (
                   <Button
@@ -1304,28 +1306,22 @@ const Home: NextPage = () => {
                 >
                   {t("effect.space3")}
                 </Button>
+                {/* ビネット・レインボー・カーテンはUI非表示（機能・旧設定インポートは維持） */}
                 <Button
-                  variant={effectType === "vignette" ? "contained" : "outlined"}
-                  onClick={() => setEffectType("vignette")}
+                  variant={effectType === "sparkle" ? "contained" : "outlined"}
+                  onClick={() => setEffectType("sparkle")}
                   size="small"
                 >
-                  {t("effect.vignette")}
+                  {t("effect.sparkle")}
                 </Button>
                 <Button
-                  variant={effectType === "rainbow" ? "contained" : "outlined"}
-                  onClick={() => setEffectType("rainbow")}
+                  variant={effectType === "dust" ? "contained" : "outlined"}
+                  onClick={() => setEffectType("dust")}
                   size="small"
                 >
-                  {t("effect.rainbow")}
+                  {t("effect.dust")}
                 </Button>
-                <Button
-                  variant={effectType === "curtain" ? "contained" : "outlined"}
-                  onClick={() => setEffectType("curtain")}
-                  size="small"
-                >
-                  {t("effect.curtain")}
-                </Button>
-                {effectType !== "none" && (
+                {effectType !== "none" && ALL_EFFECT_STRENGTH_TYPES.includes(effectType) && (
                   <>
                     <Typography variant="caption" color="textSecondary" sx={{ mx: 0.5 }}>
                       {t("effect.strength")}
@@ -1666,7 +1662,7 @@ const Home: NextPage = () => {
                       color: 'white',
                       borderRadius: 1
                     }}>
-                      WebGL2: {gpuInfo.isWebGL2Supported ? t("gpu.supported") : t("gpu.unsupported")}
+                      {t("gpu.webgl2")}: {gpuInfo.isWebGL2Supported ? t("gpu.supported") : t("gpu.unsupported")}
                     </Typography>
                     <Typography variant="caption" sx={{
                       px: 1,

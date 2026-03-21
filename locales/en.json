@@ -9,7 +9,7 @@
     "selectImage": "Select Image",
     "selectAudio": "Select Music File",
     "unselected": "Not selected",
-    "caption": "Image and audio files are auto-detected. MP4 is treated as music source."
+    "caption": "Still images and audio are auto-detected. For MP4 and other videos, use the music file picker for audio."
   },
   "spectrum": {
     "title": "Spectrum Analyzer",
@@ -37,6 +37,8 @@
     "vignette": "Vignette",
     "rainbow": "Rainbow",
     "curtain": "Curtain",
+    "sparkle": "Sparkle",
+    "dust": "Atmosphere",
     "strength": "Strength:",
     "weak": "Weak",
     "medium": "Medium",
@@ -97,7 +99,7 @@
   "gpu": {
     "title": "GPU Settings",
     "detected": "Detected GPU",
-    "webgl2": "WebGL2",
+    "webgl2": "WebGL 2",
     "webgpu": "WebGPU",
     "webcodecs": "WebCodecs",
     "supported": "Supported",
@@ -119,6 +121,8 @@
   "snackbar": {
     "imageLoaded": "Image loaded",
     "imageLoadFailed": "Failed to load image",
+    "imageVideoNotAllowed": "Video files (e.g. MP4) cannot be used as the background. Choose a still image, or pick the video under the music file picker.",
+    "imageTypeNotSupported": "Unsupported file type. Use a still image such as JPEG, PNG, GIF, WebP, BMP, or SVG.",
     "audioLoaded": "Music loaded",
     "audioLoadFailed": "Failed to load music: {{error}}",
     "videoFrameExtracted": "Extracted still from video",

@@ -8,7 +8,7 @@ Music Waves Visualizer is a web application that creates audio waveform videos b
 
 - **Image loading**: Background image (drag & drop supported)
 - **Audio loading**: Waveform analysis source (MP4 supported)
-- **Real-time waveform**: 7 display modes
+- **Real-time waveform**: Seven internal modes; **five plus OFF** are exposed in the UI (modes 1 and 5 hidden)
 - **Resolution**: 1920×1080, 1080×1920, 1920×1920
 - **Display adjustment**: Scale and position per mode
 - **Preview**: Real-time waveform while playing
@@ -32,12 +32,14 @@ https://music-waves-visualizer.vercel.app/
 |------|------|--------------|
 | -1 | OFF | No spectrum |
 | 0 | Frequency Bars | 128 vertical bars |
-| 1 | Line | Waveform line |
+| 1 | Line | Waveform line *(UI button hidden; renderer kept)* |
 | 2 | Circle | Circular layout |
 | 3 | Symmetrical Bars | Up/down symmetric bars |
 | 4 | Dots | Dot matrix |
-| 5 | Symmetrical Waveform | Up/down symmetric waveform |
+| 5 | Symmetrical Waveform | Up/down symmetric waveform *(UI button hidden; renderer kept)* |
 | 6 | Glyco Style | 1980s-style peak hold |
+
+**UI note:** Modes **1** (line) and **5** (symmetrical waveform) are not shown on the toolbar. If `session_mode` was 1 or 5, it resets to 0 (frequency bars).
 
 ## 4. Effects
 
@@ -74,4 +76,5 @@ Effects are shown during preview/recording only. Strength: weak / medium / stron
 
 ## 日本語
 
-詳細な技術仕様は [仕様書.md](./仕様書.md) を参照してください。
+- スペクトラムは内部で7モードあるが、**UI では OFF＋5種**（折れ線・波形上下対称のボタンは非表示。描画は残す）。
+- 詳細は [仕様書.md](./仕様書.md) を参照。

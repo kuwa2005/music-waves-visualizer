@@ -9,7 +9,7 @@
     "selectImage": "画像を選ぶ",
     "selectAudio": "音楽ファイルを選ぶ",
     "unselected": "未選択",
-    "caption": "画像ファイルと音楽ファイルを自動判定します。MP4は音楽ファイルとして扱われます。"
+    "caption": "静止画と音楽ファイルを自動判定します。MP4などの動画は「音楽ファイル」から選ぶと音声として使えます。"
   },
   "spectrum": {
     "title": "スペクトラムアナライザー",
@@ -37,6 +37,8 @@
     "vignette": "ビネット",
     "rainbow": "レインボー",
     "curtain": "カーテン",
+    "sparkle": "きらきら",
+    "dust": "空気感",
     "strength": "強度:",
     "weak": "弱",
     "medium": "中",
@@ -97,7 +99,7 @@
   "gpu": {
     "title": "GPU設定",
     "detected": "検出されたGPU",
-    "webgl2": "WebGL2",
+    "webgl2": "WebGL 2",
     "webgpu": "WebGPU",
     "webcodecs": "WebCodecs",
     "supported": "対応",
@@ -119,13 +121,15 @@
   "snackbar": {
     "imageLoaded": "画像を読み込みました",
     "imageLoadFailed": "画像の読み込みに失敗しました",
+    "imageVideoNotAllowed": "動画（MP4など）は背景画像に使えません。静止画を選ぶか、音楽ファイルから動画を選んでください。",
+    "imageTypeNotSupported": "対応していないファイル形式です。JPEG / PNG / GIF / WebP / BMP / SVG などの静止画を選んでください。",
     "audioLoaded": "音楽を読み込みました",
     "audioLoadFailed": "音楽の読み込みに失敗しました: {{error}}",
     "videoFrameExtracted": "動画ファイルから静止画を抽出しました",
     "videoAudioLoaded": "動画ファイルから音声を読み込みました",
     "videoAudioFailed": "動画ファイルの音声読み込みに失敗しました: {{error}}",
     "videoLoadFailed": "動画ファイルの読み込みに失敗しました",
-    "canvasNotReady": "canvasが初期化されていません",
+    "canvasNotReady": "Canvas が初期化されていません",
     "recording": "動画を録画しています...",
     "convertComplete": "動画の変換が完了しました！",
     "convertFailed": "動画の変換に失敗しました: {{error}}",

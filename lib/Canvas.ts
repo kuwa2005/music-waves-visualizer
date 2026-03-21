@@ -233,7 +233,7 @@ export const drawBars = (
 
   ctx.save();
 
-  // プレビュー/録画中のみスペクトラムを描画（エフェクトと同様）
+  // プレビュー/録画中のみスペクトラム＆エフェクトを描画（停止中は背景のみ・負荷なし）
   if (!isEffectActive) {
     ctx.restore();
     return;
@@ -302,13 +302,7 @@ export const drawBars = (
   ctx.translate(-canvasWidth / 2, -canvasHeight / 2);
   
   if (mode === -1) {
-    // OFF: 背景と画像のみ（スペアナ描画なし）
-    ctx.restore();
-    ctx.restore();
-    animationFrameId = requestAnimationFrame(function () {
-      drawBars(canvas, imageCtx, mode, analyser, adjustments, effect, isEffectActive, spectrumSettings);
-    });
-    return animationFrameId;
+    // OFF: スペアナ描画なし。早期 return しない（下の restore → エフェクトと WebGL case -1 を揃える）
   } else if (mode === 0) {
     analyser.getByteFrequencyData(bufferData);
     ctx.fillStyle = "rgba(255, 255, 255, 0.8)";
@@ -560,8 +554,8 @@ export const drawBars = (
   // 最初のsave()に対応するrestore()
   ctx.restore();
 
-  // エフェクトオーバーレイ（プレビュー/録画中のみ、音源連動）
-  if (effect && effect.type !== "none" && isEffectActive) {
+  // エフェクトオーバーレイ（このブロックは isEffectActive 時のみ到達＝音源連動）
+  if (effect && effect.type !== "none") {
     drawEffectOverlayCanvas(ctx, canvasWidth, canvasHeight, effect, getAudioReactive());
   }
 

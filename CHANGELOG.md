@@ -4,6 +4,8 @@
 
 ### Added
 - Bilingual UI (Japanese / English) via i18next. Language auto-detected from browser.
+- `USER_TERMS.md`: clause on CPU/GPU/memory use; link from app header to terms on GitHub
+- README / SPECIFICATION: links to `USER_TERMS.md`, `PRIVACY_POLICY.md`; spectrum UI vs engine documented
 - ライセンス対応: 元作者 (komura-c) が MIT License を付与したため、本リポジトリに LICENSE（MIT）を追加し、README / NOTICE を更新
 - 設定の保存・エクスポート/インポートを新仕様に変更
   - 共通設定: 音量調整、各エフェクトの強度（エフェクトごとに個別保存）
@@ -30,6 +32,9 @@
 - 開発者モード機能（設定の保存・読み込み、エクスポート/インポート）
 
 ### Changed
+- **Dust (atmosphere) effect**: particle sizes biased toward smaller circles; max size scaled; Canvas 2D draws solid circles with `lighter` blend to match WebGL (no radial glow)
+- **Spectrum UI**: line mode (1) and symmetric waveform (5) buttons hidden; saved `session_mode` 1/5 falls back to 0
+- **Meta tags (`_app.tsx`)**: `description` / `og:description` bilingual (JA + EN) for crawlers and sharing
 - モード6を3D風バーからグライコ風（1980年代コンポ風ピークホールド）に変更
   - ピークレベルを「-」ダッシュでホールド、約350ms保持後にゆっくり減衰
   - アンバー色のVUメーター風表示
@@ -76,6 +81,10 @@
 - バイリンガルUI（日本語/英語）を追加。ブラウザ言語で自動切り替え。
 - Reactハイドレーションエラーを修正（英語環境での言語切り替えをuseEffectに移動）。
 - ドキュメントを英語メイン＋日本語セクションに統一。
+- 利用規約（CPU/GPU/メモリ）・READMEに USER_TERMS / PRIVACY へのリンク。
+- スペクトラム: 折れ線・波形上下対称のボタン非表示、仕様書・SPECIFICATION に記載。
+- 空気感（ほこり）: 粒サイズ調整・Canvas2D を WebGL に寄せた描画。
+- `meta` / `og:description` を日英併記に整理。
 
 ## [Original Version]
 

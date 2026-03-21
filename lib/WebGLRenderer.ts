@@ -5,14 +5,31 @@
 
 import type { ModeAdjustments, SpectrumSettings } from './Canvas';
 import { GLYCO_COLOR_SETS, GLYCO_GRADIENT_SETS } from './Canvas';
-import { updateAndGetSpaceParticles, type EffectParams, type EffectType, type AudioReactiveData } from './Effects';
+import {
+  updateAndGetSpaceParticles,
+  updateAndGetSparkleParticles,
+  updateAndGetDustParticles,
+  type EffectParams,
+  type EffectType,
+  type AudioReactiveData,
+} from './Effects';
 
 const BASE_LINE_WIDTH_WAVEFORM = 2.0;
 const BASE_LINE_WIDTH_CIRCLE = 2.0;
 
 const DENSITY_STRENGTH: Record<1 | 2 | 3, number> = { 1: 0.55, 2: 0.8, 3: 1.0 };
 const EFFECT_TYPE_TO_GL: Record<EffectType, number> = {
-  none: 0, space: 0, spaceConstant: 0, spaceAudio: 0, filmGrain: 1, vignette: 2, rainbow: 3, curtain: 4, glitch: 5,
+  none: 0,
+  space: 0,
+  spaceConstant: 0,
+  spaceAudio: 0,
+  sparkle: 0,
+  dust: 0,
+  filmGrain: 1,
+  vignette: 2,
+  rainbow: 3,
+  curtain: 4,
+  glitch: 5,
 };
 
 // 頂点シェーダー（カラー描画用）
@@ -793,6 +810,70 @@ function drawLine(
   gl.drawArrays(gl.TRIANGLES, 0, 6);
 }
 
+/** きらきら用ソフトグロー（重ね円・白＋透明度のみ） */
+function drawSparkleGlowLayersWebGL(
+  ctx: WebGLRendererContext,
+  cx: number,
+  cy: number,
+  radius: number,
+  r: number,
+  g: number,
+  b: number,
+  a: number
+): void {
+  const layers: { scale: number; amul: number }[] = [
+    { scale: 3.5, amul: 0.15 },
+    { scale: 2.1, amul: 0.075 },
+    { scale: 1.22, amul: 0.048 },
+  ];
+  for (const { scale, amul } of layers) {
+    const R = Math.max(1.2, radius * scale);
+    drawCircle(ctx, cx, cy, R, r, g, b, Math.min(1, a * amul));
+  }
+}
+
+/**
+ * きらきら: ＋ / X / ＊（8方向）を線で描画。
+ * lineWidthMul / alphaMul で外側の淡いストローク用に再利用。
+ */
+function drawSparkleStarWebGL(
+  ctx: WebGLRendererContext,
+  cx: number,
+  cy: number,
+  radius: number,
+  r: number,
+  g: number,
+  b: number,
+  a: number,
+  starKind: 0 | 1 | 2,
+  rotation: number,
+  lineWidthMul: number = 1,
+  alphaMul: number = 1
+): void {
+  const L = radius * 1.55;
+  const lineW = Math.max(0.6, radius * 0.42) * lineWidthMul;
+  const aEff = Math.min(1, a * alphaMul);
+  const angles =
+    starKind === 0
+      ? [0, Math.PI / 2]
+      : starKind === 1
+        ? [Math.PI / 4, -Math.PI / 4]
+        : [0, Math.PI / 4, Math.PI / 2, (3 * Math.PI) / 4];
+  const cosR = Math.cos(rotation);
+  const sinR = Math.sin(rotation);
+  for (const phi of angles) {
+    const x0 = -Math.cos(phi) * L;
+    const y0 = -Math.sin(phi) * L;
+    const x1 = Math.cos(phi) * L;
+    const y1 = Math.sin(phi) * L;
+    const wx0 = cx + x0 * cosR - y0 * sinR;
+    const wy0 = cy + x0 * sinR + y0 * cosR;
+    const wx1 = cx + x1 * cosR - y1 * sinR;
+    const wy1 = cy + x1 * sinR + y1 * cosR;
+    drawLine(ctx, wx0, wy0, wx1, wy1, r, g, b, aEff, lineW);
+  }
+}
+
 /**
  * WebGLで円を描画
  */
@@ -925,114 +1006,130 @@ function renderFrame(): void {
   // 背景を描画（WebGLでテクスチャとして描画）
   drawBackgroundWebGL(glContext, canvas, imageCtx);
 
-  // プレビュー/録画中のみスペクトラムを描画（エフェクトと同様）
-  if (!latestEffectActive) {
+  // プレビュー/録画中のみアニメーション（エフェクトも同様。停止中は背景1枚のみで負荷なし）
+  const wantSpectrum = latestEffectActive;
+  const wantEffects = !!(latestEffect && latestEffect.type !== "none");
+
+  if (!wantSpectrum) {
     isAnimating = false;
     return;
   }
 
-  // WebGLの準備（スペクトラム描画用）
   gl.viewport(0, 0, canvasWidth, canvasHeight);
-  gl.useProgram(program);
-
-  // 解像度を設定
-  if (resolutionLocation) {
-    gl.uniform2f(resolutionLocation, canvasWidth, canvasHeight);
-  }
-
-  // ブレンディングを有効化
   gl.enable(gl.BLEND);
   gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
-  const settings: SpectrumSettings = latestSpectrumSettings ?? {
-    opacity: 0.9,
-    fps: 30,
-    lineWidthWaveform: 3.2,
-    lineWidthCircle: 3.2,
-    lineWidthSymWave: 3.6,
-  };
+  // 直後のブロックで常に上書き（プレビュー/録画時のみこの関数はここまで到達）
+  let audioRForEffects: AudioReactiveData = { bass: 0, volume: 0, highFreq: 0 };
 
-  // スペクトラムデータを取得
-  const bufferLength = analyser.frequencyBinCount;
-  const bufferData = new Uint8Array(bufferLength);
-  const freqForEffect = new Uint8Array(bufferLength);
-  const needsFreqForEffect = latestEffect && ["spaceAudio", "filmGrain", "vignette", "rainbow", "curtain", "glitch"].includes(latestEffect.type);
-  if (needsFreqForEffect) {
-    analyser.getByteFrequencyData(freqForEffect);
-  }
+  if (wantSpectrum) {
+    gl.useProgram(program);
 
-  // 音声メトリクス（エフェクト連動用）
-  const getAudioReactive = (): AudioReactiveData => {
-    let bass = 0, volume = 0, highFreq = 0;
-    for (let i = 0; i < 16; i++) bass += freqForEffect[i];
-    for (let i = 0; i < bufferLength; i++) volume += freqForEffect[i];
-    for (let i = 200; i < Math.min(256, bufferLength); i++) highFreq += freqForEffect[i];
-    return {
-      bass: Math.min(1, bass / (16 * 200)),
-      volume: Math.min(1, volume / (bufferLength * 180)),
-      highFreq: Math.min(1, highFreq / (56 * 150)),
-    };
-  };
-
-  // 更新レートを設定値に合わせて落とす（約 settings.fps fps）
-  if (mode === 1 || mode === 5) {
-    const now = performance.now();
-    const interval = 1000 / settings.fps;
-    const key = mode === 1 ? '_lastTimeMode1' : '_lastTimeMode5';
-    const last = (renderFrame as any)[key] ?? 0;
-  if (now - last < interval) {
-    if (isAnimating) {
-      requestAnimationFrame(renderFrame);
+    if (resolutionLocation) {
+      gl.uniform2f(resolutionLocation, canvasWidth, canvasHeight);
     }
-    return;
-  }
-    (renderFrame as any)[key] = now;
+
+    const settings: SpectrumSettings = latestSpectrumSettings ?? {
+      opacity: 0.9,
+      fps: 30,
+      lineWidthWaveform: 3.2,
+      lineWidthCircle: 3.2,
+      lineWidthSymWave: 3.6,
+    };
+
+    const bufferLength = analyser.frequencyBinCount;
+    const bufferData = new Uint8Array(bufferLength);
+    const freqForEffect = new Uint8Array(bufferLength);
+    const needsFreqForEffect =
+      latestEffect &&
+      [
+        "spaceAudio",
+        "filmGrain",
+        "vignette",
+        "rainbow",
+        "curtain",
+        "glitch",
+        "sparkle",
+        "dust",
+      ].includes(latestEffect.type);
+    if (needsFreqForEffect) {
+      analyser.getByteFrequencyData(freqForEffect);
+    }
+
+    const getAudioReactive = (): AudioReactiveData => {
+      let bass = 0, volume = 0, highFreq = 0;
+      for (let i = 0; i < 16; i++) bass += freqForEffect[i];
+      for (let i = 0; i < bufferLength; i++) volume += freqForEffect[i];
+      for (let i = 200; i < Math.min(256, bufferLength); i++) highFreq += freqForEffect[i];
+      return {
+        bass: Math.min(1, bass / (16 * 200)),
+        volume: Math.min(1, volume / (bufferLength * 180)),
+        highFreq: Math.min(1, highFreq / (56 * 150)),
+      };
+    };
+
+    audioRForEffects = getAudioReactive();
+
+    // 更新レートを設定値に合わせて落とす（約 settings.fps fps）
+    let skipSpectrumDraw = false;
+    if (mode === 1 || mode === 5) {
+      const now = performance.now();
+      const interval = 1000 / settings.fps;
+      const key = mode === 1 ? '_lastTimeMode1' : '_lastTimeMode5';
+      const last = (renderFrame as any)[key] ?? 0;
+      if (now - last < interval) {
+        if (isAnimating) {
+          requestAnimationFrame(renderFrame);
+        }
+        // エフェクトON時はスペアナを間引いてもオーバーレイは毎フレーム更新
+        if (!wantEffects) {
+          return;
+        }
+        skipSpectrumDraw = true;
+      } else {
+        (renderFrame as any)[key] = now;
+      }
+    }
+
+    // モードに応じて描画
+    if (!skipSpectrumDraw)
+    switch (mode) {
+      case -1:
+        // OFF: 背景テクスチャのみ（スペアナ描画なし）
+        break;
+      case 0:
+        analyser.getByteFrequencyData(bufferData);
+        drawMode0(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
+        break;
+      case 1:
+        analyser.getByteTimeDomainData(bufferData);
+        drawMode1(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
+        break;
+      case 2:
+        analyser.getByteFrequencyData(bufferData);
+        drawMode2(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
+        break;
+      case 3:
+        analyser.getByteFrequencyData(bufferData);
+        drawMode3(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
+        break;
+      case 4:
+        analyser.getByteFrequencyData(bufferData);
+        drawMode4(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
+        break;
+      case 5:
+        analyser.getByteTimeDomainData(bufferData);
+        drawMode5(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
+        break;
+      case 6:
+        analyser.getByteFrequencyData(bufferData);
+        drawMode6Glyco(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
+        break;
+    }
   }
 
-  // モードに応じて描画
-  switch (mode) {
-    case -1:
-      // OFF: 背景テクスチャのみ（スペアナ描画なし）
-      break;
-    case 0:
-      // 周波数バー
-      analyser.getByteFrequencyData(bufferData);
-      drawMode0(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
-      break;
-    case 1:
-      // 波形（折れ線）
-      analyser.getByteTimeDomainData(bufferData);
-      drawMode1(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
-      break;
-    case 2:
-      // 円形
-      analyser.getByteFrequencyData(bufferData);
-      drawMode2(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
-      break;
-    case 3:
-      // 上下対称バー
-      analyser.getByteFrequencyData(bufferData);
-      drawMode3(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
-      break;
-    case 4:
-      // ドット表示
-      analyser.getByteFrequencyData(bufferData);
-      drawMode4(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
-      break;
-    case 5:
-      // 波形（上下対称）
-      analyser.getByteTimeDomainData(bufferData);
-      drawMode5(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
-      break;
-    case 6:
-      // グライコ風（ピークホールド）
-      analyser.getByteFrequencyData(bufferData);
-      drawMode6Glyco(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
-      break;
-  }
-
-  // エフェクトオーバーレイ（プレビュー/録画中のみアニメーション）
-  if (latestEffect && latestEffect.type !== "none" && latestEffectActive) {
+  // エフェクトオーバーレイ（wantSpectrum 時のみ到達＝上で取得した音源メトリクス）
+  if (latestEffect && latestEffect.type !== "none") {
     if (latestEffect.type === "space" || latestEffect.type === "spaceConstant" || latestEffect.type === "spaceAudio") {
       const now = performance.now();
       const deltaTime = Math.min(now - lastEffectTime, 50);
@@ -1044,7 +1141,7 @@ function renderFrame(): void {
         latestEffect.density,
         deltaTime,
         variant,
-        variant === "spaceAudio" ? getAudioReactive() : undefined
+        variant === "spaceAudio" ? audioRForEffects : undefined
       );
       for (const p of particles) {
         const r = p.r / 255;
@@ -1053,8 +1150,85 @@ function renderFrame(): void {
         const radius = Math.max(1, p.size / 2);
         drawCircle(glContext, p.x, p.y, radius, r, g, b, p.alpha);
       }
+    } else if (latestEffect.type === "sparkle" || latestEffect.type === "dust") {
+      const now = performance.now();
+      const deltaTime = Math.min(now - lastEffectTime, 50);
+      lastEffectTime = now;
+      if (latestEffect.type === "sparkle") {
+        // きらきら: 通常アルファで輪郭をはっきり（透明度を抑えた描画）
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+        const parts = updateAndGetSparkleParticles(
+          canvasWidth,
+          canvasHeight,
+          latestEffect.density,
+          deltaTime,
+          audioRForEffects
+        );
+        for (const p of parts) {
+          const rad = Math.max(1, p.radius);
+          const r = p.r / 255;
+          const g = p.g / 255;
+          const b = p.b / 255;
+          const a = p.alpha;
+          drawSparkleGlowLayersWebGL(glContext, p.x, p.y, rad, r, g, b, a);
+          drawSparkleStarWebGL(
+            glContext,
+            p.x,
+            p.y,
+            rad,
+            r,
+            g,
+            b,
+            a,
+            p.starKind,
+            p.rotation,
+            2.12,
+            0.36
+          );
+          drawSparkleStarWebGL(
+            glContext,
+            p.x,
+            p.y,
+            rad,
+            r,
+            g,
+            b,
+            a,
+            p.starKind,
+            p.rotation,
+            1,
+            1
+          );
+          const lineW = Math.max(0.6, rad * 0.42);
+          const coreR = Math.max(0.45, lineW * 0.24);
+          drawCircle(glContext, p.x, p.y, coreR, r, g, b, Math.min(1, a * 0.92));
+        }
+      } else {
+        // 加算ブレンドで発光・空気感（ほこり）
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+        const parts = updateAndGetDustParticles(
+          canvasWidth,
+          canvasHeight,
+          latestEffect.density,
+          deltaTime,
+          audioRForEffects
+        );
+        for (const p of parts) {
+          drawCircle(
+            glContext,
+            p.x,
+            p.y,
+            Math.max(1.5, p.radius),
+            p.r / 255,
+            p.g / 255,
+            p.b / 255,
+            p.alpha
+          );
+        }
+      }
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     } else {
-      drawEffectOverlayWebGL(glContext, canvasWidth, canvasHeight, latestEffect, getAudioReactive());
+      drawEffectOverlayWebGL(glContext, canvasWidth, canvasHeight, latestEffect, audioRForEffects);
     }
   }
 

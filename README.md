@@ -18,7 +18,7 @@ https://lil.la/visualizer/
 
 - **File loading**: Drag & drop or button to load image and audio files
 - **Auto image scaling**: Loaded images are scaled to recommended resolution (1920×1080, etc.) with aspect ratio preserved
-- **7 spectrum analyzer modes**: Various waveform display styles
+- **Spectrum analyzer**: OFF plus **5 selectable styles** in the UI (frequency bars, circle, symmetric bars, dots, glyco). *Line (mode 1) and symmetric waveform (mode 5) remain in the engine but are hidden from the toolbar; old saved sessions using those modes fall back to frequency bars.*
 - **3 resolutions**: 1920×1080, 1080×1920, 1920×1920
 - **Display & volume settings**: Scale/position adjustment (saved per layout), target LUFS (YouTube -14, NicoNico -15, custom)
 - **Effects**: Space (3 types), vignette, rainbow, curtain. Shown during preview/recording only. Per-effect strength (weak/medium/strong)
@@ -71,7 +71,7 @@ npm run build:html
 ## Usage
 
 1. **Load files**: Drag & drop or use buttons to select image and audio
-2. **Select spectrum analyzer**: Choose from 7 modes
+2. **Select spectrum analyzer**: Choose from the visible modes (OFF + five styles)
 3. **Select resolution**: Choose from 3 resolutions
 4. **Display & volume (optional)**: Scale, position, target LUFS
 5. **Effects (optional)**: Space, vignette, rainbow, curtain
@@ -89,6 +89,8 @@ See [SPECIFICATION.md](./SPECIFICATION.md) for details.
 - **[SERVER_REQUIREMENTS_DOCKER.md](./SERVER_REQUIREMENTS_DOCKER.md)**: Local/Docker requirements
 - **[DEVELOPER_MODE.md](./DEVELOPER_MODE.md)**: Developer mode
 - **[CHANGELOG.md](./CHANGELOG.md)**: Changelog
+- **[USER_TERMS.md](./USER_TERMS.md)**: Terms of Service (EN + 日本語)
+- **[PRIVACY_POLICY.md](./PRIVACY_POLICY.md)**: Privacy policy
 
 ## Credits
 
@@ -115,7 +117,7 @@ MIT License. See [LICENSE](./LICENSE). Dependencies: [NOTICE](./NOTICE).
 
 - **ファイル読み込み**: ドラッグ&ドロップまたはボタンから画像・音楽ファイルを読み込み
 - **画像の自動スケーリング**: 読み込んだ画像を推奨解像度に自動拡大・縮小
-- **7つのスペクトラムアナライザーモード**: 様々な波形表示スタイル
+- **スペクトラムアナライザー**: UI では OFF＋5種（周波数バー・円形・上下対称バー・ドット・グライコ風）。折れ線(1)・波形上下対称(5)は描画ロジックのみ残しボタン非表示。旧保存で1/5のときは周波数バーにフォールバック
 - **3つの解像度**: 1920×1080、1080×1920、1920×1920
 - **表示・音量設定**: 倍率・位置の調整、目標LUFS（YouTube -14、ニコニコ -15、任意値）
 - **エフェクト**: 宇宙空間（3種）、ビネット、レインボー、カーテン
@@ -143,3 +145,5 @@ npm run build:html
 - [サーバー要件(local docker)用.md](./サーバー要件(local%20docker)用.md): ローカル・Docker用
 - [DEVELOPER_MODE.md](./DEVELOPER_MODE.md): 開発者モード
 - [CHANGELOG.md](./CHANGELOG.md): 変更履歴
+- [USER_TERMS.md](./USER_TERMS.md): 利用規約
+- [PRIVACY_POLICY.md](./PRIVACY_POLICY.md): プライバシーポリシー
