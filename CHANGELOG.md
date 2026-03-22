@@ -2,8 +2,14 @@
 
 ## [Unreleased]
 
+### Removed
+- **Google Analytics**: removed `lib/Gtag.tsx`, `lib/gaId.ts`, app integration, and `@types/gtag.js`. No client-side analytics or tracking cookies in this fork.
+
+### Documentation
+- Aligned **PRIVACY_POLICY.md**, **EU_GDPR_NOTICE.md**, **docs/BUILD.md**, **docs/SECURITY.md**, **README.md**, **docs/README.md**, **仕様書.md** with the above (no GA / no tracking cookies).
+
 ### Security / maintenance (fork)
-- Same-origin **FFmpeg core** (`@ffmpeg/core` 0.10.x) via `scripts/copy-ffmpeg-core.cjs`; HTTP security headers (nosniff, frame, referrer); GA ID validation; client-side file size / MIME checks; Docker `NEXT_PUBLIC_DEVELOPER_MODE` default off via `ARG`; Next.js bumped toward 13.5.x; `npm audit fix` where non-breaking (`--legacy-peer-deps`)
+- Same-origin **FFmpeg core** (`@ffmpeg/core` 0.10.x) via `scripts/copy-ffmpeg-core.cjs`; HTTP security headers (nosniff, frame, referrer); client-side file size / MIME checks; Docker `NEXT_PUBLIC_DEVELOPER_MODE` default off via `ARG`; Next.js bumped toward 13.5.x; `npm audit fix` where non-breaking (`--legacy-peer-deps`)
 
 ### Added
 - **Documentation hub** under `docs/`: [docs/README.md](./docs/README.md), [BUILD.md](./docs/BUILD.md), [SECURITY.md](./docs/SECURITY.md), [FFMPEG.md](./docs/FFMPEG.md); README / README_DOCKER / DEVELOPER_MODE / HTML_HOSTING cross-links updated

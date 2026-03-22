@@ -19,16 +19,7 @@ Music Waves Visualizer（改）（以下「本サービス」）は、画像・�
 - リファラ（参照元ページ）
 - リクエストURL、レスポンスコード など
 
-### 1.2 解析ツールによる情報（Google Analytics を利用する場合）
-
-本サービスは、運営者が設定した場合に限り、アクセス解析のため Google Analytics（gtag.js）を利用することがあります。  
-その場合、Cookie 等を用いて、閲覧履歴や利用状況等の情報が Google に送信されることがあります。
-
-- Google Analytics 利用規約: [Terms of Service | Google Analytics – Google](https://marketingplatform.google.com/about/analytics/terms/us/)
-
-※ Google Analytics を利用するかどうかは運営者の設定（環境変数）により変わります。
-
-### 1.3 端末内に保存される情報（LocalStorage）
+### 1.2 端末内に保存される情報（LocalStorage）
 
 本サービスは利便性向上のため、ブラウザの LocalStorage に設定値（例: 表示調整、エフェクト、音量設定等）を保存します。  
 これらはユーザーの端末内に保存され、運営者がサーバー側で直接取得するものではありません。
@@ -45,7 +36,6 @@ Music Waves Visualizer（改）（以下「本サービス」）は、画像・�
 ただし、以下の外部リソースが読み込まれる場合があります（ユーザーコンテンツそのものを送信する目的ではありません）。
 
 - ffmpeg.wasm の実行ファイル等（例: `unpkg.com` からの読み込み）
-- Google Analytics（有効化されている場合: `googletagmanager.com` からの読み込み）
 
 ---
 
@@ -55,14 +45,13 @@ Music Waves Visualizer（改）（以下「本サービス」）は、画像・�
 
 - 本サービスの提供・維持・改善
 - 障害対応、不正利用の防止・調査
-- 利用状況の分析（解析ツールを利用する場合）
+- 利用状況の分析（サーバーログ等に基づく場合）
 
 ---
 
 ## 4. 第三者提供
 
-運営者は、法令に基づく場合等を除き、取得した情報を第三者に提供しません。  
-ただし、Google Analytics を利用する場合は、解析のために Google へ情報が送信されることがあります（前述）。
+運営者は、法令に基づく場合等を除き、取得した情報を第三者に提供しません。
 
 ---
 

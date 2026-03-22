@@ -8,11 +8,7 @@ This document summarizes **hardening choices** in this fork. It is not a formal 
 - **nginx** (`nginx-static-https.conf`): same set for static HTTPS deployment.
 - **Apache** (`htaccess-for-export` → copied to `visualizer/.htaccess`): same when `mod_headers` is enabled.
 
-A **Content Security Policy (CSP)** is not enabled globally yet because it must be tuned around Google Analytics and any third-party assets.
-
-## Google Analytics
-
-`NEXT_PUBLIC_GOOGLE_ANALYTICS_ID` is validated (`lib/gaId.ts`): only **GA4** `G-…` or legacy **UA** `UA-…` patterns are accepted. Invalid values disable GA loading. Inline bootstrap uses `JSON.stringify` for the measurement ID.
+A **Content Security Policy (CSP)** is not enabled globally yet because it must be tuned around any third-party assets you add.
 
 ## User-supplied files (client-side)
 
@@ -47,7 +43,6 @@ Use **GitHub Issues** on this fork for fork-specific security or hardening quest
 ## 日本語（要約）
 
 - **ヘッダー**: COOP/COEP に加え、nosniff・フレーム制限・Referrer を nginx / Apache / Next 本番に設定
-- **GA**: 測定 ID はホワイトリスト検証。不正なら読み込まない
 - **ファイル**: サイズ上限・MIME 補助・設定 JSON のサイズ上限
 - **Docker**: 本番イメージでは開発者モード既定 OFF（`ARG`）
 - **依存関係**: `npm audit` は定期実行。Next の重大指摘はメジャーアップでしか解消しない場合あり

@@ -3,7 +3,6 @@ import type { AppProps } from "next/app";
 import React, { useEffect } from "react";
 import "../styles/globals.scss";
 import i18n from "../lib/i18n";
-import { GoogleAnalytics, usePageView } from "../lib/Gtag";
 
 const baseURL = process.env.NEXT_PUBLIC_DOMAIN ?? "";
 
@@ -22,7 +21,6 @@ const useBrowserLanguage = () => {
 };
 
 const App = ({ Component, pageProps }: AppProps) => {
-  usePageView();
   useBrowserLanguage();
 
   return (
@@ -46,8 +44,6 @@ const App = ({ Component, pageProps }: AppProps) => {
         <link rel="apple-touch-icon" href={baseURL + "waves.png"} />
         <link rel="shortcut icon" href={baseURL + "favicon.ico"} />
       </Head>
-
-      <GoogleAnalytics />
 
       <Component {...pageProps} />
     </>

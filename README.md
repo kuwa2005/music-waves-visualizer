@@ -85,7 +85,7 @@ See [SPECIFICATION.md](./SPECIFICATION.md) for details.
 
 - **[docs/README.md](./docs/README.md)**: Documentation hub (build, security, FFmpeg)
 - **[docs/BUILD.md](./docs/BUILD.md)**: Install (`--legacy-peer-deps`), FFmpeg copy, env vars, scripts
-- **[docs/SECURITY.md](./docs/SECURITY.md)**: Headers, GA validation, file limits, Docker, audits
+- **[docs/SECURITY.md](./docs/SECURITY.md)**: Headers, file limits, Docker, audits
 - **[docs/FFMPEG.md](./docs/FFMPEG.md)**: Self-hosted core, COOP/COEP, vs upstream PR #23
 - **[SPECIFICATION.md](./SPECIFICATION.md)**: Technical spec and feature details
 - **[README_DOCKER.md](./README_DOCKER.md)**: Docker usage
@@ -95,6 +95,7 @@ See [SPECIFICATION.md](./SPECIFICATION.md) for details.
 - **[CHANGELOG.md](./CHANGELOG.md)**: Changelog
 - **[USER_TERMS.md](./USER_TERMS.md)**: Terms of Service (EN + 日本語)
 - **[PRIVACY_POLICY.md](./PRIVACY_POLICY.md)**: Privacy policy
+- **[EU_GDPR_NOTICE.md](./EU_GDPR_NOTICE.md)**: EU/EEA users — GDPR-related summary (non-legal advice)
 
 ## Credits
 
@@ -152,3 +153,4 @@ npm run build:html
 - [CHANGELOG.md](./CHANGELOG.md): 変更履歴
 - [USER_TERMS.md](./USER_TERMS.md): 利用規約
 - [PRIVACY_POLICY.md](./PRIVACY_POLICY.md): プライバシーポリシー
+- [EU_GDPR_NOTICE.md](./EU_GDPR_NOTICE.md): EU/EEA 向け GDPR 関連の案内（法的助言ではありません）

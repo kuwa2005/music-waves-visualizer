@@ -5,7 +5,7 @@ Central entry point for setup, security, and FFmpeg notes for this fork (**kuwa2
 | Document | Description |
 |----------|-------------|
 | [BUILD.md](./BUILD.md) | Dependencies, `npm install`, static / Docker builds, FFmpeg asset copy |
-| [SECURITY.md](./SECURITY.md) | Headers, GA ID validation, file limits, Docker defaults, dependency audits |
+| [SECURITY.md](./SECURITY.md) | Headers, file limits, Docker defaults, dependency audits |
 | [FFMPEG.md](./FFMPEG.md) | Self-hosted `@ffmpeg/core`, COOP/COEP, upstream PR #23 (0.12) vs this fork |
 
 ## Root-level docs (existing)
@@ -18,6 +18,8 @@ Central entry point for setup, security, and FFmpeg notes for this fork (**kuwa2
 | [../DEVELOPER_MODE.md](../DEVELOPER_MODE.md) | FPS / dev UI flags |
 | [../SPECIFICATION.md](../SPECIFICATION.md) | Technical specification |
 | [../CHANGELOG.md](../CHANGELOG.md) | Changelog |
+| [../PRIVACY_POLICY.md](../PRIVACY_POLICY.md) | Privacy policy |
+| [../EU_GDPR_NOTICE.md](../EU_GDPR_NOTICE.md) | GDPR-related notice (EU/EEA) |
 
 ---
 

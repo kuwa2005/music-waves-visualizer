@@ -44,7 +44,6 @@ node scripts/copy-ffmpeg-core.cjs
 |----------|--------|
 | `BUILD_HTML=1` | Enables `/visualizer` base path (see `next.config.js`) |
 | `NEXT_PUBLIC_DEVELOPER_MODE` / `NEXT_PUBLIC_DEV_MODE` | Enables FPS panel etc. (see [DEVELOPER_MODE.md](../DEVELOPER_MODE.md)) |
-| `NEXT_PUBLIC_GOOGLE_ANALYTICS_ID` | GA4 `G-…` or legacy `UA-…` only (invalid values ignored; see [SECURITY.md](./SECURITY.md)) |
 | `NEXT_PUBLIC_DOMAIN` | Optional absolute site URL for OG meta in `_app.tsx` |
 
 ## Docker images
