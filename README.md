@@ -52,7 +52,7 @@ docker-compose up --build
 docker-compose -f docker-compose.dev.yml up --build
 
 # Local development (localhost only)
-npm install && npm run dev
+npm install --legacy-peer-deps && npm run dev
 ```
 
 See [README_DOCKER.md](./README_DOCKER.md) for details.
@@ -83,6 +83,10 @@ See [SPECIFICATION.md](./SPECIFICATION.md) for details.
 
 ## Documentation
 
+- **[docs/README.md](./docs/README.md)**: Documentation hub (build, security, FFmpeg)
+- **[docs/BUILD.md](./docs/BUILD.md)**: Install (`--legacy-peer-deps`), FFmpeg copy, env vars, scripts
+- **[docs/SECURITY.md](./docs/SECURITY.md)**: Headers, GA validation, file limits, Docker, audits
+- **[docs/FFMPEG.md](./docs/FFMPEG.md)**: Self-hosted core, COOP/COEP, vs upstream PR #23
 - **[SPECIFICATION.md](./SPECIFICATION.md)**: Technical spec and feature details
 - **[README_DOCKER.md](./README_DOCKER.md)**: Docker usage
 - **[SERVER_REQUIREMENTS.md](./SERVER_REQUIREMENTS.md)**: Shared hosting requirements
@@ -139,6 +143,7 @@ npm run build:html
 
 ### ドキュメント（日本語）
 
+- [docs/README.md](./docs/README.md): ドキュメント索引（ビルド・セキュリティ・FFmpeg）
 - [仕様書.md](./仕様書.md): 技術仕様と機能詳細
 - [README_DOCKER.md](./README_DOCKER.md): Dockerの使い方
 - [サーバー要件.md](./サーバー要件.md): レンタルサーバー用要件

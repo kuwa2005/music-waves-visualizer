@@ -1,0 +1,32 @@
+# Documentation index
+
+Central entry point for setup, security, and FFmpeg notes for this fork (**kuwa2005 / KURAGASHI**), based on [komura-c/music-waves-visualizer](https://github.com/komura-c/music-waves-visualizer).
+
+| Document | Description |
+|----------|-------------|
+| [BUILD.md](./BUILD.md) | Dependencies, `npm install`, static / Docker builds, FFmpeg asset copy |
+| [SECURITY.md](./SECURITY.md) | Headers, GA ID validation, file limits, Docker defaults, dependency audits |
+| [FFMPEG.md](./FFMPEG.md) | Self-hosted `@ffmpeg/core`, COOP/COEP, upstream PR #23 (0.12) vs this fork |
+
+## Root-level docs (existing)
+
+| File | Description |
+|------|-------------|
+| [../README.md](../README.md) | Overview, quick start |
+| [../README_DOCKER.md](../README_DOCKER.md) | Docker Compose flows |
+| [../HTML_HOSTING.md](../HTML_HOSTING.md) | Static `visualizer/` deployment |
+| [../DEVELOPER_MODE.md](../DEVELOPER_MODE.md) | FPS / dev UI flags |
+| [../SPECIFICATION.md](../SPECIFICATION.md) | Technical specification |
+| [../CHANGELOG.md](../CHANGELOG.md) | Changelog |
+
+---
+
+## ドキュメント一覧（日本語）
+
+| 文書 | 内容 |
+|------|------|
+| [BUILD.md](./BUILD.md) | 依存関係・インストール・ビルド手順 |
+| [SECURITY.md](./SECURITY.md) | セキュリティ関連の設定と運用 |
+| [FFMPEG.md](./FFMPEG.md) | FFmpeg WASM の配信方式・上流 PR との違い |
+
+ルートの [README.md](../README.md)（日本語セクション）、[README_DOCKER.md](../README_DOCKER.md)、[仕様書.md](../仕様書.md) も併せて参照してください。

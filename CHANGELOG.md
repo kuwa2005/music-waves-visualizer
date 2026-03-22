@@ -2,7 +2,11 @@
 
 ## [Unreleased]
 
+### Security / maintenance (fork)
+- Same-origin **FFmpeg core** (`@ffmpeg/core` 0.10.x) via `scripts/copy-ffmpeg-core.cjs`; HTTP security headers (nosniff, frame, referrer); GA ID validation; client-side file size / MIME checks; Docker `NEXT_PUBLIC_DEVELOPER_MODE` default off via `ARG`; Next.js bumped toward 13.5.x; `npm audit fix` where non-breaking (`--legacy-peer-deps`)
+
 ### Added
+- **Documentation hub** under `docs/`: [docs/README.md](./docs/README.md), [BUILD.md](./docs/BUILD.md), [SECURITY.md](./docs/SECURITY.md), [FFMPEG.md](./docs/FFMPEG.md); README / README_DOCKER / DEVELOPER_MODE / HTML_HOSTING cross-links updated
 - Bilingual UI (Japanese / English) via i18next. Language auto-detected from browser.
 - `USER_TERMS.md`: clause on CPU/GPU/memory use; link from app header to terms on GitHub
 - README / SPECIFICATION: links to `USER_TERMS.md`, `PRIVACY_POLICY.md`; spectrum UI vs engine documented

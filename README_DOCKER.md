@@ -8,6 +8,17 @@ For detailed requirements and troubleshooting, see [SERVER_REQUIREMENTS_DOCKER.m
 
 - Docker Desktop (or Docker Engine + Docker Compose)
 
+## Build details (this fork)
+
+- **`Dockerfile` (Next.js standalone)** uses `npm ci --legacy-peer-deps` (peer dependency constraints).
+- **Developer mode** is **off** in production images by default. To bake dev UI (FPS, etc.) into the image:
+
+  ```bash
+  docker build --build-arg NEXT_PUBLIC_DEVELOPER_MODE=true -t music-waves-visualizer:dev .
+  ```
+
+  See [DEVELOPER_MODE.md](./DEVELOPER_MODE.md) and [docs/BUILD.md](./docs/BUILD.md).
+
 ## Quick Start
 
 ### Docker HTTPS (recommended for testing)
@@ -106,3 +117,10 @@ docker-compose -f docker-compose.dev.yml up --build  # 開発
 ```
 
 詳細は [サーバー要件(local docker)用.md](./サーバー要件(local%20docker)用.md) を参照してください。
+
+### 本フォークの Docker ビルド
+
+- ルート `Dockerfile` は `npm ci --legacy-peer-deps` を使用
+- 本番イメージでは開発者モードは既定 **OFF**。有効にする場合のみ  
+  `docker build --build-arg NEXT_PUBLIC_DEVELOPER_MODE=true ...`  
+  （[DEVELOPER_MODE.md](./DEVELOPER_MODE.md)、[docs/BUILD.md](./docs/BUILD.md)）
