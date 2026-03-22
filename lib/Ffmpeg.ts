@@ -1,7 +1,15 @@
 import { createFFmpeg } from "@ffmpeg/ffmpeg";
+import getConfig from "next/config";
 
-const ffmpegCoreVersion = "0.10.0";
-const corePath = `https://unpkg.com/@ffmpeg/core@${ffmpegCoreVersion}/dist/ffmpeg-core.js`;
+function getFfmpegCoreJsUrl(): string {
+  const { publicRuntimeConfig } = getConfig();
+  const base = publicRuntimeConfig?.assetBasePath ?? "";
+  const rel = `${base}/ffmpeg-core/ffmpeg-core.js`.replace(/\/{2,}/g, "/");
+  if (typeof window !== "undefined") {
+    return new URL(rel, window.location.origin).href;
+  }
+  return rel;
+}
 
 export type EncodeProgressCallbacks = {
   onLoadStart?: () => void;
@@ -18,8 +26,8 @@ export async function generateMp4Video(
 ) {
   const { onLoadStart, onLoadComplete, onProgress } = callbacks || {};
   const ffmpeg = createFFmpeg({
-    corePath,
-    log: true,
+    corePath: getFfmpegCoreJsUrl(),
+    log: process.env.NODE_ENV === "development",
     progress: onProgress
       ? ({ ratio }) => {
           onProgress(Math.min(1, ratio));

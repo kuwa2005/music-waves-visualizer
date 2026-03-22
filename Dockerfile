@@ -8,7 +8,7 @@ WORKDIR /app
 
 # package.jsonとpackage-lock.jsonをコピー
 COPY package.json package-lock.json* ./
-RUN npm ci
+RUN npm ci --legacy-peer-deps
 
 # ビルドステージ
 FROM base AS builder
@@ -18,7 +18,9 @@ COPY . .
 
 # 環境変数の設定（ビルド時に必要）
 ENV NEXT_TELEMETRY_DISABLED 1
-ENV NEXT_PUBLIC_DEVELOPER_MODE true
+# 本番デフォルトは false。開発用イメージは --build-arg NEXT_PUBLIC_DEVELOPER_MODE=true
+ARG NEXT_PUBLIC_DEVELOPER_MODE=false
+ENV NEXT_PUBLIC_DEVELOPER_MODE=$NEXT_PUBLIC_DEVELOPER_MODE
 
 # ビルド実行
 RUN npm run build

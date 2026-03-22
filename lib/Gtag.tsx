@@ -1,11 +1,15 @@
 import { useRouter } from "next/router";
 import Script from "next/script";
 import { FC, useEffect } from "react";
+import { parseGoogleAnalyticsId } from "./gaId";
 
-const GA_ID = process.env.NEXT_PUBLIC_GOOGLE_ANALYTICS_ID || "";
-const existsGaId = GA_ID !== "";
+const GA_ID = parseGoogleAnalyticsId(
+  process.env.NEXT_PUBLIC_GOOGLE_ANALYTICS_ID
+);
+const existsGaId = GA_ID != null;
 
 const pageview = (path: string) => {
+  if (!GA_ID) return;
   window.gtag("config", GA_ID, {
     page_path: path,
   });
@@ -36,7 +40,9 @@ export const GoogleAnalytics: FC<{}> = () => (
       <>
         <Script
           defer
-          src={`https://www.googletagmanager.com/gtag/js?id=${GA_ID}`}
+          src={`https://www.googletagmanager.com/gtag/js?id=${encodeURIComponent(
+            GA_ID
+          )}`}
           strategy="afterInteractive"
         />
         <Script
@@ -46,8 +52,8 @@ export const GoogleAnalytics: FC<{}> = () => (
             __html: `
               window.dataLayer = window.dataLayer || [];
               function gtag(){dataLayer.push(arguments);}
-              gtag('js', new Date());    
-              gtag('config', '${GA_ID}', {
+              gtag('js', new Date());
+              gtag('config', ${JSON.stringify(GA_ID)}, {
                 page_path: window.location.pathname,
               });
             `,

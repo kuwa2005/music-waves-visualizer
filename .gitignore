@@ -48,3 +48,6 @@ ssl/
 # ビルド出力
 out/
 visualizer/
+
+# postinstall で @ffmpeg/core から生成
+public/ffmpeg-core/

@@ -37,6 +37,19 @@ import type { EffectType, EffectDensity } from "../lib/Effects";
 import { getGpuInfo, getGpuDisplayName, benchmarkRenderers, type GpuInfo } from "../lib/GpuDetector";
 import { isWebCodecsSupported, checkHardwareEncoderSupport, getBestEncodingMethod } from "../lib/WebCodecsEncoder";
 import { generateMp4Video } from "../lib/Ffmpeg";
+import {
+  gateImageFile,
+  gateAudioFile,
+  gateVideoAsMediaFile,
+  MAX_IMAGE_BYTES,
+  MAX_MEDIA_BYTES,
+  MAX_SETTINGS_JSON_BYTES,
+  isImageFileByName,
+  isAudioFileByName,
+  isVideoFileByName,
+  type FileGate,
+  isFileGateFailure,
+} from "../lib/fileValidation";
 
 const hasWindow = () => {
   return typeof window === "object";
@@ -84,6 +97,50 @@ const Home: NextPage = () => {
     av1: boolean;
   }>({ h264: false, h265: false, vp9: false, av1: false });
 
+  const [snackBarProps, setSnackBarProps] = useState({
+    isOpen: false,
+    message: "",
+  });
+  const openSnackBar = useCallback((message: string) => {
+    setSnackBarProps({ isOpen: true, message });
+  }, []);
+  const handleClose = useCallback(
+    (_event?: React.SyntheticEvent | Event, reason?: string) => {
+      if (reason === "clickaway") {
+        return;
+      }
+      setSnackBarProps((prev) => ({ isOpen: false, message: prev.message }));
+    },
+    []
+  );
+
+  const snackbarFileGate = useCallback(
+    (gate: FileGate, kind: "image" | "audio" | "video") => {
+      if (isFileGateFailure(gate)) {
+        const maxImageMB = Math.round(MAX_IMAGE_BYTES / 1024 / 1024);
+        const maxMediaMB = Math.round(MAX_MEDIA_BYTES / 1024 / 1024);
+        if (gate.reason === "size") {
+          openSnackBar(
+            t("snackbar.fileTooLarge", {
+              maxMB: kind === "image" ? maxImageMB : maxMediaMB,
+            })
+          );
+        } else if (gate.reason === "mime") {
+          openSnackBar(t("snackbar.fileMimeRejected"));
+        } else if (kind === "image") {
+          openSnackBar(t("snackbar.imageTypeNotSupported"));
+        } else if (kind === "audio") {
+          openSnackBar(t("snackbar.audioTypeNotSupported"));
+        } else {
+          openSnackBar(t("snackbar.videoLoadFailed"));
+        }
+        return true;
+      }
+      return false;
+    },
+    [t, openSnackBar]
+  );
+
   // 離脱ガード（画像/音楽選択時のみ、MP4ダウンロード完了またはクリアで解除）
   useEffect(() => {
     const handler = (e: BeforeUnloadEvent) => {
@@ -117,6 +174,52 @@ const Home: NextPage = () => {
   const decodedAudioBufferRef = useRef<AudioBuffer>(null);
   const videoElementRef = useRef<HTMLVideoElement>(null);
   const mediaElementSourceRef = useRef<MediaElementAudioSourceNode | null>(null);
+
+  const loadVideoAsAudioSource = useCallback(
+    (file: File) => {
+      const g = gateVideoAsMediaFile(file);
+      if (snackbarFileGate(g, "video")) {
+        return;
+      }
+      const video = document.createElement("video");
+      video.preload = "auto";
+      video.crossOrigin = "anonymous";
+      video.src = URL.createObjectURL(file);
+      videoElementRef.current = video;
+
+      video.onloadedmetadata = () => {
+        try {
+          mediaElementSourceRef.current?.disconnect();
+          const source = audioCtxRef.current.createMediaElementSource(video);
+          mediaElementSourceRef.current = source;
+          source.connect(analyserRef.current);
+          analyserRef.current.connect(audioCtxRef.current.destination);
+          analyserRef.current.connect(streamDestinationRef.current);
+
+          video.onended = () => {
+            setIsPlaySound(false);
+            stopCanvas2DAnimation();
+            stopWebGLAnimation();
+          };
+
+          setPlaySoundDisabled(false);
+          setRecordMovieDisabled(false);
+          setAudioFileName(file.name);
+          exitConfirmRef.current = true;
+          openSnackBar(t("snackbar.videoAudioLoaded"));
+        } catch (error) {
+          openSnackBar(t("snackbar.videoAudioFailed", { error }));
+          videoElementRef.current = null;
+        }
+      };
+      video.onerror = () => {
+        openSnackBar(t("snackbar.videoLoadFailed"));
+        videoElementRef.current = null;
+      };
+    },
+    [t, openSnackBar, snackbarFileGate]
+  );
+
   const setAudioBufferSourceNode = () => {
     // 動画ファイルの場合はMediaElementAudioSourceNodeを使用（既に接続済み）
     if (videoElementRef.current) {
@@ -666,27 +769,12 @@ const Home: NextPage = () => {
     return () => clearInterval(fpsInterval);
   }, [rendererType]);
 
-  // ファイル拡張子判定ヘルパー
-  const isImageFile = (filename: string): boolean => {
-    const imageExts = [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".svg"];
-    const ext = filename.toLowerCase().substring(filename.lastIndexOf("."));
-    return imageExts.includes(ext);
-  };
-
-  const isAudioFile = (filename: string): boolean => {
-    const audioExts = [".mp3", ".wav", ".ogg", ".aac", ".m4a", ".flac", ".wma"];
-    const ext = filename.toLowerCase().substring(filename.lastIndexOf("."));
-    return audioExts.includes(ext);
-  };
-
-  const isVideoFile = (filename: string): boolean => {
-    const videoExts = [".mp4", ".webm", ".mov", ".avi", ".mkv"];
-    const ext = filename.toLowerCase().substring(filename.lastIndexOf("."));
-    return videoExts.includes(ext);
-  };
-
   // 画像読み込み処理（共通）
   const loadImageFile = (file: File) => {
+    const gi = gateImageFile(file);
+    if (snackbarFileGate(gi, "image")) {
+      return;
+    }
     const image = new Image();
     image.onload = () => {
       if (!canvasRef.current) {
@@ -706,6 +794,10 @@ const Home: NextPage = () => {
 
   // 音楽読み込み処理（共通）
   const loadAudioFile = async (file: File) => {
+    const ga = gateAudioFile(file);
+    if (snackbarFileGate(ga, "audio")) {
+      return;
+    }
     try {
       const arraybuffer = await file.arrayBuffer();
       decodedAudioBufferRef.current = await audioCtxRef.current.decodeAudioData(
@@ -727,12 +819,12 @@ const Home: NextPage = () => {
     if (!file) {
       return;
     }
-    if (isVideoFile(file.name)) {
+    if (isVideoFileByName(file.name)) {
       openSnackBar(t("snackbar.imageVideoNotAllowed"));
       event.target.value = "";
       return;
     }
-    if (!isImageFile(file.name)) {
+    if (!isImageFileByName(file.name)) {
       openSnackBar(t("snackbar.imageTypeNotSupported"));
       event.target.value = "";
       return;
@@ -746,48 +838,15 @@ const Home: NextPage = () => {
     if (!file) {
       return;
     }
-    // MP4ファイルの場合、音声として扱う
-    if (isVideoFile(file.name)) {
-      // MP4の音声トラックを抽出（HTMLVideoElementとMediaElementAudioSourceNodeを使用）
-      const video = document.createElement("video");
-      video.preload = "auto";
-      video.crossOrigin = "anonymous";
-      video.src = URL.createObjectURL(file);
-      videoElementRef.current = video;
-      
-      video.onloadedmetadata = () => {
-        try {
-          // MediaElementAudioSourceNodeを使用して音声を取得
-          mediaElementSourceRef.current?.disconnect();
-          const source = audioCtxRef.current.createMediaElementSource(video);
-          mediaElementSourceRef.current = source;
-          source.connect(analyserRef.current);
-          analyserRef.current.connect(audioCtxRef.current.destination);
-          analyserRef.current.connect(streamDestinationRef.current);
-          
-          // 再生終了時の処理
-          video.onended = () => {
-            setIsPlaySound(false);
-            stopCanvas2DAnimation();
-            stopWebGLAnimation();
-          };
-          
-          setPlaySoundDisabled(false);
-          setRecordMovieDisabled(false);
-          setAudioFileName(file.name);
-          openSnackBar(t("snackbar.videoAudioLoaded"));
-        } catch (error) {
-          openSnackBar(t("snackbar.videoAudioFailed", { error }));
-          videoElementRef.current = null;
-        }
-      };
-      video.onerror = () => {
-        openSnackBar(t("snackbar.videoLoadFailed"));
-        videoElementRef.current = null;
-      };
-      return;
+    try {
+      if (isVideoFileByName(file.name)) {
+        loadVideoAsAudioSource(file);
+        return;
+      }
+      await loadAudioFile(file);
+    } finally {
+      event.target.value = "";
     }
-    await loadAudioFile(file);
   };
 
   // ドラッグ&ドロップ処理
@@ -804,12 +863,11 @@ const Home: NextPage = () => {
 
     // ファイルを分類
     for (const file of files) {
-      if (isImageFile(file.name) && !imageFile) {
+      if (isImageFileByName(file.name) && !imageFile) {
         imageFile = file;
-      } else if (isAudioFile(file.name) && !audioFile) {
+      } else if (isAudioFileByName(file.name) && !audioFile) {
         audioFile = file;
-      } else if (isVideoFile(file.name)) {
-        // MP4の場合は音楽ファイルとして扱う（デフォルト）
+      } else if (isVideoFileByName(file.name)) {
         if (!audioFile) {
           audioFile = file;
         }
@@ -821,9 +879,12 @@ const Home: NextPage = () => {
       loadImageFile(imageFile);
     }
 
-    // 音楽ファイルを読み込み
     if (audioFile) {
-      await loadAudioFile(audioFile);
+      if (isVideoFileByName(audioFile.name)) {
+        loadVideoAsAudioSource(audioFile);
+      } else {
+        await loadAudioFile(audioFile);
+      }
     }
   };
 
@@ -982,24 +1043,6 @@ const Home: NextPage = () => {
         };
       }
     }, 100); // 100ms待機して録画用canvasのアニメーション開始を保証
-  };
-
-  // SnackBar
-  const [snackBarProps, setSnackBarProps] = useState({
-    isOpen: false,
-    message: "",
-  });
-  const openSnackBar = (message: string) => {
-    setSnackBarProps({ isOpen: true, message });
-  };
-  const handleClose = (
-    _event?: React.SyntheticEvent | Event,
-    reason?: string
-  ) => {
-    if (reason === "clickaway") {
-      return;
-    }
-    setSnackBarProps({ isOpen: false, message: snackBarProps.message });
   };
 
   // クリア（ページロード時の状態に戻す）
@@ -1787,6 +1830,17 @@ const Home: NextPage = () => {
                   onChange={(e) => {
                     const file = e.target.files?.[0];
                     if (file) {
+                      if (file.size > MAX_SETTINGS_JSON_BYTES) {
+                        openSnackBar(
+                          t("snackbar.settingsFileTooLarge", {
+                            maxMB: Math.round(
+                              MAX_SETTINGS_JSON_BYTES / 1024 / 1024
+                            ),
+                          })
+                        );
+                        e.target.value = "";
+                        return;
+                      }
                       const reader = new FileReader();
                       reader.onload = () => {
                         const text = reader.result as string;
