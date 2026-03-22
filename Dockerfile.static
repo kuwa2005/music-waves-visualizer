@@ -9,7 +9,8 @@ WORKDIR /app
 RUN apk add --no-cache libc6-compat
 
 COPY package.json package-lock.json* ./
-RUN npm ci --legacy-peer-deps
+# postinstall は scripts/ 未コピーだと失敗するため、依存だけ先に入れる
+RUN npm ci --legacy-peer-deps --ignore-scripts
 
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED 1

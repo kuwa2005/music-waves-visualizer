@@ -8,7 +8,8 @@ WORKDIR /app
 
 # package.jsonとpackage-lock.jsonをコピー
 COPY package.json package-lock.json* ./
-RUN npm ci --legacy-peer-deps
+# postinstall は scripts/ 未コピーだと失敗するため、依存だけ先に入れる
+RUN npm ci --legacy-peer-deps --ignore-scripts
 
 # ビルドステージ
 FROM base AS builder

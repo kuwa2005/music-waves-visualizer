@@ -13,7 +13,7 @@ This repo pins versions that can conflict on **peer dependencies** (`i18next` vs
 npm install --legacy-peer-deps
 ```
 
-**Docker**: the `Dockerfile` (Next.js standalone) and `Dockerfile.static` use `npm ci --legacy-peer-deps` for the same reason.
+**Docker**: the `Dockerfile` (Next.js standalone) and `Dockerfile.static` use `npm ci --legacy-peer-deps --ignore-scripts` on the layer that only has `package.json` / lockfile (so `postinstall` does not run before `scripts/` is copied). FFmpeg copy runs later via `prebuild` / `build:html` / `npm run build` after the full tree is in the image.
 
 ## FFmpeg core assets (postinstall)
 
