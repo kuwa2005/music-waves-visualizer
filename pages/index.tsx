@@ -51,6 +51,15 @@ import {
   isFileGateFailure,
 } from "../lib/fileValidation";
 
+type ShortOutputPreset = "all" | "tiktok" | "youtube" | "niconico";
+type ResolvedClip = { full: true } | { full: false; start: number; duration: number };
+
+function getShortPlatformMaxSec(p: ShortOutputPreset): number {
+  if (p === "tiktok" || p === "youtube") return 60;
+  if (p === "niconico") return 300;
+  return Infinity;
+}
+
 const hasWindow = () => {
   return typeof window === "object";
 };
@@ -174,6 +183,8 @@ const Home: NextPage = () => {
   const decodedAudioBufferRef = useRef<AudioBuffer>(null);
   const videoElementRef = useRef<HTMLVideoElement>(null);
   const mediaElementSourceRef = useRef<MediaElementAudioSourceNode | null>(null);
+  const playbackWindowTimerRef = useRef<number | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
 
   const loadVideoAsAudioSource = useCallback(
     (file: File) => {
@@ -219,39 +230,6 @@ const Home: NextPage = () => {
     },
     [t, openSnackBar, snackbarFileGate]
   );
-
-  const setAudioBufferSourceNode = () => {
-    // 動画ファイルの場合はMediaElementAudioSourceNodeを使用（既に接続済み）
-    if (videoElementRef.current) {
-      const video = videoElementRef.current;
-      if (!video.paused) {
-        video.pause();
-      }
-      video.currentTime = 0;
-      return;
-    }
-    
-    // 通常の音声ファイルの場合
-    if (!decodedAudioBufferRef.current) {
-      return;
-    }
-    
-    // AudioBufferSourceNode作成
-    const audioBufferSourceNode = audioCtxRef.current.createBufferSource();
-    audioBufferSourceNode.buffer = decodedAudioBufferRef.current;
-    audioBufferSourceNode.loop = false;
-    // 再生終了時にプレビューを停止
-    audioBufferSourceNode.onended = () => {
-      setIsPlaySound(false);
-      stopCanvas2DAnimation();
-      stopWebGLAnimation();
-    };
-    // Node接続
-    audioBufferSourceNode.connect(analyserRef.current);
-    analyserRef.current.connect(audioCtxRef.current.destination);
-    analyserRef.current.connect(streamDestinationRef.current);
-    audioBufferSrcRef.current = audioBufferSourceNode;
-  };
 
   // 開発者モードフラグ（環境変数で制御）
   const isDeveloperMode =
@@ -309,6 +287,11 @@ const Home: NextPage = () => {
   const [effectType, setEffectType] = useState<EffectType>("none");
   const [effectDensities, setEffectDensities] = useState<Partial<Record<EffectType, EffectDensity>>>(defaultEffectDensities());
   const effectDensity = (effectType === "none" ? 2 : (effectDensities[effectType] ?? 2)) as EffectDensity;
+
+  // ショート動画向け出力範囲（ALL 時は全長。それ以外は開始位置・秒数が有効）
+  const [shortOutputPreset, setShortOutputPreset] = useState<ShortOutputPreset>("all");
+  const [shortStartSecStr, setShortStartSecStr] = useState<string>("0");
+  const [shortDurationSecStr, setShortDurationSecStr] = useState<string>("");
 
   // スペクトラム調整
   const [spectrumOpacityPercent, setSpectrumOpacityPercent] = useState<number>(10);  // 透過率0-100%、0=完全表示
@@ -754,7 +737,23 @@ const Home: NextPage = () => {
       stopCanvas2DAnimation();
       stopWebGLAnimation();
     };
-  }, [imageCtx, mode, modeAdjustments, rendererType, effectType, effectDensity, isPlaySound, isRecording, glycoColorSet, spectrumOpacityPercent]);
+  }, [
+    canvasSize,
+    imageCtx,
+    mode,
+    modeAdjustments,
+    rendererType,
+    effectType,
+    effectDensity,
+    isPlaySound,
+    isRecording,
+    glycoColorSet,
+    spectrumOpacityPercent,
+    spectrumFps,
+    lineWidthWaveform,
+    lineWidthCircle,
+    lineWidthSymWave,
+  ]);
 
   // FPS表示更新（1秒ごとに更新）
   useEffect(() => {
@@ -892,11 +891,103 @@ const Home: NextPage = () => {
     e.preventDefault();
   };
 
+  const getMediaDurationSec = useCallback((): number => {
+    const v = videoElementRef.current;
+    if (v && Number.isFinite(v.duration) && v.duration > 0) {
+      return v.duration;
+    }
+    const b = decodedAudioBufferRef.current;
+    if (b && Number.isFinite(b.duration) && b.duration > 0) {
+      return b.duration;
+    }
+    return 0;
+  }, []);
+
+  const resolvePlaybackWindow = useCallback((): ResolvedClip => {
+    if (shortOutputPreset === "all") {
+      return { full: true };
+    }
+    const mediaDur = getMediaDurationSec();
+    if (!(mediaDur > 0)) {
+      return { full: true };
+    }
+    const maxPlat = getShortPlatformMaxSec(shortOutputPreset);
+    let start = parseFloat(shortStartSecStr.replace(",", "."));
+    if (!Number.isFinite(start)) {
+      start = 0;
+    }
+    const durationParsed = parseFloat(shortDurationSecStr.replace(",", "."));
+    let duration: number;
+    if (!shortDurationSecStr.trim() || !Number.isFinite(durationParsed)) {
+      duration = Math.min(maxPlat, Math.max(0, mediaDur - start));
+    } else {
+      duration = durationParsed;
+    }
+    start = Math.max(0, Math.min(start, mediaDur));
+    duration = Math.max(0, Math.min(duration, maxPlat, mediaDur - start));
+    return { full: false, start, duration };
+  }, [shortOutputPreset, shortStartSecStr, shortDurationSecStr, getMediaDurationSec]);
+
+  const clearPlaybackWindowTimer = useCallback(() => {
+    if (playbackWindowTimerRef.current != null) {
+      window.clearTimeout(playbackWindowTimerRef.current);
+      playbackWindowTimerRef.current = null;
+    }
+  }, []);
+
+  const setupAudioSourceForPlayback = (clip: ResolvedClip) => {
+    if (videoElementRef.current) {
+      const video = videoElementRef.current;
+      if (!video.paused) {
+        video.pause();
+      }
+      if (clip.full === false) {
+        video.currentTime = clip.start;
+      } else {
+        video.currentTime = 0;
+      }
+      return;
+    }
+    if (!decodedAudioBufferRef.current) {
+      return;
+    }
+    const audioBufferSourceNode = audioCtxRef.current.createBufferSource();
+    audioBufferSourceNode.buffer = decodedAudioBufferRef.current;
+    audioBufferSourceNode.loop = false;
+    audioBufferSourceNode.onended = () => {
+      setIsPlaySound(false);
+      stopCanvas2DAnimation();
+      stopWebGLAnimation();
+    };
+    audioBufferSourceNode.connect(analyserRef.current);
+    analyserRef.current.connect(audioCtxRef.current.destination);
+    analyserRef.current.connect(streamDestinationRef.current);
+    audioBufferSrcRef.current = audioBufferSourceNode;
+  };
+
+  const finishVideoWindowPlayback = useCallback(() => {
+    clearPlaybackWindowTimer();
+    if (videoElementRef.current) {
+      videoElementRef.current.pause();
+    }
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
+      mediaRecorderRef.current.stop();
+    }
+    setIsPlaySound(false);
+    stopCanvas2DAnimation();
+    stopWebGLAnimation();
+  }, [clearPlaybackWindowTimer]);
+
   // PlaySoundEvent
   const onPlaySound = () => {
     if (isPlaySound) {
+      clearPlaybackWindowTimer();
       if (audioBufferSrcRef.current) {
-        audioBufferSrcRef.current.stop(0);
+        try {
+          audioBufferSrcRef.current.stop(0);
+        } catch {
+          /* already stopped */
+        }
       }
       if (videoElementRef.current) {
         videoElementRef.current.pause();
@@ -906,15 +997,32 @@ const Home: NextPage = () => {
       setIsPlaySound(false);
       return;
     }
-    setAudioBufferSourceNode();
-    
-    // 動画ファイルの場合は再生開始
-    if (videoElementRef.current) {
-      videoElementRef.current.play();
-    } else if (audioBufferSrcRef.current) {
-      audioBufferSrcRef.current.start(0);
+    const clip = resolvePlaybackWindow();
+    if (clip.full === false && clip.duration <= 0) {
+      openSnackBar(t("snackbar.shortClipInvalid"));
+      return;
     }
-    
+    setupAudioSourceForPlayback(clip);
+
+    if (videoElementRef.current) {
+      videoElementRef.current.play().then(() => {
+        if (clip.full === false && clip.duration > 0) {
+          clearPlaybackWindowTimer();
+          const durationSec = clip.duration;
+          playbackWindowTimerRef.current = window.setTimeout(() => {
+            playbackWindowTimerRef.current = null;
+            finishVideoWindowPlayback();
+          }, durationSec * 1000);
+        }
+      });
+    } else if (audioBufferSrcRef.current) {
+      if (clip.full === false) {
+        audioBufferSrcRef.current.start(0, clip.start, clip.duration);
+      } else {
+        audioBufferSrcRef.current.start(0);
+      }
+    }
+
     setIsPlaySound(true);
   };
   // RecordMovieEvent
@@ -983,6 +1091,7 @@ const Home: NextPage = () => {
       });
       //録画終了時に動画ファイルのダウンロードリンクを生成する処理
       recorder.addEventListener("stop", async () => {
+        mediaRecorderRef.current = null;
         setIsRecording(false);
         const movieName = "movie_" + Math.random().toString(36).slice(-8);
         const webmName = movieName + ".webm";
@@ -1019,22 +1128,28 @@ const Home: NextPage = () => {
           setRecordMovieDisabled(false);
         }
       });
+      mediaRecorderRef.current = recorder;
       recorder.start();
       openSnackBar(t("snackbar.recording"));
       onPlaySound();
       setRecordMovieDisabled(true);
-      
-      // 再生終了時の処理
+
+      const clip = resolvePlaybackWindow();
+
+      // 再生終了時の処理（音声はスライス再生時も onended で区間終了）
       if (videoElementRef.current) {
-        const originalOnEnded = videoElementRef.current.onended;
-        videoElementRef.current.onended = () => {
-          if (originalOnEnded) {
-            originalOnEnded.call(videoElementRef.current);
-          }
-          recorder.stop();
-          setIsRecording(false);
-          setIsPlaySound(false);
-        };
+        if (clip.full !== false) {
+          const originalOnEnded = videoElementRef.current.onended;
+          videoElementRef.current.onended = () => {
+            if (originalOnEnded) {
+              originalOnEnded.call(videoElementRef.current);
+            }
+            recorder.stop();
+            setIsRecording(false);
+            setIsPlaySound(false);
+          };
+        }
+        // ショート区間の動画は onPlaySound 内のタイマーで停止・recorder.stop
       } else if (audioBufferSrcRef.current) {
         audioBufferSrcRef.current.onended = () => {
           recorder.stop();
@@ -1047,6 +1162,8 @@ const Home: NextPage = () => {
 
   // クリア（ページロード時の状態に戻す）
   const onClear = () => {
+    clearPlaybackWindowTimer();
+    mediaRecorderRef.current = null;
     // 再生停止
     if (audioBufferSrcRef.current) {
       try {
@@ -1099,6 +1216,9 @@ const Home: NextPage = () => {
     });
     setEffectType("none");
     setEffectDensities(defaultEffectDensities());
+    setShortOutputPreset("all");
+    setShortStartSecStr("0");
+    setShortDurationSecStr("");
     setTargetLufs(null);
     setTargetLufsCustom("");
     exitConfirmRef.current = false;
@@ -1382,6 +1502,92 @@ const Home: NextPage = () => {
                   </>
                 )}
               </Box>
+            </div>
+            <div className={styles.effectButtons}>
+              <Typography variant="body2" sx={{ mb: 1, textAlign: "center", fontWeight: 500 }}>
+                {t("shortOutput.title")}
+              </Typography>
+              <Box
+                sx={{
+                  display: "flex",
+                  gap: 1,
+                  justifyContent: "center",
+                  flexWrap: "wrap",
+                  alignItems: "center",
+                }}
+              >
+                <Button
+                  variant={shortOutputPreset === "all" ? "contained" : "outlined"}
+                  onClick={() => setShortOutputPreset("all")}
+                  size="small"
+                  sx={{ height: 36 }}
+                >
+                  {t("shortOutput.all")}
+                </Button>
+                <Button
+                  variant={shortOutputPreset === "youtube" ? "contained" : "outlined"}
+                  onClick={() => {
+                    setShortOutputPreset("youtube");
+                    setShortDurationSecStr("60");
+                  }}
+                  size="small"
+                  sx={{ height: 36 }}
+                >
+                  {t("shortOutput.youtube")}
+                </Button>
+                <Button
+                  variant={shortOutputPreset === "tiktok" ? "contained" : "outlined"}
+                  onClick={() => {
+                    setShortOutputPreset("tiktok");
+                    setShortDurationSecStr("60");
+                  }}
+                  size="small"
+                  sx={{ height: 36 }}
+                >
+                  {t("shortOutput.tiktok")}
+                </Button>
+                <Button
+                  variant={shortOutputPreset === "niconico" ? "contained" : "outlined"}
+                  onClick={() => {
+                    setShortOutputPreset("niconico");
+                    setShortDurationSecStr("300");
+                  }}
+                  size="small"
+                  sx={{ height: 36 }}
+                >
+                  {t("shortOutput.niconico")}
+                </Button>
+                <TextField
+                  label={t("shortOutput.startSec")}
+                  size="small"
+                  value={shortStartSecStr}
+                  onChange={(e) => setShortStartSecStr(e.target.value)}
+                  disabled={shortOutputPreset === "all"}
+                  sx={{ width: 120, "& .MuiInputBase-root": { height: 36 } }}
+                  inputProps={{ inputMode: "decimal" }}
+                />
+                <TextField
+                  label={t("shortOutput.durationSec")}
+                  size="small"
+                  value={shortDurationSecStr}
+                  onChange={(e) => setShortDurationSecStr(e.target.value)}
+                  disabled={shortOutputPreset === "all"}
+                  placeholder={
+                    shortOutputPreset === "all"
+                      ? ""
+                      : t("shortOutput.durationPlaceholder", {
+                          max: getShortPlatformMaxSec(shortOutputPreset),
+                        })
+                  }
+                  sx={{ width: 140, "& .MuiInputBase-root": { height: 36 } }}
+                  inputProps={{ inputMode: "decimal" }}
+                />
+              </Box>
+              {shortOutputPreset !== "all" && (
+                <Typography variant="caption" color="textSecondary" display="block" sx={{ mt: 0.5, textAlign: "center" }}>
+                  {t("shortOutput.hint", { max: getShortPlatformMaxSec(shortOutputPreset) })}
+                </Typography>
+              )}
             </div>
           </div>
         </div>

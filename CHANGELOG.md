@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- **Clip length limit (short platforms)**: Added a **clip window** for preview/recording with presets for **YouTube (60s)**, **TikTok (60s)**, **NicoNico (300s)**. Playback starts at the specified start position and ends after the specified duration.
+
 ### Removed
 - **Google Analytics**: removed `lib/Gtag.tsx`, `lib/gaId.ts`, app integration, and `@types/gtag.js`. No client-side analytics or tracking cookies in this fork.
 
@@ -65,6 +68,7 @@
 
 ### Fixed
 - React hydration errors (#418, #423, #425) when browser language is English (language switch moved to useEffect after hydration)
+- **Resolution switch initial render**: When changing resolution after loading an image, the canvas could appear black or distorted until preview started. Re-render now occurs immediately on resolution change.
 - スペクトラムアナライザーをプレビュー/録画中のみ描画するよう変更（エフェクトと同様の動作）
 - Canvas 2D: モード3（上下対称バー）・モード4（ドット表示）・モード6（3D風バー）で getByteFrequencyData が呼ばれていなかった問題を修正
 - Docker HTTPS版: nginx に mime.types を追加し、CSS が正しい Content-Type で配信されるよう修正

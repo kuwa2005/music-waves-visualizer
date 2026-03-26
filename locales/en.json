@@ -44,6 +44,17 @@
     "medium": "Medium",
     "strong": "Strong"
   },
+  "shortOutput": {
+    "title": "Clip length limit",
+    "all": "OFF",
+    "tiktok": "TikTok",
+    "youtube": "YouTube",
+    "niconico": "Niconico",
+    "startSec": "Start (sec)",
+    "durationSec": "Duration (sec)",
+    "durationPlaceholder": "Empty = max {{max}}s",
+    "hint": "Max {{max}}s for this preset. Preview and recording run from the start position for the set duration."
+  },
   "displayVolume": {
     "title": "Display & Volume",
     "volumeTitle": "Volume (Target LUFS)",
@@ -141,7 +152,8 @@
     "exportSuccess": "Settings exported to JSON",
     "importSuccess": "Settings imported (existing keys overwritten)",
     "importFailed": "Failed to import settings",
-    "allCleared": "All settings cleared"
+    "allCleared": "All settings cleared",
+    "shortClipInvalid": "No playable range. Check start position and duration."
   },
   "encode": {
     "warning": "Do not switch windows or close while generating",

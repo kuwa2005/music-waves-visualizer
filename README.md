@@ -20,6 +20,7 @@ https://lil.la/visualizer/
 - **Auto image scaling**: Loaded images are scaled to recommended resolution (1920×1080, etc.) with aspect ratio preserved
 - **Spectrum analyzer**: OFF plus **5 selectable styles** in the UI (frequency bars, circle, symmetric bars, dots, glyco). *Line (mode 1) and symmetric waveform (mode 5) remain in the engine but are hidden from the toolbar; old saved sessions using those modes fall back to frequency bars.*
 - **3 resolutions**: 1920×1080, 1080×1920, 1920×1920
+- **Clip length limit (short platforms)**: For preview/recording you can limit playback to a window with presets: **YouTube (60s)**, **TikTok (60s)**, **NicoNico (300s)**. Playback starts at the specified start position and ends after the specified duration.
 - **Display & volume settings**: Scale/position adjustment (saved per layout), target LUFS (YouTube -14, NicoNico -15, custom)
 - **Effects**: Space (3 types), vignette, rainbow, curtain, sparkle (きらきら), dust (atmosphere). Shown during preview/recording only. Per-effect strength (weak/medium/strong). Sparkle/dust use compact rendering (no large radial glow halos)
 - **Preview**: Real-time waveform display while playing music

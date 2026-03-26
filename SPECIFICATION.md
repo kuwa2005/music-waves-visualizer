@@ -11,6 +11,7 @@ Music Waves Visualizer is a web application that creates audio waveform videos b
 - **Real-time waveform**: Seven internal modes; **five plus OFF** are exposed in the UI (modes 1 and 5 hidden)
 - **Resolution**: 1920×1080, 1080×1920, 1920×1920
 - **Display adjustment**: Scale and position per mode
+- **Clip length limit (short platforms)**: Preview/recording can be limited to a time window with presets: **YouTube (60s)**, **TikTok (60s)**, **NicoNico (300s)**.
 - **Preview**: Real-time waveform while playing
 - **Video generation**: Record and output as MP4
 

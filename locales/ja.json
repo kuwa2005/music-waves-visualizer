@@ -44,6 +44,17 @@
     "medium": "中",
     "strong": "強"
   },
+  "shortOutput": {
+    "title": "動画長制限",
+    "all": "OFF",
+    "tiktok": "TikTok",
+    "youtube": "YouTube",
+    "niconico": "ニコニコ動画",
+    "startSec": "開始位置（秒）",
+    "durationSec": "秒数",
+    "durationPlaceholder": "空欄＝最大{{max}}秒",
+    "hint": "このプリセットでは最大{{max}}秒まで。プレビュー・録画とも開始位置から指定秒数で終了します。"
+  },
   "displayVolume": {
     "title": "表示・音量設定",
     "volumeTitle": "音量設定（目標LUFS）",
@@ -141,7 +152,8 @@
     "exportSuccess": "設定をJSONファイルにエクスポートしました",
     "importSuccess": "設定をインポートしました（存在する項目のみ上書き）",
     "importFailed": "設定のインポートに失敗しました",
-    "allCleared": "すべての設定を削除しました"
+    "allCleared": "すべての設定を削除しました",
+    "shortClipInvalid": "再生できる区間がありません。開始位置と秒数を確認してください。"
   },
   "encode": {
     "warning": "生成中はウィンドウを切り替えたり閉じないでください",
