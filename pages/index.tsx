@@ -342,6 +342,7 @@ const Home: NextPage = () => {
   const [settingsTab, setSettingsTab] = useState(0);
   const [rainColorInput, setRainColorInput] = useState<string>(DEFAULT_RAIN_WEATHER.color.toUpperCase());
   const [snowColorInput, setSnowColorInput] = useState<string>(DEFAULT_SNOW_WEATHER.color.toUpperCase());
+  const isSpaceEffect = effectType === "space" || effectType === "spaceConstant" || effectType === "spaceAudio";
 
   const effectForCanvas = useMemo((): EffectParams | undefined => {
     if (effectType === "none") return undefined;
@@ -1548,10 +1549,9 @@ const Home: NextPage = () => {
               allowScrollButtonsMobile
             >
               <Tab label={t("tabs.spectrum")} />
-              <Tab label={t("tabs.resolution")} />
               <Tab label={t("tabs.effects")} />
-              <Tab label={t("tabs.clipLength")} />
               <Tab label={t("tabs.audio")} />
+              <Tab label={t("tabs.clipLength")} />
               <Tab label={t("tabs.settings")} />
             </Tabs>
           </Box>
@@ -1750,37 +1750,6 @@ const Home: NextPage = () => {
             )}
 
             {settingsTab === 1 && (
-              <Box sx={{ py: 1 }}>
-                <Typography variant="body2" sx={{ mb: 1, textAlign: "center", fontWeight: 500 }}>
-                  {t("resolution.title")}
-                </Typography>
-                <Box sx={{ display: "flex", gap: 1, justifyContent: "center", flexWrap: "wrap" }}>
-                  <Button
-                    variant={canvasSize === "1920x1080" ? "contained" : "outlined"}
-                    onClick={() => onChangeCanvasSize({ target: { value: "1920x1080" } } as SelectChangeEvent<string>)}
-                    size="small"
-                  >
-                    {t("resolution.landscape")}
-                  </Button>
-                  <Button
-                    variant={canvasSize === "1080x1920" ? "contained" : "outlined"}
-                    onClick={() => onChangeCanvasSize({ target: { value: "1080x1920" } } as SelectChangeEvent<string>)}
-                    size="small"
-                  >
-                    {t("resolution.portrait")}
-                  </Button>
-                  <Button
-                    variant={canvasSize === "1920x1920" ? "contained" : "outlined"}
-                    onClick={() => onChangeCanvasSize({ target: { value: "1920x1920" } } as SelectChangeEvent<string>)}
-                    size="small"
-                  >
-                    {t("resolution.square")}
-                  </Button>
-                </Box>
-              </Box>
-            )}
-
-            {settingsTab === 2 && (
               <Box sx={{ py: 1, width: "100%" }}>
                 <Typography variant="body2" sx={{ mb: 1, textAlign: "center", fontWeight: 500 }}>
                   {t("effect.title")}
@@ -1789,14 +1758,8 @@ const Home: NextPage = () => {
                   <Button variant={effectType === "none" ? "contained" : "outlined"} onClick={() => setEffectType("none")} size="small">
                     {t("effect.off")}
                   </Button>
-                  <Button variant={effectType === "space" ? "contained" : "outlined"} onClick={() => setEffectType("space")} size="small">
-                    {t("effect.space1")}
-                  </Button>
-                  <Button variant={effectType === "spaceConstant" ? "contained" : "outlined"} onClick={() => setEffectType("spaceConstant")} size="small">
-                    {t("effect.space2")}
-                  </Button>
-                  <Button variant={effectType === "spaceAudio" ? "contained" : "outlined"} onClick={() => setEffectType("spaceAudio")} size="small">
-                    {t("effect.space3")}
+                  <Button variant={isSpaceEffect ? "contained" : "outlined"} onClick={() => setEffectType("space")} size="small">
+                    {t("effect.space")}
                   </Button>
                   <Button variant={effectType === "sparkle" ? "contained" : "outlined"} onClick={() => setEffectType("sparkle")} size="small">
                     {t("effect.sparkle")}
@@ -1842,6 +1805,34 @@ const Home: NextPage = () => {
                             {d === 1 ? t("effect.weak") : d === 2 ? t("effect.medium") : t("effect.strong")}
                           </Button>
                         ))}
+                      </Box>
+                    )}
+                    {isSpaceEffect && (
+                      <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1, justifyContent: "center", alignItems: "center", mt: 1.5 }}>
+                        <Typography variant="caption" color="textSecondary">
+                          {t("effect.spaceType")}
+                        </Typography>
+                        <Button
+                          variant={effectType === "space" ? "contained" : "outlined"}
+                          onClick={() => setEffectType("space")}
+                          size="small"
+                        >
+                          {t("effect.space1")}
+                        </Button>
+                        <Button
+                          variant={effectType === "spaceConstant" ? "contained" : "outlined"}
+                          onClick={() => setEffectType("spaceConstant")}
+                          size="small"
+                        >
+                          {t("effect.space2")}
+                        </Button>
+                        <Button
+                          variant={effectType === "spaceAudio" ? "contained" : "outlined"}
+                          onClick={() => setEffectType("spaceAudio")}
+                          size="small"
+                        >
+                          {t("effect.space3")}
+                        </Button>
                       </Box>
                     )}
                     {effectType === "rain" && (
@@ -1987,6 +1978,71 @@ const Home: NextPage = () => {
               </Box>
             )}
 
+            {settingsTab === 2 && (
+              <Box sx={{ width: "100%", maxWidth: 600, margin: "0 auto", py: 1 }}>
+                <Typography variant="subtitle2" sx={{ mb: 2, fontWeight: 600 }}>
+                  {t("audioSettings.title")}
+                </Typography>
+                <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 1 }}>
+                  {t("displayVolume.volumeCaption")}
+                </Typography>
+                <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap", alignItems: "center" }}>
+                  <Button
+                    variant={targetLufs === null ? "contained" : "outlined"}
+                    size="small"
+                    onClick={() => {
+                      setTargetLufs(null);
+                      setTargetLufsCustom("");
+                    }}
+                    sx={{ height: 36 }}
+                  >
+                    {t("displayVolume.none")}
+                  </Button>
+                  <Button
+                    variant={targetLufs === -14 ? "contained" : "outlined"}
+                    size="small"
+                    onClick={() => {
+                      setTargetLufs(-14);
+                      setTargetLufsCustom("-14");
+                    }}
+                    sx={{ textTransform: "none", height: 36 }}
+                  >
+                    {t("displayVolume.youtube")}
+                  </Button>
+                  <Button
+                    variant={targetLufs === -15 ? "contained" : "outlined"}
+                    size="small"
+                    onClick={() => {
+                      setTargetLufs(-15);
+                      setTargetLufsCustom("-15");
+                    }}
+                    sx={{ textTransform: "none", height: 36 }}
+                  >
+                    {t("displayVolume.nicovideo")}
+                  </Button>
+                  <TextField
+                    size="small"
+                    label={t("displayVolume.manualLabel")}
+                    type="number"
+                    value={targetLufsCustom}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setTargetLufsCustom(v);
+                      const n = parseFloat(v);
+                      if (v === "") {
+                        setTargetLufs(null);
+                      } else if (!isNaN(n) && n < 0 && n > -60) {
+                        setTargetLufs(n);
+                      }
+                    }}
+                    placeholder={t("displayVolume.manualPlaceholder")}
+                    sx={{ width: 140, "& .MuiInputBase-root": { height: 36 } }}
+                    inputProps={{ min: -60, max: 0, step: 0.5 }}
+                  />
+                </Box>
+              </Box>
+            )}
+
             {settingsTab === 3 && (
               <div className={styles.effectButtons} style={{ paddingTop: 8 }}>
                 <Typography variant="body2" sx={{ mb: 1, textAlign: "center", fontWeight: 500 }}>
@@ -2069,72 +2125,34 @@ const Home: NextPage = () => {
             )}
 
             {settingsTab === 4 && (
-              <Box sx={{ width: "100%", maxWidth: 600, margin: "0 auto", py: 1 }}>
-                <Typography variant="subtitle2" sx={{ mb: 2, fontWeight: 600 }}>
-                  {t("audioSettings.title")}
-                </Typography>
-                <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 1 }}>
-                  {t("displayVolume.volumeCaption")}
-                </Typography>
-                <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap", alignItems: "center" }}>
-                  <Button
-                    variant={targetLufs === null ? "contained" : "outlined"}
-                    size="small"
-                    onClick={() => {
-                      setTargetLufs(null);
-                      setTargetLufsCustom("");
-                    }}
-                    sx={{ height: 36 }}
-                  >
-                    {t("displayVolume.none")}
-                  </Button>
-                  <Button
-                    variant={targetLufs === -14 ? "contained" : "outlined"}
-                    size="small"
-                    onClick={() => {
-                      setTargetLufs(-14);
-                      setTargetLufsCustom("-14");
-                    }}
-                    sx={{ textTransform: "none", height: 36 }}
-                  >
-                    {t("displayVolume.youtube")}
-                  </Button>
-                  <Button
-                    variant={targetLufs === -15 ? "contained" : "outlined"}
-                    size="small"
-                    onClick={() => {
-                      setTargetLufs(-15);
-                      setTargetLufsCustom("-15");
-                    }}
-                    sx={{ textTransform: "none", height: 36 }}
-                  >
-                    {t("displayVolume.nicovideo")}
-                  </Button>
-                  <TextField
-                    size="small"
-                    label={t("displayVolume.manualLabel")}
-                    type="number"
-                    value={targetLufsCustom}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      setTargetLufsCustom(v);
-                      const n = parseFloat(v);
-                      if (v === "") {
-                        setTargetLufs(null);
-                      } else if (!isNaN(n) && n < 0 && n > -60) {
-                        setTargetLufs(n);
-                      }
-                    }}
-                    placeholder={t("displayVolume.manualPlaceholder")}
-                    sx={{ width: 140, "& .MuiInputBase-root": { height: 36 } }}
-                    inputProps={{ min: -60, max: 0, step: 0.5 }}
-                  />
-                </Box>
-              </Box>
-            )}
-
-            {settingsTab === 5 && (
               <Box sx={{ width: "100%", maxWidth: 800, margin: "0 auto", py: 1 }}>
+                <Typography variant="subtitle2" color="primary" sx={{ mb: 1 }}>
+                  {t("resolution.title")}
+                </Typography>
+                <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap", mb: 3 }}>
+                  <Button
+                    variant={canvasSize === "1920x1080" ? "contained" : "outlined"}
+                    onClick={() => onChangeCanvasSize({ target: { value: "1920x1080" } } as SelectChangeEvent<string>)}
+                    size="small"
+                  >
+                    {t("resolution.landscape")}
+                  </Button>
+                  <Button
+                    variant={canvasSize === "1080x1920" ? "contained" : "outlined"}
+                    onClick={() => onChangeCanvasSize({ target: { value: "1080x1920" } } as SelectChangeEvent<string>)}
+                    size="small"
+                  >
+                    {t("resolution.portrait")}
+                  </Button>
+                  <Button
+                    variant={canvasSize === "1920x1920" ? "contained" : "outlined"}
+                    onClick={() => onChangeCanvasSize({ target: { value: "1920x1920" } } as SelectChangeEvent<string>)}
+                    size="small"
+                  >
+                    {t("resolution.square")}
+                  </Button>
+                </Box>
+                <Divider sx={{ my: 2 }} />
                 {isDeveloperMode && (
                   <Box sx={{ mb: 2, p: 1, bgcolor: "background.paper", borderRadius: 1 }}>
                     <Typography variant="body2" color="textSecondary">

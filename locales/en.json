@@ -32,6 +32,7 @@
   "effect": {
     "title": "Effect",
     "off": "OFF",
+    "space": "Space",
     "space1": "Space 1",
     "space2": "Space 2",
     "space3": "Space 3",
@@ -46,6 +47,7 @@
     "weatherAmount": "Amount: {{value}}%",
     "weatherColor": "Color",
     "parameters": "Parameter adjustments (collapsed)",
+    "spaceType": "Type:",
     "weatherColorCode": "Color code (#RRGGBB)",
     "weatherColorCodeInvalid": "Enter color code in #RRGGBB format",
     "strength": "Strength:",

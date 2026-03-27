@@ -32,6 +32,7 @@
   "effect": {
     "title": "エフェクト",
     "off": "OFF",
+    "space": "宇宙空間",
     "space1": "宇宙空間1",
     "space2": "宇宙空間2",
     "space3": "宇宙空間3",
@@ -46,6 +47,7 @@
     "weatherAmount": "量: {{value}}%",
     "weatherColor": "色",
     "parameters": "パラメータ調整（折りたたみ）",
+    "spaceType": "タイプ:",
     "weatherColorCode": "カラーコード (#RRGGBB)",
     "weatherColorCodeInvalid": "カラーコードは #RRGGBB 形式で入力してください",
     "strength": "強度:",
