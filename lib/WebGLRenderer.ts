@@ -977,6 +977,9 @@ function renderFrame(): void {
   const canvasWidth = canvas.width;
   const canvasHeight = canvas.height;
 
+  // 背景のみ描画（プレビュー停止中）でも常に最新キャンバスサイズで描画する
+  gl.viewport(0, 0, canvasWidth, canvasHeight);
+
   // 調整パラメータのデフォルト値
   const adj = adjustments || {
     scaleX: 1.0,
@@ -997,7 +1000,6 @@ function renderFrame(): void {
     return;
   }
 
-  gl.viewport(0, 0, canvasWidth, canvasHeight);
   gl.enable(gl.BLEND);
   gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 

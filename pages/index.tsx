@@ -978,11 +978,34 @@ const Home: NextPage = () => {
       if (!canvasRef.current) {
         return;
       }
+      // auto時は画像ロード完了時点で先に解像度を確定し、初期1フレームの崩れを防ぐ
+      const resolvedLayout = resolveCanvasLayout(canvasSize, image);
+      const dims = getCanvasDimensions(resolvedLayout);
+      if (canvasRef.current.width !== dims.width || canvasRef.current.height !== dims.height) {
+        canvasRef.current.width = dims.width;
+        canvasRef.current.height = dims.height;
+      }
+      clearImageCache();
+      clearWebGLImageCache();
+      // 読み込み直後の1フレームは即時に2Dで背景を確定表示して比率崩れを防ぐ
+      const immediateCtx = canvasRef.current.getContext("2d", { alpha: false });
+      if (immediateCtx) {
+        immediateCtx.fillStyle = "rgba(34, 34, 34, 1.0)";
+        immediateCtx.fillRect(0, 0, dims.width, dims.height);
+        const rawW = image.naturalWidth || image.width || 1;
+        const rawH = image.naturalHeight || image.height || 1;
+        const scale = Math.max(dims.width / rawW, dims.height / rawH);
+        const drawW = Math.round(rawW * scale);
+        const drawH = Math.round(rawH * scale);
+        const x = (dims.width - drawW) / 2;
+        const y = (dims.height - drawH) / 2;
+        immediateCtx.drawImage(image, 0, 0, rawW, rawH, x, y, drawW, drawH);
+      }
+
       setImageCtx(image);
       setImageFileName(file.name);
       if (canvasSize === "auto") {
-        const detectedLayout = resolveCanvasLayout("auto", image);
-        const loaded = loadSettings(detectedLayout, mode);
+        const loaded = loadSettings(resolvedLayout, mode);
         setModeAdjustments(loaded ?? DEFAULT_ADJUSTMENTS);
       }
       exitConfirmRef.current = true;
