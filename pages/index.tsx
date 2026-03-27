@@ -2,9 +2,12 @@ import "./@types/window.d";
 import type { NextPage } from "next";
 import styles from "../styles/Home.module.scss";
 
-import { useState, useRef, useEffect, useLayoutEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from "react";
 import {
   Button,
+  Accordion,
+  AccordionSummary,
+  AccordionDetails,
   FormControl,
   InputLabel,
   MenuItem,
@@ -13,19 +16,18 @@ import {
   Slider,
   Box,
   Typography,
-  Accordion,
-  AccordionSummary,
-  AccordionDetails,
   TextField,
   Divider,
   LinearProgress,
+  Tabs,
+  Tab,
 } from "@mui/material";
 import {
   FiberManualRecord,
+  ExpandMore,
   LibraryMusic,
   PhotoLibrary,
   VideoLibrary,
-  ExpandMore,
   DeleteSweep,
   Warning,
 } from "@mui/icons-material";
@@ -33,7 +35,7 @@ import i18n from "i18next";
 import { CustomSnackbar } from "../components/CustomSnackbar";
 import { drawBars, clearImageCache, getFPS, stopCanvas2DAnimation, GLYCO_COLOR_SETS, GLYCO_GRADIENT_SETS } from "../lib/Canvas";
 import { drawBarsWebGL, getFPSWebGL, cleanupWebGL, stopWebGLAnimation, clearWebGLImageCache } from "../lib/WebGLRenderer";
-import type { EffectType, EffectDensity } from "../lib/Effects";
+import type { EffectType, EffectDensity, EffectParams } from "../lib/Effects";
 import { getGpuInfo, getGpuDisplayName, benchmarkRenderers, type GpuInfo } from "../lib/GpuDetector";
 import { isWebCodecsSupported, checkHardwareEncoderSupport, getBestEncodingMethod } from "../lib/WebCodecsEncoder";
 import { generateMp4Video } from "../lib/Ffmpeg";
@@ -260,7 +262,15 @@ const Home: NextPage = () => {
   });
 
   // エフェクト強度スライダー対象（UI表示するもの + 非表示だが旧設定互換のもの）
-  const EFFECT_TYPES_STRENGTH_UI: EffectType[] = ["space", "spaceConstant", "spaceAudio", "sparkle", "dust"];
+  const EFFECT_TYPES_STRENGTH_UI: EffectType[] = [
+    "space",
+    "spaceConstant",
+    "spaceAudio",
+    "sparkle",
+    "dust",
+    "rain",
+    "snow",
+  ];
   const EFFECT_TYPES_STRENGTH_LEGACY_HIDDEN: EffectType[] = ["vignette", "rainbow", "curtain"];
   const ALL_EFFECT_STRENGTH_TYPES: EffectType[] = [
     ...EFFECT_TYPES_STRENGTH_UI,
@@ -276,6 +286,8 @@ const Home: NextPage = () => {
     "curtain",
     "sparkle",
     "dust",
+    "rain",
+    "snow",
   ];
   const defaultEffectDensities = (): Partial<Record<EffectType, EffectDensity>> => {
     const o: Partial<Record<EffectType, EffectDensity>> = {};
@@ -292,6 +304,29 @@ const Home: NextPage = () => {
   const [shortOutputPreset, setShortOutputPreset] = useState<ShortOutputPreset>("all");
   const [shortStartSecStr, setShortStartSecStr] = useState<string>("0");
   const [shortDurationSecStr, setShortDurationSecStr] = useState<string>("");
+
+  type WeatherAdjust = { angleDeg: number; amount: number; color: string };
+  const DEFAULT_RAIN_WEATHER: WeatherAdjust = { angleDeg: 22, amount: 0.7, color: "#6ba3ff" };
+  const DEFAULT_SNOW_WEATHER: WeatherAdjust = { angleDeg: 10, amount: 0.6, color: "#ffffff" };
+  const [rainWeather, setRainWeather] = useState<WeatherAdjust>(DEFAULT_RAIN_WEATHER);
+  const [snowWeather, setSnowWeather] = useState<WeatherAdjust>(DEFAULT_SNOW_WEATHER);
+
+  const [settingsTab, setSettingsTab] = useState(0);
+
+  const effectForCanvas = useMemo((): EffectParams | undefined => {
+    if (effectType === "none") return undefined;
+    const base: EffectParams = { type: effectType, density: effectDensity };
+    if (effectType === "rain") {
+      base.weatherAngleDeg = rainWeather.angleDeg;
+      base.weatherAmount = rainWeather.amount;
+      base.weatherColor = rainWeather.color;
+    } else if (effectType === "snow") {
+      base.weatherAngleDeg = snowWeather.angleDeg;
+      base.weatherAmount = snowWeather.amount;
+      base.weatherColor = snowWeather.color;
+    }
+    return base;
+  }, [effectType, effectDensity, rainWeather, snowWeather]);
 
   // スペクトラム調整
   const [spectrumOpacityPercent, setSpectrumOpacityPercent] = useState<number>(10);  // 透過率0-100%、0=完全表示
@@ -318,6 +353,16 @@ const Home: NextPage = () => {
     localStorage.setItem("common_glycoColorSet", glycoColorSet);
     localStorage.setItem("common_spectrumOpacityPercent", String(spectrumOpacityPercent));
   }, [effectType, effectDensities, glycoColorSet, spectrumOpacityPercent]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    localStorage.setItem("common_rainWeather", JSON.stringify(rainWeather));
+  }, [rainWeather]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    localStorage.setItem("common_snowWeather", JSON.stringify(snowWeather));
+  }, [snowWeather]);
 
   // セッション用: モード・解像度（エクスポート対象外）
   useEffect(() => {
@@ -386,6 +431,8 @@ const Home: NextPage = () => {
         glycoColorSet,
         spectrumOpacityPercent,
         rendererType,
+        rainWeather,
+        snowWeather,
       },
       spectrumSettings,
     };
@@ -397,7 +444,15 @@ const Home: NextPage = () => {
     LAYOUTS.forEach((layout) => {
       [0, 1, 2, 3, 4, 5, 6].forEach((m) => localStorage.removeItem(getSettingsKey(layout, m)));
     });
-    ["common_targetLufs", "common_effectType", "common_effectDensities", "common_glycoColorSet", "common_spectrumOpacityPercent"].forEach((k) => localStorage.removeItem(k));
+    [
+      "common_targetLufs",
+      "common_effectType",
+      "common_effectDensities",
+      "common_glycoColorSet",
+      "common_spectrumOpacityPercent",
+      "common_rainWeather",
+      "common_snowWeather",
+    ].forEach((k) => localStorage.removeItem(k));
   };
 
   // 存在する項目のみ上書きインポート
@@ -448,6 +503,34 @@ const Home: NextPage = () => {
         if (c.rendererType === "canvas2d" || c.rendererType === "webgl") {
           localStorage.setItem("common_rendererType", c.rendererType);
           setRendererType(c.rendererType);
+        }
+        if (c.rainWeather && typeof c.rainWeather === "object") {
+          const rw = c.rainWeather as WeatherAdjust;
+          if (
+            typeof rw.angleDeg === "number" &&
+            typeof rw.amount === "number" &&
+            typeof rw.color === "string"
+          ) {
+            setRainWeather({
+              angleDeg: Math.max(-90, Math.min(90, rw.angleDeg)),
+              amount: Math.max(0.05, Math.min(1, rw.amount)),
+              color: /^#[0-9a-fA-F]{6}$/.test(rw.color) ? rw.color : DEFAULT_RAIN_WEATHER.color,
+            });
+          }
+        }
+        if (c.snowWeather && typeof c.snowWeather === "object") {
+          const sw = c.snowWeather as WeatherAdjust;
+          if (
+            typeof sw.angleDeg === "number" &&
+            typeof sw.amount === "number" &&
+            typeof sw.color === "string"
+          ) {
+            setSnowWeather({
+              angleDeg: Math.max(-90, Math.min(90, sw.angleDeg)),
+              amount: Math.max(0.05, Math.min(1, sw.amount)),
+              color: /^#[0-9a-fA-F]{6}$/.test(sw.color) ? sw.color : DEFAULT_SNOW_WEATHER.color,
+            });
+          }
         }
       }
 
@@ -575,7 +658,6 @@ const Home: NextPage = () => {
 
   // Canvas
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const reqIdRef = useRef<number>(null);
   // Canvas用ImageContext
   const [imageCtx, setImageCtx] = useState<HTMLImageElement>(null);
 
@@ -640,6 +722,42 @@ const Home: NextPage = () => {
       setRendererType(savedRenderer);
     }
 
+    try {
+      const rw = localStorage.getItem("common_rainWeather");
+      if (rw) {
+        const p = JSON.parse(rw) as WeatherAdjust;
+        if (
+          typeof p?.angleDeg === "number" &&
+          typeof p?.amount === "number" &&
+          typeof p?.color === "string"
+        ) {
+          setRainWeather({
+            angleDeg: Math.max(-90, Math.min(90, p.angleDeg)),
+            amount: Math.max(0.05, Math.min(1, p.amount)),
+            color: /^#[0-9a-fA-F]{6}$/.test(p.color) ? p.color : DEFAULT_RAIN_WEATHER.color,
+          });
+        }
+      }
+    } catch (_e) { /* ignore */ }
+
+    try {
+      const sw = localStorage.getItem("common_snowWeather");
+      if (sw) {
+        const p = JSON.parse(sw) as WeatherAdjust;
+        if (
+          typeof p?.angleDeg === "number" &&
+          typeof p?.amount === "number" &&
+          typeof p?.color === "string"
+        ) {
+          setSnowWeather({
+            angleDeg: Math.max(-90, Math.min(90, p.angleDeg)),
+            amount: Math.max(0.05, Math.min(1, p.amount)),
+            color: /^#[0-9a-fA-F]{6}$/.test(p.color) ? p.color : DEFAULT_SNOW_WEATHER.color,
+          });
+        }
+      }
+    } catch (_e) { /* ignore */ }
+
     const adj = loadSettings(sizeVal as CanvasSize, modeVal);
     if (adj) setModeAdjustments(adj);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -698,7 +816,7 @@ const Home: NextPage = () => {
     stopWebGLAnimation();
 
     // レンダラータイプに応じて描画関数を選択
-    const effect = effectType !== "none" ? { type: effectType, density: effectDensity } : undefined;
+    const effect = effectForCanvas;
     const isEffectActive = isPlaySound || isRecording;
     const spectrumSettings = {
       opacity: 1 - spectrumOpacityPercent / 100,
@@ -743,8 +861,7 @@ const Home: NextPage = () => {
     mode,
     modeAdjustments,
     rendererType,
-    effectType,
-    effectDensity,
+    effectForCanvas,
     isPlaySound,
     isRecording,
     glycoColorSet,
@@ -1036,7 +1153,7 @@ const Home: NextPage = () => {
     setIsRecording(true);
     
     // キャンバスアニメーションを確実に開始（前回ストップで停止している場合に備える）
-    const effect = effectType !== "none" ? { type: effectType, density: effectDensity } : undefined;
+    const effect = effectForCanvas;
     const spectrumSettings = {
       opacity: 1 - spectrumOpacityPercent / 100,
       fps: spectrumFps,
@@ -1219,6 +1336,8 @@ const Home: NextPage = () => {
     setShortOutputPreset("all");
     setShortStartSecStr("0");
     setShortDurationSecStr("");
+    setRainWeather(DEFAULT_RAIN_WEATHER);
+    setSnowWeather(DEFAULT_SNOW_WEATHER);
     setTargetLufs(null);
     setTargetLufsCustom("");
     exitConfirmRef.current = false;
@@ -1382,111 +1501,291 @@ const Home: NextPage = () => {
         </div>
 
         <div className={styles.menu}>
+          <Box sx={{ borderBottom: 1, borderColor: "divider", width: "100%" }}>
+            <Tabs
+              value={settingsTab}
+              onChange={(_, v) => setSettingsTab(v)}
+              variant="scrollable"
+              scrollButtons="auto"
+              allowScrollButtonsMobile
+            >
+              <Tab label={t("tabs.spectrum")} />
+              <Tab label={t("tabs.resolution")} />
+              <Tab label={t("tabs.effects")} />
+              <Tab label={t("tabs.clipLength")} />
+              <Tab label={t("tabs.audio")} />
+              <Tab label={t("tabs.settings")} />
+            </Tabs>
+          </Box>
           <div className={styles.menu__controls}>
-            <div className={styles.spectrumButtons}>
-              <Typography variant="body2" sx={{ mb: 0, textAlign: "center", fontWeight: 500 }}>
-                {t("spectrum.title")}
-              </Typography>
-              <Box sx={{ display: "flex", gap: 1, justifyContent: "center", flexWrap: "wrap" }}>
-                {[
-                  { value: -1, label: t("spectrum.off") },
-                  { value: 0, label: t("spectrum.freqBar") },
-                  // 折れ線(1)・波形上下対称(5)は UI から非表示（描画ロジックは残す）
-                  { value: 2, label: t("spectrum.circle") },
-                  { value: 3, label: t("spectrum.symBar") },
-                  { value: 4, label: t("spectrum.dot") },
-                  { value: 6, label: t("spectrum.glyco") },
-                ].map((item) => (
+            {settingsTab === 0 && (
+              <Box sx={{ width: "100%", maxWidth: 600, margin: "0 auto", py: 1 }}>
+                <Typography variant="body2" sx={{ mb: 1, textAlign: "center", fontWeight: 500 }}>
+                  {t("spectrum.title")}
+                </Typography>
+                <Box sx={{ display: "flex", gap: 1, justifyContent: "center", flexWrap: "wrap", mb: 2 }}>
+                  {[
+                    { value: -1, label: t("spectrum.off") },
+                    { value: 0, label: t("spectrum.freqBar") },
+                    { value: 2, label: t("spectrum.circle") },
+                    { value: 3, label: t("spectrum.symBar") },
+                    { value: 4, label: t("spectrum.dot") },
+                    { value: 6, label: t("spectrum.glyco") },
+                  ].map((item) => (
+                    <Button
+                      key={item.value}
+                      variant={mode === item.value ? "contained" : "outlined"}
+                      onClick={() => onChangeMode({ target: { value: item.value.toString() } } as SelectChangeEvent<string>)}
+                      size="small"
+                    >
+                      {item.label}
+                    </Button>
+                  ))}
+                </Box>
+                <Accordion sx={{ mt: 2 }}>
+                  <AccordionSummary expandIcon={<ExpandMore />}>
+                    <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+                      {t("spectrum.parameters")}
+                    </Typography>
+                  </AccordionSummary>
+                  <AccordionDetails>
+                    <Typography variant="subtitle2" sx={{ mb: 1.5, fontWeight: 600 }}>
+                      {t("displayVolume.spectrumTitle")}
+                    </Typography>
+                    <Box sx={{ mb: 2 }}>
+                      <Typography gutterBottom>{t("displayVolume.opacity", { value: spectrumOpacityPercent })}</Typography>
+                      <Slider
+                        value={spectrumOpacityPercent}
+                        min={0}
+                        max={100}
+                        step={5}
+                        onChange={(_, v) => setSpectrumOpacityPercent(v as number)}
+                      />
+                    </Box>
+                    <Box sx={{ mb: 2 }}>
+                      <Typography gutterBottom>{t("displayVolume.fps", { value: spectrumFps })}</Typography>
+                      <Slider
+                        value={spectrumFps}
+                        min={1}
+                        max={60}
+                        step={1}
+                        onChange={(_, v) => setSpectrumFps(v as number)}
+                      />
+                    </Box>
+                    {mode === 1 && (
+                      <Box sx={{ mb: 3 }}>
+                        <Typography gutterBottom>{t("displayVolume.lineWidthWaveform", { value: lineWidthWaveform.toFixed(1) })}</Typography>
+                        <Slider
+                          value={lineWidthWaveform}
+                          min={1}
+                          max={8}
+                          step={0.1}
+                          onChange={(_, v) => setLineWidthWaveform(v as number)}
+                        />
+                      </Box>
+                    )}
+                    {mode === 2 && (
+                      <Box sx={{ mb: 3 }}>
+                        <Typography gutterBottom>{t("displayVolume.lineWidthCircle", { value: lineWidthCircle.toFixed(1) })}</Typography>
+                        <Slider
+                          value={lineWidthCircle}
+                          min={1}
+                          max={8}
+                          step={0.1}
+                          onChange={(_, v) => setLineWidthCircle(v as number)}
+                        />
+                      </Box>
+                    )}
+                    {mode === 5 && (
+                      <Box sx={{ mb: 3 }}>
+                        <Typography gutterBottom>{t("displayVolume.lineWidthSymWave", { value: lineWidthSymWave.toFixed(1) })}</Typography>
+                        <Slider
+                          value={lineWidthSymWave}
+                          min={1}
+                          max={8}
+                          step={0.1}
+                          onChange={(_, v) => setLineWidthSymWave(v as number)}
+                        />
+                      </Box>
+                    )}
+                    {mode === 6 && (
+                      <Box sx={{ mb: 3 }}>
+                        <Typography gutterBottom>{t("displayVolume.glycoColor")}</Typography>
+                        <FormControl size="small" fullWidth sx={{ mt: 1 }}>
+                          <InputLabel>{t("displayVolume.colorSet")}</InputLabel>
+                          <Select
+                            value={glycoColorSet}
+                            label={t("displayVolume.colorSet")}
+                            onChange={(e) => setGlycoColorSet(e.target.value)}
+                          >
+                            <MenuItem value="amber">{t("glycoColors.amber")}</MenuItem>
+                            <MenuItem value="green">{t("glycoColors.green")}</MenuItem>
+                            <MenuItem value="red">{t("glycoColors.red")}</MenuItem>
+                            <MenuItem value="blue">{t("glycoColors.blue")}</MenuItem>
+                            <MenuItem value="yellow">{t("glycoColors.yellow")}</MenuItem>
+                            <MenuItem value="white">{t("glycoColors.white")}</MenuItem>
+                            <MenuItem value="cyan">{t("glycoColors.cyan")}</MenuItem>
+                            <MenuItem value="magenta">{t("glycoColors.magenta")}</MenuItem>
+                            <MenuItem value="neonGreen">{t("glycoColors.neonGreen")}</MenuItem>
+                            <MenuItem value="neonPink">{t("glycoColors.neonPink")}</MenuItem>
+                            <MenuItem value="neonCyan">{t("glycoColors.neonCyan")}</MenuItem>
+                            <MenuItem value="rainbow">{t("glycoColors.rainbow")}</MenuItem>
+                            <MenuItem value="blueGreen">{t("glycoColors.blueGreen")}</MenuItem>
+                            <MenuItem value="redYellow">{t("glycoColors.redYellow")}</MenuItem>
+                            <MenuItem value="verticalEQ">{t("glycoColors.verticalEQ")}</MenuItem>
+                            <MenuItem value="verticalEQFixed">{t("glycoColors.verticalEQFixed")}</MenuItem>
+                          </Select>
+                        </FormControl>
+                      </Box>
+                    )}
+                    <Divider sx={{ my: 2 }} />
+                    <Typography variant="subtitle2" sx={{ mb: 2, fontWeight: 600 }}>
+                      {t("displayVolume.adjustTitle")}
+                    </Typography>
+                    <Typography gutterBottom>{t("displayVolume.scaleX", { value: modeAdjustments.scaleX.toFixed(2) })}</Typography>
+                    <Slider
+                      value={modeAdjustments.scaleX}
+                      onChange={(_, value) => handleAdjustmentChange("scaleX", value as number)}
+                      min={0.1}
+                      max={3.0}
+                      step={0.1}
+                      marks={[
+                        { value: 0.5, label: "0.5" },
+                        { value: 1.0, label: "1.0" },
+                        { value: 2.0, label: "2.0" },
+                      ]}
+                    />
+                    <Typography gutterBottom sx={{ mt: 3 }}>
+                      {t("displayVolume.scaleY", { value: modeAdjustments.scaleY.toFixed(2) })}
+                    </Typography>
+                    <Slider
+                      value={modeAdjustments.scaleY}
+                      onChange={(_, value) => handleAdjustmentChange("scaleY", value as number)}
+                      min={0.1}
+                      max={3.0}
+                      step={0.1}
+                      marks={[
+                        { value: 0.5, label: "0.5" },
+                        { value: 1.0, label: "1.0" },
+                        { value: 2.0, label: "2.0" },
+                      ]}
+                    />
+                    <Typography gutterBottom sx={{ mt: 3 }}>
+                      {t("displayVolume.offsetX", {
+                        value: modeAdjustments.offsetX.toFixed(1),
+                        px: Math.round((getCanvasDimensions(canvasSize).width * modeAdjustments.offsetX) / 100),
+                      })}
+                    </Typography>
+                    <Slider
+                      value={modeAdjustments.offsetX}
+                      onChange={(_, value) => handleAdjustmentChange("offsetX", value as number)}
+                      min={-150}
+                      max={150}
+                      step={1}
+                      marks={[
+                        { value: -150, label: "-150%" },
+                        { value: 0, label: "0%" },
+                        { value: 150, label: "150%" },
+                      ]}
+                    />
+                    <Typography gutterBottom sx={{ mt: 3 }}>
+                      {t("displayVolume.offsetY", {
+                        value: modeAdjustments.offsetY.toFixed(1),
+                        px: Math.round((getCanvasDimensions(canvasSize).height * modeAdjustments.offsetY) / 100),
+                      })}
+                    </Typography>
+                    <Slider
+                      value={modeAdjustments.offsetY}
+                      onChange={(_, value) => handleAdjustmentChange("offsetY", value as number)}
+                      min={-150}
+                      max={150}
+                      step={1}
+                      marks={[
+                        { value: -150, label: "-150%" },
+                        { value: 0, label: "0%" },
+                        { value: 150, label: "150%" },
+                      ]}
+                    />
+                  </AccordionDetails>
+                </Accordion>
+              </Box>
+            )}
+
+            {settingsTab === 1 && (
+              <Box sx={{ py: 1 }}>
+                <Typography variant="body2" sx={{ mb: 1, textAlign: "center", fontWeight: 500 }}>
+                  {t("resolution.title")}
+                </Typography>
+                <Box sx={{ display: "flex", gap: 1, justifyContent: "center", flexWrap: "wrap" }}>
                   <Button
-                    key={item.value}
-                    variant={mode === item.value ? "contained" : "outlined"}
-                    onClick={() => onChangeMode({ target: { value: item.value.toString() } } as SelectChangeEvent<string>)}
+                    variant={canvasSize === "1920x1080" ? "contained" : "outlined"}
+                    onClick={() => onChangeCanvasSize({ target: { value: "1920x1080" } } as SelectChangeEvent<string>)}
                     size="small"
                   >
-                    {item.label}
+                    {t("resolution.landscape")}
                   </Button>
-                ))}
+                  <Button
+                    variant={canvasSize === "1080x1920" ? "contained" : "outlined"}
+                    onClick={() => onChangeCanvasSize({ target: { value: "1080x1920" } } as SelectChangeEvent<string>)}
+                    size="small"
+                  >
+                    {t("resolution.portrait")}
+                  </Button>
+                  <Button
+                    variant={canvasSize === "1920x1920" ? "contained" : "outlined"}
+                    onClick={() => onChangeCanvasSize({ target: { value: "1920x1920" } } as SelectChangeEvent<string>)}
+                    size="small"
+                  >
+                    {t("resolution.square")}
+                  </Button>
+                </Box>
               </Box>
-            </div>
-            <div className={styles.resolutionButtons}>
-              <Typography variant="body2" sx={{ mb: 0, textAlign: "center", fontWeight: 500 }}>
-                {t("resolution.title")}
-              </Typography>
-              <Box sx={{ display: "flex", gap: 1, justifyContent: "center", flexWrap: "wrap" }}>
-                <Button
-                  variant={canvasSize === "1920x1080" ? "contained" : "outlined"}
-                  onClick={() => onChangeCanvasSize({ target: { value: "1920x1080" } } as SelectChangeEvent<string>)}
-                  size="small"
-                >
-                  {t("resolution.landscape")}
-                </Button>
-                <Button
-                  variant={canvasSize === "1080x1920" ? "contained" : "outlined"}
-                  onClick={() => onChangeCanvasSize({ target: { value: "1080x1920" } } as SelectChangeEvent<string>)}
-                  size="small"
-                >
-                  {t("resolution.portrait")}
-                </Button>
-                <Button
-                  variant={canvasSize === "1920x1920" ? "contained" : "outlined"}
-                  onClick={() => onChangeCanvasSize({ target: { value: "1920x1920" } } as SelectChangeEvent<string>)}
-                  size="small"
-                >
-                  {t("resolution.square")}
-                </Button>
-              </Box>
-            </div>
-            <div className={styles.effectButtons}>
-              <Typography variant="body2" sx={{ mb: 0, textAlign: "center", fontWeight: 500 }}>
-                {t("effect.title")}
-              </Typography>
-              <Box sx={{ display: "flex", gap: 1, justifyContent: "center", flexWrap: "wrap", alignItems: "center" }}>
-                <Button
-                  variant={effectType === "none" ? "contained" : "outlined"}
-                  onClick={() => setEffectType("none")}
-                  size="small"
-                >
-                  {t("effect.off")}
-                </Button>
-                <Button
-                  variant={effectType === "space" ? "contained" : "outlined"}
-                  onClick={() => setEffectType("space")}
-                  size="small"
-                >
-                  {t("effect.space1")}
-                </Button>
-                <Button
-                  variant={effectType === "spaceConstant" ? "contained" : "outlined"}
-                  onClick={() => setEffectType("spaceConstant")}
-                  size="small"
-                >
-                  {t("effect.space2")}
-                </Button>
-                <Button
-                  variant={effectType === "spaceAudio" ? "contained" : "outlined"}
-                  onClick={() => setEffectType("spaceAudio")}
-                  size="small"
-                >
-                  {t("effect.space3")}
-                </Button>
-                {/* ビネット・レインボー・カーテンはUI非表示（機能・旧設定インポートは維持） */}
-                <Button
-                  variant={effectType === "sparkle" ? "contained" : "outlined"}
-                  onClick={() => setEffectType("sparkle")}
-                  size="small"
-                >
-                  {t("effect.sparkle")}
-                </Button>
-                <Button
-                  variant={effectType === "dust" ? "contained" : "outlined"}
-                  onClick={() => setEffectType("dust")}
-                  size="small"
-                >
-                  {t("effect.dust")}
-                </Button>
+            )}
+
+            {settingsTab === 2 && (
+              <Box sx={{ py: 1, width: "100%" }}>
+                <Typography variant="body2" sx={{ mb: 1, textAlign: "center", fontWeight: 500 }}>
+                  {t("effect.title")}
+                </Typography>
+                <Box sx={{ display: "flex", gap: 1, justifyContent: "center", flexWrap: "wrap", alignItems: "center" }}>
+                  <Button variant={effectType === "none" ? "contained" : "outlined"} onClick={() => setEffectType("none")} size="small">
+                    {t("effect.off")}
+                  </Button>
+                  <Button variant={effectType === "space" ? "contained" : "outlined"} onClick={() => setEffectType("space")} size="small">
+                    {t("effect.space1")}
+                  </Button>
+                  <Button variant={effectType === "spaceConstant" ? "contained" : "outlined"} onClick={() => setEffectType("spaceConstant")} size="small">
+                    {t("effect.space2")}
+                  </Button>
+                  <Button variant={effectType === "spaceAudio" ? "contained" : "outlined"} onClick={() => setEffectType("spaceAudio")} size="small">
+                    {t("effect.space3")}
+                  </Button>
+                  <Button variant={effectType === "sparkle" ? "contained" : "outlined"} onClick={() => setEffectType("sparkle")} size="small">
+                    {t("effect.sparkle")}
+                  </Button>
+                  <Button variant={effectType === "dust" ? "contained" : "outlined"} onClick={() => setEffectType("dust")} size="small">
+                    {t("effect.dust")}
+                  </Button>
+                  <Button variant={effectType === "rain" ? "contained" : "outlined"} onClick={() => setEffectType("rain")} size="small">
+                    {t("effect.rain")}
+                  </Button>
+                  <Button variant={effectType === "snow" ? "contained" : "outlined"} onClick={() => setEffectType("snow")} size="small">
+                    {t("effect.snow")}
+                  </Button>
+                </Box>
                 {effectType !== "none" && ALL_EFFECT_STRENGTH_TYPES.includes(effectType) && (
-                  <>
-                    <Typography variant="caption" color="textSecondary" sx={{ mx: 0.5 }}>
+                  <Box
+                    sx={{
+                      display: "flex",
+                      flexWrap: "wrap",
+                      gap: 1,
+                      justifyContent: "center",
+                      alignItems: "center",
+                      width: "100%",
+                      mt: 1.5,
+                    }}
+                  >
+                    <Typography variant="caption" color="textSecondary">
                       {t("effect.strength")}
                     </Typography>
                     {([1, 2, 3] as EffectDensity[]).map((d) => (
@@ -1499,127 +1798,180 @@ const Home: NextPage = () => {
                         {d === 1 ? t("effect.weak") : d === 2 ? t("effect.medium") : t("effect.strong")}
                       </Button>
                     ))}
-                  </>
+                  </Box>
+                )}
+                {effectType === "rain" && (
+                  <Box sx={{ width: "100%", maxWidth: 440, mt: 2, mx: "auto" }}>
+                    <Typography variant="caption" color="textSecondary" display="block">
+                      {t("effect.weatherAngle", { value: rainWeather.angleDeg })}
+                    </Typography>
+                    <Slider
+                      value={rainWeather.angleDeg}
+                      min={-75}
+                      max={75}
+                      step={1}
+                      onChange={(_, v) => setRainWeather((p) => ({ ...p, angleDeg: v as number }))}
+                    />
+                    <Typography variant="caption" color="textSecondary" display="block" sx={{ mt: 1 }}>
+                      {t("effect.weatherAmount", { value: Math.round(rainWeather.amount * 100) })}
+                    </Typography>
+                    <Slider
+                      value={rainWeather.amount}
+                      min={0.05}
+                      max={1}
+                      step={0.05}
+                      onChange={(_, v) => setRainWeather((p) => ({ ...p, amount: v as number }))}
+                    />
+                    <Box sx={{ display: "flex", alignItems: "center", gap: 1, mt: 1 }}>
+                      <Typography variant="caption" color="textSecondary">
+                        {t("effect.weatherColor")}
+                      </Typography>
+                      <input
+                        type="color"
+                        value={rainWeather.color}
+                        onChange={(e) => setRainWeather((p) => ({ ...p, color: e.target.value }))}
+                        style={{ width: 40, height: 32, border: "none", cursor: "pointer", background: "transparent" }}
+                        aria-label={t("effect.weatherColor")}
+                      />
+                    </Box>
+                  </Box>
+                )}
+                {effectType === "snow" && (
+                  <Box sx={{ width: "100%", maxWidth: 440, mt: 2, mx: "auto" }}>
+                    <Typography variant="caption" color="textSecondary" display="block">
+                      {t("effect.weatherAngle", { value: snowWeather.angleDeg })}
+                    </Typography>
+                    <Slider
+                      value={snowWeather.angleDeg}
+                      min={-60}
+                      max={60}
+                      step={1}
+                      onChange={(_, v) => setSnowWeather((p) => ({ ...p, angleDeg: v as number }))}
+                    />
+                    <Typography variant="caption" color="textSecondary" display="block" sx={{ mt: 1 }}>
+                      {t("effect.weatherAmount", { value: Math.round(snowWeather.amount * 100) })}
+                    </Typography>
+                    <Slider
+                      value={snowWeather.amount}
+                      min={0.05}
+                      max={1}
+                      step={0.05}
+                      onChange={(_, v) => setSnowWeather((p) => ({ ...p, amount: v as number }))}
+                    />
+                    <Box sx={{ display: "flex", alignItems: "center", gap: 1, mt: 1 }}>
+                      <Typography variant="caption" color="textSecondary">
+                        {t("effect.weatherColor")}
+                      </Typography>
+                      <input
+                        type="color"
+                        value={snowWeather.color}
+                        onChange={(e) => setSnowWeather((p) => ({ ...p, color: e.target.value }))}
+                        style={{ width: 40, height: 32, border: "none", cursor: "pointer", background: "transparent" }}
+                        aria-label={t("effect.weatherColor")}
+                      />
+                    </Box>
+                  </Box>
                 )}
               </Box>
-            </div>
-            <div className={styles.effectButtons}>
-              <Typography variant="body2" sx={{ mb: 1, textAlign: "center", fontWeight: 500 }}>
-                {t("shortOutput.title")}
-              </Typography>
-              <Box
-                sx={{
-                  display: "flex",
-                  gap: 1,
-                  justifyContent: "center",
-                  flexWrap: "wrap",
-                  alignItems: "center",
-                }}
-              >
-                <Button
-                  variant={shortOutputPreset === "all" ? "contained" : "outlined"}
-                  onClick={() => setShortOutputPreset("all")}
-                  size="small"
-                  sx={{ height: 36 }}
-                >
-                  {t("shortOutput.all")}
-                </Button>
-                <Button
-                  variant={shortOutputPreset === "youtube" ? "contained" : "outlined"}
-                  onClick={() => {
-                    setShortOutputPreset("youtube");
-                    setShortDurationSecStr("60");
-                  }}
-                  size="small"
-                  sx={{ height: 36 }}
-                >
-                  {t("shortOutput.youtube")}
-                </Button>
-                <Button
-                  variant={shortOutputPreset === "tiktok" ? "contained" : "outlined"}
-                  onClick={() => {
-                    setShortOutputPreset("tiktok");
-                    setShortDurationSecStr("60");
-                  }}
-                  size="small"
-                  sx={{ height: 36 }}
-                >
-                  {t("shortOutput.tiktok")}
-                </Button>
-                <Button
-                  variant={shortOutputPreset === "niconico" ? "contained" : "outlined"}
-                  onClick={() => {
-                    setShortOutputPreset("niconico");
-                    setShortDurationSecStr("300");
-                  }}
-                  size="small"
-                  sx={{ height: 36 }}
-                >
-                  {t("shortOutput.niconico")}
-                </Button>
-                <TextField
-                  label={t("shortOutput.startSec")}
-                  size="small"
-                  value={shortStartSecStr}
-                  onChange={(e) => setShortStartSecStr(e.target.value)}
-                  disabled={shortOutputPreset === "all"}
-                  sx={{ width: 120, "& .MuiInputBase-root": { height: 36 } }}
-                  inputProps={{ inputMode: "decimal" }}
-                />
-                <TextField
-                  label={t("shortOutput.durationSec")}
-                  size="small"
-                  value={shortDurationSecStr}
-                  onChange={(e) => setShortDurationSecStr(e.target.value)}
-                  disabled={shortOutputPreset === "all"}
-                  placeholder={
-                    shortOutputPreset === "all"
-                      ? ""
-                      : t("shortOutput.durationPlaceholder", {
-                          max: getShortPlatformMaxSec(shortOutputPreset),
-                        })
-                  }
-                  sx={{ width: 140, "& .MuiInputBase-root": { height: 36 } }}
-                  inputProps={{ inputMode: "decimal" }}
-                />
-              </Box>
-              {shortOutputPreset !== "all" && (
-                <Typography variant="caption" color="textSecondary" display="block" sx={{ mt: 0.5, textAlign: "center" }}>
-                  {t("shortOutput.hint", { max: getShortPlatformMaxSec(shortOutputPreset) })}
+            )}
+
+            {settingsTab === 3 && (
+              <div className={styles.effectButtons} style={{ paddingTop: 8 }}>
+                <Typography variant="body2" sx={{ mb: 1, textAlign: "center", fontWeight: 500 }}>
+                  {t("shortOutput.title")}
                 </Typography>
-              )}
-            </div>
-          </div>
-        </div>
+                <Box sx={{ display: "flex", gap: 1, justifyContent: "center", flexWrap: "wrap", alignItems: "center" }}>
+                  <Button
+                    variant={shortOutputPreset === "all" ? "contained" : "outlined"}
+                    onClick={() => setShortOutputPreset("all")}
+                    size="small"
+                    sx={{ height: 36 }}
+                  >
+                    {t("shortOutput.all")}
+                  </Button>
+                  <Button
+                    variant={shortOutputPreset === "youtube" ? "contained" : "outlined"}
+                    onClick={() => {
+                      setShortOutputPreset("youtube");
+                      setShortDurationSecStr("60");
+                    }}
+                    size="small"
+                    sx={{ height: 36 }}
+                  >
+                    {t("shortOutput.youtube")}
+                  </Button>
+                  <Button
+                    variant={shortOutputPreset === "tiktok" ? "contained" : "outlined"}
+                    onClick={() => {
+                      setShortOutputPreset("tiktok");
+                      setShortDurationSecStr("60");
+                    }}
+                    size="small"
+                    sx={{ height: 36 }}
+                  >
+                    {t("shortOutput.tiktok")}
+                  </Button>
+                  <Button
+                    variant={shortOutputPreset === "niconico" ? "contained" : "outlined"}
+                    onClick={() => {
+                      setShortOutputPreset("niconico");
+                      setShortDurationSecStr("300");
+                    }}
+                    size="small"
+                    sx={{ height: 36 }}
+                  >
+                    {t("shortOutput.niconico")}
+                  </Button>
+                  <TextField
+                    label={t("shortOutput.startSec")}
+                    size="small"
+                    value={shortStartSecStr}
+                    onChange={(e) => setShortStartSecStr(e.target.value)}
+                    disabled={shortOutputPreset === "all"}
+                    sx={{ width: 120, "& .MuiInputBase-root": { height: 36 } }}
+                    inputProps={{ inputMode: "decimal" }}
+                  />
+                  <TextField
+                    label={t("shortOutput.durationSec")}
+                    size="small"
+                    value={shortDurationSecStr}
+                    onChange={(e) => setShortDurationSecStr(e.target.value)}
+                    disabled={shortOutputPreset === "all"}
+                    placeholder={
+                      shortOutputPreset === "all"
+                        ? ""
+                        : t("shortOutput.durationPlaceholder", {
+                            max: getShortPlatformMaxSec(shortOutputPreset),
+                          })
+                    }
+                    sx={{ width: 140, "& .MuiInputBase-root": { height: 36 } }}
+                    inputProps={{ inputMode: "decimal" }}
+                  />
+                </Box>
+                {shortOutputPreset !== "all" && (
+                  <Typography variant="caption" color="textSecondary" display="block" sx={{ mt: 0.5, textAlign: "center" }}>
+                    {t("shortOutput.hint", { max: getShortPlatformMaxSec(shortOutputPreset) })}
+                  </Typography>
+                )}
+              </div>
+            )}
 
-        {isDeveloperMode && (
-          <div className={styles.developerPanel}>
-            <Box sx={{ mb: 2, p: 1, bgcolor: 'background.paper', borderRadius: 1 }}>
-              <Typography variant="body2" color="textSecondary">
-                FPS: <strong style={{ color: fps >= 55 ? '#4caf50' : fps >= 30 ? '#ff9800' : '#f44336' }}>{fps}</strong>
-              </Typography>
-            </Box>
-          </div>
-        )}
-
-        <div className={styles.adjustments}>
-          <Accordion>
-            <AccordionSummary expandIcon={<ExpandMore />}>
-              <Typography>{t("displayVolume.title")}</Typography>
-            </AccordionSummary>
-            <AccordionDetails>
-              <Box sx={{ width: "100%", maxWidth: 600, margin: "0 auto" }}>
+            {settingsTab === 4 && (
+              <Box sx={{ width: "100%", maxWidth: 600, margin: "0 auto", py: 1 }}>
                 <Typography variant="subtitle2" sx={{ mb: 2, fontWeight: 600 }}>
-                  {t("displayVolume.volumeTitle")}
+                  {t("audioSettings.title")}
                 </Typography>
                 <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 1 }}>
                   {t("displayVolume.volumeCaption")}
                 </Typography>
-                <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap", alignItems: "center", mb: 3 }}>
+                <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap", alignItems: "center" }}>
                   <Button
                     variant={targetLufs === null ? "contained" : "outlined"}
                     size="small"
-                    onClick={() => { setTargetLufs(null); setTargetLufsCustom(""); }}
+                    onClick={() => {
+                      setTargetLufs(null);
+                      setTargetLufsCustom("");
+                    }}
                     sx={{ height: 36 }}
                   >
                     {t("displayVolume.none")}
@@ -1627,7 +1979,10 @@ const Home: NextPage = () => {
                   <Button
                     variant={targetLufs === -14 ? "contained" : "outlined"}
                     size="small"
-                    onClick={() => { setTargetLufs(-14); setTargetLufsCustom("-14"); }}
+                    onClick={() => {
+                      setTargetLufs(-14);
+                      setTargetLufsCustom("-14");
+                    }}
                     sx={{ textTransform: "none", height: 36 }}
                   >
                     {t("displayVolume.youtube")}
@@ -1635,7 +1990,10 @@ const Home: NextPage = () => {
                   <Button
                     variant={targetLufs === -15 ? "contained" : "outlined"}
                     size="small"
-                    onClick={() => { setTargetLufs(-15); setTargetLufsCustom("-15"); }}
+                    onClick={() => {
+                      setTargetLufs(-15);
+                      setTargetLufsCustom("-15");
+                    }}
                     sx={{ textTransform: "none", height: 36 }}
                   >
                     {t("displayVolume.nicovideo")}
@@ -1660,176 +2018,226 @@ const Home: NextPage = () => {
                     inputProps={{ min: -60, max: 0, step: 0.5 }}
                   />
                 </Box>
-                <Divider sx={{ my: 3 }} />
-
-                <Typography variant="subtitle2" sx={{ mb: 1.5, fontWeight: 600 }}>
-                  {t("displayVolume.spectrumTitle")}
-                </Typography>
-                <Box sx={{ mb: 2 }}>
-                  <Typography gutterBottom>{t("displayVolume.opacity", { value: spectrumOpacityPercent })}</Typography>
-                  <Slider
-                    value={spectrumOpacityPercent}
-                    min={0}
-                    max={100}
-                    step={5}
-                    onChange={(_, v) => setSpectrumOpacityPercent(v as number)}
-                  />
-                </Box>
-                <Box sx={{ mb: 2 }}>
-                  <Typography gutterBottom>{t("displayVolume.fps", { value: spectrumFps })}</Typography>
-                  <Slider
-                    value={spectrumFps}
-                    min={1}
-                    max={60}
-                    step={1}
-                    onChange={(_, v) => setSpectrumFps(v as number)}
-                  />
-                </Box>
-                {mode === 1 && (
-                  <Box sx={{ mb: 3 }}>
-                    <Typography gutterBottom>{t("displayVolume.lineWidthWaveform", { value: lineWidthWaveform.toFixed(1) })}</Typography>
-                    <Slider
-                      value={lineWidthWaveform}
-                      min={1}
-                      max={8}
-                      step={0.1}
-                      onChange={(_, v) => setLineWidthWaveform(v as number)}
-                    />
-                  </Box>
-                )}
-                {mode === 2 && (
-                  <Box sx={{ mb: 3 }}>
-                    <Typography gutterBottom>{t("displayVolume.lineWidthCircle", { value: lineWidthCircle.toFixed(1) })}</Typography>
-                    <Slider
-                      value={lineWidthCircle}
-                      min={1}
-                      max={8}
-                      step={0.1}
-                      onChange={(_, v) => setLineWidthCircle(v as number)}
-                    />
-                  </Box>
-                )}
-                {mode === 5 && (
-                  <Box sx={{ mb: 3 }}>
-                    <Typography gutterBottom>{t("displayVolume.lineWidthSymWave", { value: lineWidthSymWave.toFixed(1) })}</Typography>
-                    <Slider
-                      value={lineWidthSymWave}
-                      min={1}
-                      max={8}
-                      step={0.1}
-                      onChange={(_, v) => setLineWidthSymWave(v as number)}
-                    />
-                  </Box>
-                )}
-                {mode === 6 && (
-                  <Box sx={{ mb: 3 }}>
-                    <Typography gutterBottom>{t("displayVolume.glycoColor")}</Typography>
-                    <FormControl size="small" fullWidth sx={{ mt: 1 }}>
-                      <InputLabel>{t("displayVolume.colorSet")}</InputLabel>
-                      <Select
-                        value={glycoColorSet}
-                        label={t("displayVolume.colorSet")}
-                        onChange={(e) => setGlycoColorSet(e.target.value)}
-                      >
-                        <MenuItem value="amber">{t("glycoColors.amber")}</MenuItem>
-                        <MenuItem value="green">{t("glycoColors.green")}</MenuItem>
-                        <MenuItem value="red">{t("glycoColors.red")}</MenuItem>
-                        <MenuItem value="blue">{t("glycoColors.blue")}</MenuItem>
-                        <MenuItem value="yellow">{t("glycoColors.yellow")}</MenuItem>
-                        <MenuItem value="white">{t("glycoColors.white")}</MenuItem>
-                        <MenuItem value="cyan">{t("glycoColors.cyan")}</MenuItem>
-                        <MenuItem value="magenta">{t("glycoColors.magenta")}</MenuItem>
-                        <MenuItem value="neonGreen">{t("glycoColors.neonGreen")}</MenuItem>
-                        <MenuItem value="neonPink">{t("glycoColors.neonPink")}</MenuItem>
-                        <MenuItem value="neonCyan">{t("glycoColors.neonCyan")}</MenuItem>
-                        <MenuItem value="rainbow">{t("glycoColors.rainbow")}</MenuItem>
-                        <MenuItem value="blueGreen">{t("glycoColors.blueGreen")}</MenuItem>
-                        <MenuItem value="redYellow">{t("glycoColors.redYellow")}</MenuItem>
-                        <MenuItem value="verticalEQ">{t("glycoColors.verticalEQ")}</MenuItem>
-                        <MenuItem value="verticalEQFixed">{t("glycoColors.verticalEQFixed")}</MenuItem>
-                      </Select>
-                    </FormControl>
-                  </Box>
-                )}
-
-                <Typography variant="subtitle2" sx={{ mb: 2, fontWeight: 600 }}>
-                  {t("displayVolume.adjustTitle")}
-                </Typography>
-                <Typography gutterBottom>{t("displayVolume.scaleX", { value: modeAdjustments.scaleX.toFixed(2) })}</Typography>
-                <Slider
-                  value={modeAdjustments.scaleX}
-                  onChange={(_, value) =>
-                    handleAdjustmentChange("scaleX", value as number)
-                  }
-                  min={0.1}
-                  max={3.0}
-                  step={0.1}
-                  marks={[
-                    { value: 0.5, label: "0.5" },
-                    { value: 1.0, label: "1.0" },
-                    { value: 2.0, label: "2.0" },
-                  ]}
-                />
-                <Typography gutterBottom sx={{ mt: 3 }}>
-                  {t("displayVolume.scaleY", { value: modeAdjustments.scaleY.toFixed(2) })}
-                </Typography>
-                <Slider
-                  value={modeAdjustments.scaleY}
-                  onChange={(_, value) =>
-                    handleAdjustmentChange("scaleY", value as number)
-                  }
-                  min={0.1}
-                  max={3.0}
-                  step={0.1}
-                  marks={[
-                    { value: 0.5, label: "0.5" },
-                    { value: 1.0, label: "1.0" },
-                    { value: 2.0, label: "2.0" },
-                  ]}
-                />
-                <Typography gutterBottom sx={{ mt: 3 }}>
-                  {t("displayVolume.offsetX", {
-                    value: modeAdjustments.offsetX.toFixed(1),
-                    px: Math.round((getCanvasDimensions(canvasSize).width * modeAdjustments.offsetX) / 100),
-                  })}
-                </Typography>
-                <Slider
-                  value={modeAdjustments.offsetX}
-                  onChange={(_, value) =>
-                    handleAdjustmentChange("offsetX", value as number)
-                  }
-                  min={-150}
-                  max={150}
-                  step={1}
-                  marks={[
-                    { value: -150, label: "-150%" },
-                    { value: 0, label: "0%" },
-                    { value: 150, label: "150%" },
-                  ]}
-                />
-                <Typography gutterBottom sx={{ mt: 3 }}>
-                  {t("displayVolume.offsetY", {
-                    value: modeAdjustments.offsetY.toFixed(1),
-                    px: Math.round((getCanvasDimensions(canvasSize).height * modeAdjustments.offsetY) / 100),
-                  })}
-                </Typography>
-                <Slider
-                  value={modeAdjustments.offsetY}
-                  onChange={(_, value) =>
-                    handleAdjustmentChange("offsetY", value as number)
-                  }
-                  min={-150}
-                  max={150}
-                  step={1}
-                  marks={[
-                    { value: -150, label: "-150%" },
-                    { value: 0, label: "0%" },
-                    { value: 150, label: "150%" },
-                  ]}
-                />
               </Box>
-            </AccordionDetails>
-          </Accordion>
+            )}
+
+            {settingsTab === 5 && (
+              <Box sx={{ width: "100%", maxWidth: 800, margin: "0 auto", py: 1 }}>
+                {isDeveloperMode && (
+                  <Box sx={{ mb: 2, p: 1, bgcolor: "background.paper", borderRadius: 1 }}>
+                    <Typography variant="body2" color="textSecondary">
+                      FPS:{" "}
+                      <strong style={{ color: fps >= 55 ? "#4caf50" : fps >= 30 ? "#ff9800" : "#f44336" }}>{fps}</strong>
+                    </Typography>
+                  </Box>
+                )}
+                <Typography variant="subtitle2" color="primary" sx={{ mb: 1 }}>
+                  {t("gpu.title")}
+                </Typography>
+                <Box sx={{ mb: 3 }}>
+                  {gpuInfo && (
+                    <Box sx={{ mb: 2, p: 2, bgcolor: "background.paper", borderRadius: 1 }}>
+                      <Typography variant="h6" gutterBottom>
+                        {t("gpu.detected")}
+                      </Typography>
+                      <Typography variant="body2" color="textSecondary" gutterBottom>
+                        {getGpuDisplayName(gpuInfo)}
+                      </Typography>
+                      <Box sx={{ mt: 1, display: "flex", gap: 1, flexWrap: "wrap" }}>
+                        <Typography
+                          variant="caption"
+                          sx={{
+                            px: 1,
+                            py: 0.5,
+                            bgcolor: gpuInfo.isWebGL2Supported ? "success.main" : "error.main",
+                            color: "white",
+                            borderRadius: 1,
+                          }}
+                        >
+                          {t("gpu.webgl2")}: {gpuInfo.isWebGL2Supported ? t("gpu.supported") : t("gpu.unsupported")}
+                        </Typography>
+                        <Typography
+                          variant="caption"
+                          sx={{
+                            px: 1,
+                            py: 0.5,
+                            bgcolor: gpuInfo.isWebGPUSupported ? "success.main" : "warning.main",
+                            color: "white",
+                            borderRadius: 1,
+                          }}
+                        >
+                          WebGPU: {gpuInfo.isWebGPUSupported ? t("gpu.supported") : t("gpu.unsupported")}
+                        </Typography>
+                        <Typography
+                          variant="caption"
+                          sx={{
+                            px: 1,
+                            py: 0.5,
+                            bgcolor: webCodecsSupported ? "success.main" : "warning.main",
+                            color: "white",
+                            borderRadius: 1,
+                          }}
+                        >
+                          WebCodecs: {webCodecsSupported ? t("gpu.supported") : t("gpu.unsupported")}
+                        </Typography>
+                        {webCodecsSupported && hardwareEncoderSupport.h264 && (
+                          <Typography
+                            variant="caption"
+                            sx={{
+                              px: 1,
+                              py: 0.5,
+                              bgcolor: "info.main",
+                              color: "white",
+                              borderRadius: 1,
+                            }}
+                          >
+                            {t("gpu.h264hw")}
+                          </Typography>
+                        )}
+                      </Box>
+                      <Typography variant="caption" color="textSecondary" sx={{ mt: 1, display: "block" }}>
+                        {t("gpu.vendor", {
+                          name:
+                            gpuInfo.vendorType === "nvidia"
+                              ? "NVIDIA"
+                              : gpuInfo.vendorType === "intel"
+                                ? "Intel"
+                                : gpuInfo.vendorType === "amd"
+                                  ? "AMD"
+                                  : gpuInfo.vendorType === "apple"
+                                    ? "Apple"
+                                    : t("gpu.vendorUnknown"),
+                        })}
+                      </Typography>
+                    </Box>
+                  )}
+                  <Typography variant="body1" gutterBottom fontWeight={500}>
+                    {t("gpu.renderEngine")}
+                  </Typography>
+                  <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 1 }}>
+                    {t("gpu.renderCaption")}
+                  </Typography>
+                  <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
+                    <Button
+                      variant={rendererType === "canvas2d" ? "contained" : "outlined"}
+                      onClick={() => {
+                        setRendererType("canvas2d");
+                        localStorage.setItem("common_rendererType", "canvas2d");
+                      }}
+                      size="small"
+                    >
+                      {t("buttons.canvas2d")}
+                    </Button>
+                    <Button
+                      variant={rendererType === "webgl" ? "contained" : "outlined"}
+                      onClick={() => {
+                        setRendererType("webgl");
+                        localStorage.setItem("common_rendererType", "webgl");
+                      }}
+                      size="small"
+                      disabled={!gpuInfo?.isWebGLSupported}
+                    >
+                      {t("buttons.webgl")}
+                    </Button>
+                  </Box>
+                </Box>
+                <Divider sx={{ my: 2 }} />
+                <Typography variant="subtitle2" color="primary" sx={{ mb: 1 }}>
+                  {t("settings.title")}
+                </Typography>
+                <Box sx={{ width: "100%", maxWidth: 600, margin: "0 auto" }}>
+                  <Typography variant="body2" gutterBottom>
+                    {t("settings.current", { mode, size: canvasSize })}
+                  </Typography>
+                  <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 2 }}>
+                    {t("settings.caption")}
+                  </Typography>
+                  <Typography variant="subtitle2" gutterBottom>
+                    {t("settings.exportImport")}
+                  </Typography>
+                  <Box sx={{ display: "flex", gap: 1, mb: 2 }}>
+                    <Button
+                      variant="outlined"
+                      size="small"
+                      onClick={() => {
+                        const json = exportAllSettings();
+                        if (json) {
+                          const blob = new Blob([json], { type: "application/json" });
+                          const url = URL.createObjectURL(blob);
+                          const a = document.createElement("a");
+                          a.href = url;
+                          a.download = `music-waves-visualizer-settings-${new Date().toISOString().slice(0, 10)}.json`;
+                          a.click();
+                          URL.revokeObjectURL(url);
+                          openSnackBar(t("snackbar.exportSuccess"));
+                        }
+                      }}
+                    >
+                      {t("buttons.export")}
+                    </Button>
+                    <input
+                      type="file"
+                      accept=".json,application/json"
+                      style={{ display: "none" }}
+                      id="import-settings-file"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          if (file.size > MAX_SETTINGS_JSON_BYTES) {
+                            openSnackBar(
+                              t("snackbar.settingsFileTooLarge", {
+                                maxMB: Math.round(MAX_SETTINGS_JSON_BYTES / 1024 / 1024),
+                              })
+                            );
+                            e.target.value = "";
+                            return;
+                          }
+                          const reader = new FileReader();
+                          reader.onload = () => {
+                            const text = reader.result as string;
+                            if (importAllSettings(text)) {
+                              const loaded = loadSettings(canvasSize, mode);
+                              setModeAdjustments(loaded ?? DEFAULT_ADJUSTMENTS);
+                              openSnackBar(t("snackbar.importSuccess"));
+                            } else {
+                              openSnackBar(t("snackbar.importFailed"));
+                            }
+                          };
+                          reader.readAsText(file);
+                        }
+                        e.target.value = "";
+                      }}
+                    />
+                    <Button variant="outlined" size="small" component="label" htmlFor="import-settings-file">
+                      {t("buttons.import")}
+                    </Button>
+                  </Box>
+                  <Typography variant="caption" color="textSecondary" sx={{ mt: 1, display: "block" }}>
+                    {t("settings.clearAllHint")}{" "}
+                    <Button
+                      size="small"
+                      color="error"
+                      onClick={() => {
+                        if (confirm(t("settings.clearConfirm"))) {
+                          clearAllSettings();
+                          setEffectType("none");
+                          setEffectDensities(defaultEffectDensities());
+                          setRainWeather(DEFAULT_RAIN_WEATHER);
+                          setSnowWeather(DEFAULT_SNOW_WEATHER);
+                          setTargetLufs(null);
+                          setTargetLufsCustom("");
+                          setModeAdjustments(DEFAULT_ADJUSTMENTS);
+                          openSnackBar(t("snackbar.allCleared"));
+                        }
+                      }}
+                    >
+                      {t("buttons.clearAll")}
+                    </Button>
+                  </Typography>
+                </Box>
+              </Box>
+            )}
+          </div>
         </div>
 
         <div className={styles.canvasWrapper}>
@@ -1883,219 +2291,6 @@ const Home: NextPage = () => {
           </div>
         </div>
       </main>
-
-      {/* GPU設定パネル */}
-      <div className={styles.developerPanel}>
-        <Accordion>
-          <AccordionSummary expandIcon={<ExpandMore />}>
-            <Typography variant="subtitle2" color="primary">
-              {t("gpu.title")}
-            </Typography>
-          </AccordionSummary>
-          <AccordionDetails>
-            <Box sx={{ width: "100%", maxWidth: 800, margin: "0 auto" }}>
-              {/* GPU情報表示 */}
-              {gpuInfo && (
-                <Box sx={{ mb: 3, p: 2, bgcolor: 'background.paper', borderRadius: 1 }}>
-                  <Typography variant="h6" gutterBottom>
-                    {t("gpu.detected")}
-                  </Typography>
-                  <Typography variant="body2" color="textSecondary" gutterBottom>
-                    {getGpuDisplayName(gpuInfo)}
-                  </Typography>
-                  <Box sx={{ mt: 1, display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                    <Typography variant="caption" sx={{
-                      px: 1,
-                      py: 0.5,
-                      bgcolor: gpuInfo.isWebGL2Supported ? 'success.main' : 'error.main',
-                      color: 'white',
-                      borderRadius: 1
-                    }}>
-                      {t("gpu.webgl2")}: {gpuInfo.isWebGL2Supported ? t("gpu.supported") : t("gpu.unsupported")}
-                    </Typography>
-                    <Typography variant="caption" sx={{
-                      px: 1,
-                      py: 0.5,
-                      bgcolor: gpuInfo.isWebGPUSupported ? 'success.main' : 'warning.main',
-                      color: 'white',
-                      borderRadius: 1
-                    }}>
-                      WebGPU: {gpuInfo.isWebGPUSupported ? t("gpu.supported") : t("gpu.unsupported")}
-                    </Typography>
-                    <Typography variant="caption" sx={{
-                      px: 1,
-                      py: 0.5,
-                      bgcolor: webCodecsSupported ? 'success.main' : 'warning.main',
-                      color: 'white',
-                      borderRadius: 1
-                    }}>
-                      WebCodecs: {webCodecsSupported ? t("gpu.supported") : t("gpu.unsupported")}
-                    </Typography>
-                    {webCodecsSupported && hardwareEncoderSupport.h264 && (
-                      <Typography variant="caption" sx={{
-                        px: 1,
-                        py: 0.5,
-                        bgcolor: 'info.main',
-                        color: 'white',
-                        borderRadius: 1
-                      }}>
-                        {t("gpu.h264hw")}
-                      </Typography>
-                    )}
-                  </Box>
-                  <Typography variant="caption" color="textSecondary" sx={{ mt: 1, display: 'block' }}>
-                    {t("gpu.vendor", {
-                    name: gpuInfo.vendorType === 'nvidia' ? 'NVIDIA' : gpuInfo.vendorType === 'intel' ? 'Intel' : gpuInfo.vendorType === 'amd' ? 'AMD' : gpuInfo.vendorType === 'apple' ? 'Apple' : t("gpu.vendorUnknown")
-                  })}
-                  </Typography>
-                </Box>
-              )}
-
-              {/* レンダラー選択 */}
-              <Box sx={{ mb: 2 }}>
-                <Typography variant="body1" gutterBottom fontWeight={500}>
-                  {t("gpu.renderEngine")}
-                </Typography>
-                <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 1 }}>
-                  {t("gpu.renderCaption")}
-                </Typography>
-                <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
-                  <Button
-                    variant={rendererType === 'canvas2d' ? 'contained' : 'outlined'}
-                    onClick={() => {
-                      setRendererType('canvas2d');
-                      localStorage.setItem("common_rendererType", "canvas2d");
-                    }}
-                    size="small"
-                  >
-                    {t("buttons.canvas2d")}
-                  </Button>
-                  <Button
-                    variant={rendererType === 'webgl' ? 'contained' : 'outlined'}
-                    onClick={() => {
-                      setRendererType('webgl');
-                      localStorage.setItem("common_rendererType", "webgl");
-                    }}
-                    size="small"
-                    disabled={!gpuInfo?.isWebGLSupported}
-                  >
-                    {t("buttons.webgl")}
-                  </Button>
-                </Box>
-              </Box>
-            </Box>
-          </AccordionDetails>
-        </Accordion>
-      </div>
-
-      {/* 設定管理（GPU設定の下） */}
-      <div className={styles.developerPanel}>
-        <Accordion>
-          <AccordionSummary expandIcon={<ExpandMore />}>
-            <Typography variant="subtitle2" color="primary">
-              {t("settings.title")}
-            </Typography>
-          </AccordionSummary>
-          <AccordionDetails>
-            <Box sx={{ width: "100%", maxWidth: 600, margin: "0 auto" }}>
-              <Typography variant="body2" gutterBottom>
-                {t("settings.current", { mode, size: canvasSize })}
-              </Typography>
-              <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 2 }}>
-                {t("settings.caption")}
-              </Typography>
-              <Divider sx={{ my: 2 }} />
-              <Typography variant="subtitle2" gutterBottom>
-                {t("settings.exportImport")}
-              </Typography>
-              <Box sx={{ display: "flex", gap: 1, mb: 2 }}>
-                <Button
-                  variant="outlined"
-                  size="small"
-                  onClick={() => {
-                    const json = exportAllSettings();
-                    if (json) {
-                      const blob = new Blob([json], { type: "application/json" });
-                      const url = URL.createObjectURL(blob);
-                      const a = document.createElement("a");
-                      a.href = url;
-                      a.download = `music-waves-visualizer-settings-${new Date().toISOString().slice(0, 10)}.json`;
-                      a.click();
-                      URL.revokeObjectURL(url);
-                      openSnackBar(t("snackbar.exportSuccess"));
-                    }
-                  }}
-                >
-                  {t("buttons.export")}
-                </Button>
-                <input
-                  type="file"
-                  accept=".json,application/json"
-                  style={{ display: "none" }}
-                  id="import-settings-file"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) {
-                      if (file.size > MAX_SETTINGS_JSON_BYTES) {
-                        openSnackBar(
-                          t("snackbar.settingsFileTooLarge", {
-                            maxMB: Math.round(
-                              MAX_SETTINGS_JSON_BYTES / 1024 / 1024
-                            ),
-                          })
-                        );
-                        e.target.value = "";
-                        return;
-                      }
-                      const reader = new FileReader();
-                      reader.onload = () => {
-                        const text = reader.result as string;
-                        if (importAllSettings(text)) {
-                          const loaded = loadSettings(canvasSize, mode);
-                          setModeAdjustments(loaded ?? DEFAULT_ADJUSTMENTS);
-                          openSnackBar(t("snackbar.importSuccess"));
-                        } else {
-                          openSnackBar(t("snackbar.importFailed"));
-                        }
-                      };
-                      reader.readAsText(file);
-                    }
-                    e.target.value = "";
-                  }}
-                />
-                <Button
-                  variant="outlined"
-                  size="small"
-                  component="label"
-                  htmlFor="import-settings-file"
-                >
-                  {t("buttons.import")}
-                </Button>
-              </Box>
-              <Typography variant="caption" color="textSecondary" sx={{ mt: 1, display: "block" }}>
-                {t("settings.clearAllHint")}{" "}
-                <Button
-                  size="small"
-                  color="error"
-                  onClick={() => {
-                    if (confirm(t("settings.clearConfirm"))) {
-                      clearAllSettings();
-                      setEffectType("none");
-                      setEffectDensities(defaultEffectDensities());
-                      setTargetLufs(null);
-                      setTargetLufsCustom("");
-                      setModeAdjustments(DEFAULT_ADJUSTMENTS);
-                      openSnackBar(t("snackbar.allCleared"));
-                    }
-                  }}
-                >
-                  {t("buttons.clearAll")}
-                </Button>
-              </Typography>
-            </Box>
-          </AccordionDetails>
-        </Accordion>
-      </div>
 
       <CustomSnackbar
         {...snackBarProps}

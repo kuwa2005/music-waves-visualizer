@@ -20,7 +20,8 @@
     "symBar": "上下対称バー",
     "dot": "ドット表示",
     "symWave": "波形（上下対称）",
-    "glyco": "グライコ風"
+    "glyco": "グライコ風",
+    "parameters": "パラメータ調整（折りたたみ）"
   },
   "resolution": {
     "title": "解像度",
@@ -39,6 +40,11 @@
     "curtain": "カーテン",
     "sparkle": "きらきら",
     "dust": "空気感",
+    "rain": "雨",
+    "snow": "雪",
+    "weatherAngle": "降り注ぐ角度: {{value}}°",
+    "weatherAmount": "量: {{value}}%",
+    "weatherColor": "色",
     "strength": "強度:",
     "weak": "弱",
     "medium": "中",
@@ -161,5 +167,16 @@
     "converting": "MP4変換中... {{progress}}%"
   },
   "beforeUnload": "このサイトを離れますか？",
-  "recordSize": "録画サイズ: {{width}}×{{height}}px"
+  "recordSize": "録画サイズ: {{width}}×{{height}}px",
+  "tabs": {
+    "spectrum": "スペクトラムアナライザー",
+    "resolution": "解像度",
+    "effects": "エフェクト",
+    "clipLength": "動画長制限",
+    "audio": "音設定",
+    "settings": "設定"
+  },
+  "audioSettings": {
+    "title": "音設定"
+  }
 }

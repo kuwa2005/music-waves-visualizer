@@ -13,13 +13,21 @@ export type EffectType =
   | "curtain"
   | "glitch"
   | "sparkle"
-  | "dust";
+  | "dust"
+  | "rain"
+  | "snow";
 
 export type EffectDensity = 1 | 2 | 3;
 
 export interface EffectParams {
   type: EffectType;
   density: EffectDensity;
+  /** 雨・雪: 鉛直からの傾き（度）。0=真下、正で右へ傾く */
+  weatherAngleDeg?: number;
+  /** 雨・雪: 量 0〜1 */
+  weatherAmount?: number;
+  /** 雨・雪: 色 #RRGGBB */
+  weatherColor?: string;
 }
 
 /** 音源連動用メトリクス（0〜1正規化） */
@@ -789,6 +797,268 @@ function drawDustCanvas(
   ctx.restore();
 }
 
+// --- 雨・雪（角度・量・色）---
+export function parseWeatherColorHex(
+  hex: string | undefined,
+  fallback: [number, number, number]
+): [number, number, number] {
+  if (!hex || typeof hex !== "string") return fallback;
+  const m = /^#?([0-9a-fA-F]{6})$/.exec(hex.trim());
+  if (!m) return fallback;
+  const h = m[1];
+  return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+}
+
+const RAIN_BASE_COUNTS: Record<EffectDensity, number> = { 1: 140, 2: 260, 3: 420 };
+const SNOW_BASE_COUNTS: Record<EffectDensity, number> = { 1: 160, 2: 300, 3: 480 };
+
+interface RainDrop {
+  x: number;
+  y: number;
+  speed: number;
+  len: number;
+}
+
+interface SnowFlake {
+  x: number;
+  y: number;
+  vy: number;
+  phase: number;
+  size: number;
+  driftSign: number;
+}
+
+let rainDrops: RainDrop[] = [];
+let lastRainInitKey = "";
+let snowFlakes: SnowFlake[] = [];
+let lastSnowInitKey = "";
+
+function initRainDrops(
+  width: number,
+  height: number,
+  density: EffectDensity,
+  amount: number,
+  angleDeg: number
+): void {
+  const n = Math.max(
+    30,
+    Math.round(RAIN_BASE_COUNTS[density] * (0.2 + 0.8 * Math.max(0.05, Math.min(1, amount))))
+  );
+  rainDrops = [];
+  const rad = (angleDeg * Math.PI) / 180;
+  const ux = Math.sin(rad);
+  const uy = Math.cos(rad);
+  const span = Math.max(width, height) + 200;
+  for (let i = 0; i < n; i++) {
+    const t = Math.random();
+    rainDrops.push({
+      x: Math.random() * width + ux * (t - 0.5) * span * 0.3,
+      y: Math.random() * height + uy * (t - 0.5) * span * 0.3,
+      speed: 0.75 + Math.random() * 0.45,
+      len: 10 + Math.random() * (16 + DENSITY_STRENGTH[density] * 10),
+    });
+  }
+}
+
+function initSnowFlakes(
+  width: number,
+  height: number,
+  density: EffectDensity,
+  amount: number
+): void {
+  const n = Math.max(
+    40,
+    Math.round(SNOW_BASE_COUNTS[density] * (0.2 + 0.8 * Math.max(0.05, Math.min(1, amount))))
+  );
+  snowFlakes = [];
+  const minDim = Math.min(width, height);
+  for (let i = 0; i < n; i++) {
+    snowFlakes.push({
+      x: Math.random() * width,
+      y: Math.random() * height,
+      vy: 18 + Math.random() * 32 + density * 8,
+      phase: Math.random() * Math.PI * 2,
+      size: Math.max(2, minDim * (0.002 + Math.random() * 0.004)),
+      driftSign: Math.random() < 0.5 ? -1 : 1,
+    });
+  }
+}
+
+export type RainStreakGl = {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  lw: number;
+  r: number;
+  g: number;
+  b: number;
+  a: number;
+};
+
+/** Canvas / WebGL 共用: 雨の線分リスト */
+export function updateAndGetRainStreaks(
+  width: number,
+  height: number,
+  density: EffectDensity,
+  deltaTime: number,
+  audio: AudioReactiveData | undefined,
+  angleDeg: number,
+  amount: number,
+  hexColor: string | undefined
+): RainStreakGl[] {
+  const [r0, g0, b0] = parseWeatherColorHex(hexColor, [110, 160, 255]);
+  const amt = Math.max(0.05, Math.min(1, amount));
+  const key = `rain|${width}|${height}|${density}|${angleDeg.toFixed(1)}|${amt.toFixed(2)}|${r0}|${g0}|${b0}`;
+  if (key !== lastRainInitKey) {
+    initRainDrops(width, height, density, amt, angleDeg);
+    lastRainInitKey = key;
+  }
+  const rad = (angleDeg * Math.PI) / 180;
+  const ux = Math.sin(rad);
+  const uy = Math.cos(rad);
+  const a = audio ?? SILENT_AUDIO_REACTIVE;
+  const flow = 0.85 + 0.2 * a.volume;
+  const baseSpeed = (520 + DENSITY_STRENGTH[density] * 220) * flow;
+  const dt = Math.min(deltaTime, 50) / 1000;
+  const minDim = Math.min(width, height);
+  const lw = Math.max(1.0, minDim * 0.0018);
+  const margin = 80;
+  const out: RainStreakGl[] = [];
+
+  for (const p of rainDrops) {
+    const sp = p.speed * baseSpeed;
+    p.x += ux * sp * dt;
+    p.y += uy * sp * dt;
+    if (p.x < -margin || p.x > width + margin || p.y < -margin || p.y > height + margin) {
+      p.x = Math.random() * (width + margin) - margin * 0.5;
+      p.y = -margin - Math.random() * height * 0.4;
+    }
+    const x2 = p.x;
+    const y2 = p.y;
+    const x1 = x2 - ux * p.len;
+    const y1 = y2 - uy * p.len;
+    const alpha = 0.35 + 0.25 * DENSITY_STRENGTH[density];
+    out.push({ x1, y1, x2, y2, lw, r: r0, g: g0, b: b0, a: alpha });
+  }
+  return out;
+}
+
+export type SnowParticleGl = {
+  x: number;
+  y: number;
+  radius: number;
+  r: number;
+  g: number;
+  b: number;
+  alpha: number;
+};
+
+/** Canvas / WebGL 共用: 雪の粒子 */
+export function updateAndGetSnowParticles(
+  width: number,
+  height: number,
+  density: EffectDensity,
+  deltaTime: number,
+  audio: AudioReactiveData | undefined,
+  angleDeg: number,
+  amount: number,
+  hexColor: string | undefined
+): SnowParticleGl[] {
+  const [r0, g0, b0] = parseWeatherColorHex(hexColor, [250, 252, 255]);
+  const amt = Math.max(0.05, Math.min(1, amount));
+  const key = `snow|${width}|${height}|${density}|${angleDeg.toFixed(1)}|${amt.toFixed(2)}|${r0}|${g0}|${b0}`;
+  if (key !== lastSnowInitKey) {
+    initSnowFlakes(width, height, density, amt);
+    lastSnowInitKey = key;
+  }
+  const rad = ((angleDeg * Math.PI) / 180) * 0.35;
+  const ux = Math.sin(rad);
+  const uy = Math.cos(rad);
+  const a = audio ?? SILENT_AUDIO_REACTIVE;
+  const sway = 0.45 + 0.35 * a.volume;
+  const dt = Math.min(deltaTime, 50) / 1000;
+  const margin = 60;
+  const out: SnowParticleGl[] = [];
+  const strength = DENSITY_STRENGTH[density];
+
+  for (const p of snowFlakes) {
+    p.phase += dt * (1.2 + strength);
+    const flutter = Math.sin(p.phase) * 28 * sway * p.driftSign;
+    p.x += (ux * p.vy * 0.35 + flutter) * dt;
+    p.y += uy * p.vy * dt * (0.95 + 0.05 * strength);
+
+    if (p.y > height + margin) {
+      p.y = -margin - Math.random() * 40;
+      p.x = Math.random() * width;
+    }
+    if (p.x < -margin) p.x = width + margin;
+    if (p.x > width + margin) p.x = -margin;
+
+    const flicker = 0.55 + 0.45 * Math.sin(p.phase * 0.8);
+    const alpha = Math.min(1, (0.22 + 0.2 * strength) * flicker * (0.7 + 0.3 * amt));
+    out.push({
+      x: p.x,
+      y: p.y,
+      radius: p.size,
+      r: r0,
+      g: g0,
+      b: b0,
+      alpha,
+    });
+  }
+  return out;
+}
+
+function drawRainCanvas(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  density: EffectDensity,
+  deltaTime: number,
+  audio: AudioReactiveData,
+  effect: EffectParams
+): void {
+  const angle = effect.weatherAngleDeg ?? 18;
+  const amount = effect.weatherAmount ?? 0.65;
+  const streaks = updateAndGetRainStreaks(width, height, density, deltaTime, audio, angle, amount, effect.weatherColor);
+  ctx.save();
+  ctx.lineCap = "round";
+  for (const s of streaks) {
+    ctx.strokeStyle = `rgba(${s.r},${s.g},${s.b},${s.a})`;
+    ctx.lineWidth = s.lw;
+    ctx.beginPath();
+    ctx.moveTo(s.x1, s.y1);
+    ctx.lineTo(s.x2, s.y2);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawSnowCanvas(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  density: EffectDensity,
+  deltaTime: number,
+  audio: AudioReactiveData,
+  effect: EffectParams
+): void {
+  const angle = effect.weatherAngleDeg ?? 8;
+  const amount = effect.weatherAmount ?? 0.55;
+  const list = updateAndGetSnowParticles(width, height, density, deltaTime, audio, angle, amount, effect.weatherColor);
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  for (const p of list) {
+    const rad = Math.max(1.2, p.radius);
+    ctx.fillStyle = `rgba(${p.r},${p.g},${p.b},${p.alpha})`;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, rad, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
 // --- グリッチ（高域・音量で発生頻度・強度が変化）---
 let glitchPhase = 0;
 function drawGlitchCanvas(
@@ -868,6 +1138,12 @@ export function drawEffectOverlayCanvas(
         break;
       case "dust":
         drawDustCanvas(ctx, width, height, effect.density, overlayDelta, a);
+        break;
+      case "rain":
+        drawRainCanvas(ctx, width, height, effect.density, overlayDelta, a, effect);
+        break;
+      case "snow":
+        drawSnowCanvas(ctx, width, height, effect.density, overlayDelta, a, effect);
         break;
       default:
         break;

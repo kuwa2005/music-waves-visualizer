@@ -9,6 +9,8 @@ import {
   updateAndGetSpaceParticles,
   updateAndGetSparkleParticles,
   updateAndGetDustParticles,
+  updateAndGetRainStreaks,
+  updateAndGetSnowParticles,
   type EffectParams,
   type EffectType,
   type AudioReactiveData,
@@ -25,6 +27,8 @@ const EFFECT_TYPE_TO_GL: Record<EffectType, number> = {
   spaceAudio: 0,
   sparkle: 0,
   dust: 0,
+  rain: 0,
+  snow: 0,
   filmGrain: 1,
   vignette: 2,
   rainbow: 3,
@@ -1029,6 +1033,8 @@ function renderFrame(): void {
         "glitch",
         "sparkle",
         "dust",
+        "rain",
+        "snow",
       ].includes(latestEffect.type);
     if (needsFreqForEffect) {
       analyser.getByteFrequencyData(freqForEffect);
@@ -1202,6 +1208,63 @@ function renderFrame(): void {
             p.alpha
           );
         }
+      }
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    } else if (latestEffect.type === "rain") {
+      const now = performance.now();
+      const deltaTime = Math.min(now - lastEffectTime, 50);
+      lastEffectTime = now;
+      const streaks = updateAndGetRainStreaks(
+        canvasWidth,
+        canvasHeight,
+        latestEffect.density,
+        deltaTime,
+        audioRForEffects,
+        latestEffect.weatherAngleDeg ?? 18,
+        latestEffect.weatherAmount ?? 0.65,
+        latestEffect.weatherColor
+      );
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+      for (const s of streaks) {
+        drawLine(
+          glContext,
+          s.x1,
+          s.y1,
+          s.x2,
+          s.y2,
+          s.r / 255,
+          s.g / 255,
+          s.b / 255,
+          s.a,
+          s.lw
+        );
+      }
+    } else if (latestEffect.type === "snow") {
+      const now = performance.now();
+      const deltaTime = Math.min(now - lastEffectTime, 50);
+      lastEffectTime = now;
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+      const parts = updateAndGetSnowParticles(
+        canvasWidth,
+        canvasHeight,
+        latestEffect.density,
+        deltaTime,
+        audioRForEffects,
+        latestEffect.weatherAngleDeg ?? 8,
+        latestEffect.weatherAmount ?? 0.55,
+        latestEffect.weatherColor
+      );
+      for (const p of parts) {
+        drawCircle(
+          glContext,
+          p.x,
+          p.y,
+          Math.max(1.2, p.radius),
+          p.r / 255,
+          p.g / 255,
+          p.b / 255,
+          p.alpha
+        );
       }
       gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     } else {

@@ -20,7 +20,8 @@
     "symBar": "Symmetric Bars",
     "dot": "Dots",
     "symWave": "Waveform (Symmetric)",
-    "glyco": "Glyco Style"
+    "glyco": "Glyco Style",
+    "parameters": "Parameter adjustments (collapsed)"
   },
   "resolution": {
     "title": "Resolution",
@@ -39,6 +40,11 @@
     "curtain": "Curtain",
     "sparkle": "Sparkle",
     "dust": "Atmosphere",
+    "rain": "Rain",
+    "snow": "Snow",
+    "weatherAngle": "Fall angle: {{value}}°",
+    "weatherAmount": "Amount: {{value}}%",
+    "weatherColor": "Color",
     "strength": "Strength:",
     "weak": "Weak",
     "medium": "Medium",
@@ -161,5 +167,16 @@
     "converting": "Converting to MP4... {{progress}}%"
   },
   "beforeUnload": "Leave this site?",
-  "recordSize": "Record size: {{width}}×{{height}}px"
+  "recordSize": "Record size: {{width}}×{{height}}px",
+  "tabs": {
+    "spectrum": "Spectrum Analyzer",
+    "resolution": "Resolution",
+    "effects": "Effects",
+    "clipLength": "Clip Length",
+    "audio": "Audio",
+    "settings": "Settings"
+  },
+  "audioSettings": {
+    "title": "Audio Settings"
+  }
 }
