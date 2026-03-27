@@ -25,6 +25,8 @@
   },
   "resolution": {
     "title": "Resolution",
+    "auto": "Auto",
+    "autoHint": "Auto detects 16:9 / 9:16 / 1:1 from the loaded image aspect ratio. To edit per-layout settings, switch to a manual layout.",
     "landscape": "Landscape 1920×1080 (16:9)",
     "portrait": "Portrait 1080×1920 (9:16)",
     "square": "Square 1920×1920 (1:1)"

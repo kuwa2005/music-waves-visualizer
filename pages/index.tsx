@@ -271,7 +271,8 @@ const Home: NextPage = () => {
   const [mode, setMode] = useState<number>(0);
 
   // Canvas Size（セッション用、エクスポート対象外）
-  type CanvasSize = "1920x1080" | "1080x1920" | "1920x1920";
+  type CanvasLayout = "1920x1080" | "1080x1920" | "1920x1920";
+  type CanvasSize = CanvasLayout | "auto";
   const [canvasSize, setCanvasSize] = useState<CanvasSize>("1920x1080");
   
   // Mode adjustment parameters
@@ -395,21 +396,51 @@ const Home: NextPage = () => {
     localStorage.setItem("common_snowWeather", JSON.stringify(snowWeather));
   }, [snowWeather]);
 
+  const detectCanvasLayoutFromImage = useCallback((image: HTMLImageElement | null): CanvasLayout => {
+    if (!image || !(image.naturalWidth > 0) || !(image.naturalHeight > 0)) return "1920x1080";
+    const ratio = image.naturalWidth / image.naturalHeight;
+    const candidates: Array<{ layout: CanvasLayout; ratio: number }> = [
+      { layout: "1920x1080", ratio: 16 / 9 },
+      { layout: "1080x1920", ratio: 9 / 16 },
+      { layout: "1920x1920", ratio: 1 },
+    ];
+    let best = candidates[0];
+    let bestDiff = Math.abs(ratio - best.ratio);
+    candidates.slice(1).forEach((c) => {
+      const d = Math.abs(ratio - c.ratio);
+      if (d < bestDiff) {
+        best = c;
+        bestDiff = d;
+      }
+    });
+    return best.layout;
+  }, []);
+
+  const resolveCanvasLayout = useCallback(
+    (size: CanvasSize, image: HTMLImageElement | null): CanvasLayout => {
+      if (size === "auto") return detectCanvasLayoutFromImage(image);
+      return size;
+    },
+    [detectCanvasLayoutFromImage]
+  );
+
   // セッション用: モード・解像度（エクスポート対象外）
   useEffect(() => {
     if (typeof window === "undefined") return;
     localStorage.setItem("session_mode", String(mode));
-    localStorage.setItem("session_canvasSize", canvasSize);
+    if (canvasSize !== "auto") {
+      localStorage.setItem("session_canvasSize", canvasSize);
+    }
   }, [mode, canvasSize]);
 
   // レイアウト別スペアナ設定のキー（縦/横/正方形 × モード）
-  const LAYOUTS: CanvasSize[] = ["1920x1080", "1080x1920", "1920x1920"];
-  const getSettingsKey = (layout: CanvasSize, m: number) => {
+  const LAYOUTS: CanvasLayout[] = ["1920x1080", "1080x1920", "1920x1920"];
+  const getSettingsKey = (layout: CanvasLayout, m: number) => {
     return `spectrumSettings_${layout}_${m}`;
   };
 
   // レイアウト×モードの設定を保存
-  const saveSettings = (layout: CanvasSize, m: number, adjustments: ModeAdjustments) => {
+  const saveSettings = (layout: CanvasLayout, m: number, adjustments: ModeAdjustments) => {
     try {
       const key = getSettingsKey(layout, m);
       localStorage.setItem(key, JSON.stringify(adjustments));
@@ -419,7 +450,7 @@ const Home: NextPage = () => {
   };
 
   // レイアウト×モードの設定を読み込み
-  const loadSettings = (layout: CanvasSize, m: number): ModeAdjustments | null => {
+  const loadSettings = (layout: CanvasLayout, m: number): ModeAdjustments | null => {
     try {
       const key = getSettingsKey(layout, m);
       const saved = localStorage.getItem(key);
@@ -623,21 +654,21 @@ const Home: NextPage = () => {
             if (parts.length === 2) {
               const a = parts[0];
               const b = parts[1];
-              const aIsLayout = LAYOUTS.includes(a as CanvasSize);
-              const bIsLayout = LAYOUTS.includes(b as CanvasSize);
+              const aIsLayout = LAYOUTS.includes(a as CanvasLayout);
+              const bIsLayout = LAYOUTS.includes(b as CanvasLayout);
               const aIsMode = /^\d+$/.test(a);
               const bIsMode = /^\d+$/.test(b);
               if (aIsMode && bIsLayout) {
-                saveSettings(b as CanvasSize, parseInt(a, 10), val);
+                saveSettings(b as CanvasLayout, parseInt(a, 10), val);
               } else if (aIsLayout && bIsMode) {
-                saveSettings(a as CanvasSize, parseInt(b, 10), val);
+                saveSettings(a as CanvasLayout, parseInt(b, 10), val);
               }
             }
           }
         }
       });
 
-      const loaded = loadSettings(canvasSize, mode);
+      const loaded = loadSettings(activeCanvasLayout, mode);
       setModeAdjustments(loaded ?? DEFAULT_ADJUSTMENTS);
       return true;
     } catch (error) {
@@ -653,7 +684,7 @@ const Home: NextPage = () => {
         [key]: value,
       };
       // 設定を自動保存
-      saveSettings(canvasSize, mode, newAdjustments);
+      saveSettings(activeCanvasLayout, mode, newAdjustments);
       return newAdjustments;
     });
   };
@@ -668,21 +699,22 @@ const Home: NextPage = () => {
 
   const onChangeMode = (event: SelectChangeEvent<string>) => {
     const newMode = Number(event.target.value);
-    saveSettings(canvasSize, mode, modeAdjustments);
+    saveSettings(activeCanvasLayout, mode, modeAdjustments);
     setMode(newMode);
-    const loaded = loadSettings(canvasSize, newMode);
+    const loaded = loadSettings(activeCanvasLayout, newMode);
     if (loaded) setModeAdjustments(loaded);
   };
 
   const onChangeCanvasSize = (event: SelectChangeEvent<string>) => {
     const newSize = event.target.value as CanvasSize;
-    saveSettings(canvasSize, mode, modeAdjustments);
+    saveSettings(activeCanvasLayout, mode, modeAdjustments);
     setCanvasSize(newSize);
-    const loaded = loadSettings(newSize, mode);
-    if (loaded) setModeAdjustments(loaded);
+    const newLayout = resolveCanvasLayout(newSize, imageCtx);
+    const loaded = loadSettings(newLayout, mode);
+    setModeAdjustments(loaded ?? DEFAULT_ADJUSTMENTS);
   };
 
-  const getCanvasDimensions = (size: CanvasSize): { width: number; height: number } => {
+  const getCanvasDimensions = (size: CanvasLayout): { width: number; height: number } => {
     switch (size) {
       case "1920x1080":
         return { width: 1920, height: 1080 };
@@ -699,6 +731,10 @@ const Home: NextPage = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   // Canvas用ImageContext
   const [imageCtx, setImageCtx] = useState<HTMLImageElement>(null);
+  const activeCanvasLayout = useMemo(
+    () => resolveCanvasLayout(canvasSize, imageCtx),
+    [canvasSize, imageCtx, resolveCanvasLayout]
+  );
 
   // マウント後にlocalStorageから設定を読み込み（ハイドレーション一致のためクライアントのみ）
   useEffect(() => {
@@ -797,7 +833,7 @@ const Home: NextPage = () => {
       }
     } catch (_e) { /* ignore */ }
 
-    const adj = loadSettings(sizeVal as CanvasSize, modeVal);
+    const adj = loadSettings(sizeVal as CanvasLayout, modeVal);
     if (adj) setModeAdjustments(adj);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -834,14 +870,14 @@ const Home: NextPage = () => {
       return;
     }
 
-    const dimensions = getCanvasDimensions(canvasSize);
+    const dimensions = getCanvasDimensions(activeCanvasLayout);
     canvasRef.current.width = dimensions.width;
     canvasRef.current.height = dimensions.height;
 
     // キャンバスサイズ変更時に画像キャッシュをクリア（両方のレンダラー）
     clearImageCache();
     clearWebGLImageCache();
-  }, [canvasSize, rendererType]);
+  }, [activeCanvasLayout, rendererType]);
 
   // Canvas Animation
   useEffect(() => {
@@ -895,7 +931,7 @@ const Home: NextPage = () => {
       stopWebGLAnimation();
     };
   }, [
-    canvasSize,
+    activeCanvasLayout,
     imageCtx,
     mode,
     modeAdjustments,
@@ -937,6 +973,11 @@ const Home: NextPage = () => {
       }
       setImageCtx(image);
       setImageFileName(file.name);
+      if (canvasSize === "auto") {
+        const detectedLayout = resolveCanvasLayout("auto", image);
+        const loaded = loadSettings(detectedLayout, mode);
+        setModeAdjustments(loaded ?? DEFAULT_ADJUSTMENTS);
+      }
       exitConfirmRef.current = true;
       openSnackBar(t("snackbar.imageLoaded"));
     };
@@ -1711,7 +1752,7 @@ const Home: NextPage = () => {
                     <Typography gutterBottom sx={{ mt: 3 }}>
                       {t("displayVolume.offsetX", {
                         value: modeAdjustments.offsetX.toFixed(1),
-                        px: Math.round((getCanvasDimensions(canvasSize).width * modeAdjustments.offsetX) / 100),
+                        px: Math.round((getCanvasDimensions(activeCanvasLayout).width * modeAdjustments.offsetX) / 100),
                       })}
                     </Typography>
                     <Slider
@@ -1729,7 +1770,7 @@ const Home: NextPage = () => {
                     <Typography gutterBottom sx={{ mt: 3 }}>
                       {t("displayVolume.offsetY", {
                         value: modeAdjustments.offsetY.toFixed(1),
-                        px: Math.round((getCanvasDimensions(canvasSize).height * modeAdjustments.offsetY) / 100),
+                        px: Math.round((getCanvasDimensions(activeCanvasLayout).height * modeAdjustments.offsetY) / 100),
                       })}
                     </Typography>
                     <Slider
@@ -2131,6 +2172,13 @@ const Home: NextPage = () => {
                 </Typography>
                 <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap", mb: 3 }}>
                   <Button
+                    variant={canvasSize === "auto" ? "contained" : "outlined"}
+                    onClick={() => onChangeCanvasSize({ target: { value: "auto" } } as SelectChangeEvent<string>)}
+                    size="small"
+                  >
+                    {t("resolution.auto")}
+                  </Button>
+                  <Button
                     variant={canvasSize === "1920x1080" ? "contained" : "outlined"}
                     onClick={() => onChangeCanvasSize({ target: { value: "1920x1080" } } as SelectChangeEvent<string>)}
                     size="small"
@@ -2152,6 +2200,11 @@ const Home: NextPage = () => {
                     {t("resolution.square")}
                   </Button>
                 </Box>
+                {canvasSize === "auto" && (
+                  <Typography variant="caption" color="textSecondary" sx={{ display: "block", mb: 2 }}>
+                    {t("resolution.autoHint")}
+                  </Typography>
+                )}
                 <Divider sx={{ my: 2 }} />
                 {isDeveloperMode && (
                   <Box sx={{ mb: 2, p: 1, bgcolor: "background.paper", borderRadius: 1 }}>
@@ -2277,7 +2330,7 @@ const Home: NextPage = () => {
                 </Typography>
                 <Box sx={{ width: "100%", maxWidth: 600, margin: "0 auto" }}>
                   <Typography variant="body2" gutterBottom>
-                    {t("settings.current", { mode, size: canvasSize })}
+                    {t("settings.current", { mode, size: canvasSize === "auto" ? t("resolution.auto") : activeCanvasLayout })}
                   </Typography>
                   <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 2 }}>
                     {t("settings.caption")}
@@ -2326,7 +2379,7 @@ const Home: NextPage = () => {
                           reader.onload = () => {
                             const text = reader.result as string;
                             if (importAllSettings(text)) {
-                              const loaded = loadSettings(canvasSize, mode);
+                              const loaded = loadSettings(activeCanvasLayout, mode);
                               setModeAdjustments(loaded ?? DEFAULT_ADJUSTMENTS);
                               openSnackBar(t("snackbar.importSuccess"));
                             } else {
@@ -2375,7 +2428,7 @@ const Home: NextPage = () => {
             key={rendererType}
             className={styles.canvas}
             ref={canvasRef}
-            data-size={canvasSize}
+            data-size={activeCanvasLayout}
           ></canvas>
 
           <div className={styles.menu__right}>
@@ -2414,8 +2467,8 @@ const Home: NextPage = () => {
           <div className={styles.canvasInfo}>
             <Typography variant="caption" color="textSecondary">
               {t("recordSize", {
-              width: getCanvasDimensions(canvasSize).width,
-              height: getCanvasDimensions(canvasSize).height,
+              width: getCanvasDimensions(activeCanvasLayout).width,
+              height: getCanvasDimensions(activeCanvasLayout).height,
             })}
             </Typography>
           </div>
