@@ -9,8 +9,8 @@ Music Waves Visualizer is a web application that creates audio waveform videos b
 - **Image loading**: Background image (drag & drop supported)
 - **Audio loading**: Waveform analysis source (MP4 supported)
 - **Real-time waveform**: Seven internal modes; **five plus OFF** are exposed in the UI (modes 1 and 5 hidden)
-- **Resolution**: 1920×1080, 1080×1920, 1920×1920
-- **Display adjustment**: Scale and position per mode
+- **Resolution**: Manual (1920×1080, 1080×1920, 1920×1920) + **Auto** (detect from loaded image aspect ratio and map to 16:9 / 9:16 / 1:1)
+- **Display adjustment**: Scale and position per mode (saved per resolved layout)
 - **Clip length limit (short platforms)**: Preview/recording can be limited to a time window with presets: **YouTube (60s)**, **TikTok (60s)**, **NicoNico (300s)**.
 - **Preview**: Real-time waveform while playing
 - **Video generation**: Record and output as MP4
@@ -44,14 +44,21 @@ https://music-waves-visualizer.vercel.app/
 
 ## 4. Effects
 
-- **Space** (3 types): Warp-style stardust
+- **Space**: Warp-style stardust (type 1/2/3 selectable in the effect parameter panel)
 - **Vignette**: Darken edges
 - **Rainbow**: Hue-shifting overlay
 - **Curtain**: Flowing curtain
 - **Sparkle** (きらきら): White +/X/* star shapes with twinkle; **no radial glow** (Canvas 2D and WebGL both draw star strokes + core only)
 - **Dust** (空気感 / atmosphere): Low-contrast drifting particles; Canvas uses solid circles + `lighter` blend; WebGL uses additive circles (no large soft bloom)
+- **Rain / Snow**: Weather-style particles with adjustable angle, amount, and color
 
 Effects are shown during preview/recording only. Strength: weak / medium / strong per effect.
+
+## 4. Settings UI
+
+- Tab order: **Spectrum Analyzer / Effects / Audio / Clip Length / Settings**
+- Spectrum and effect adjustment sections are collapsible (default collapsed)
+- Resolution controls are located in **Settings** tab
 
 ## 5. Settings Export/Import
 

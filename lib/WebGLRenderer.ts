@@ -450,8 +450,8 @@ function drawBackgroundWebGL(
   }
 
   // 画像のサイズ計算（アスペクト比維持、隙間なしで最大表示＝cover）
-  const rawWidth = image.width;
-  const rawHeight = image.height;
+  const rawWidth = image.naturalWidth || image.width || 1;
+  const rawHeight = image.naturalHeight || image.height || 1;
   const scale = Math.max(canvasWidth / rawWidth, canvasHeight / rawHeight);
   const imageCtxWidth = Math.round(rawWidth * scale);
   const imageCtxHeight = Math.round(rawHeight * scale);
@@ -529,7 +529,7 @@ function prepareImageTexture(
 
   debugLog('Creating new texture', {
     canvasSize: `${canvasWidth}x${canvasHeight}`,
-    imageSize: `${image.width}x${image.height}`
+    imageSize: `${image.naturalWidth || image.width || 0}x${image.naturalHeight || image.height || 0}`
   });
 
   // オフスクリーンcanvasに画像を描画
@@ -543,8 +543,8 @@ function prepareImageTexture(
     tempCtx.fillRect(0, 0, canvasWidth, canvasHeight);
 
     // 画像のサイズ計算（アスペクト比を保ちながらcanvasに収める）
-    const rawWidth = image.width;
-    const rawHeight = image.height;
+    const rawWidth = image.naturalWidth || image.width || 1;
+    const rawHeight = image.naturalHeight || image.height || 1;
     // アスペクト比維持、隙間なしで最大表示（cover）
     const scale = Math.max(canvasWidth / rawWidth, canvasHeight / rawHeight);
     const imageCtxWidth = Math.round(rawWidth * scale);

@@ -4,6 +4,16 @@
 
 ### Added
 - **Clip length limit (short platforms)**: Added a **clip window** for preview/recording with presets for **YouTube (60s)**, **TikTok (60s)**, **NicoNico (300s)**. Playback starts at the specified start position and ends after the specified duration.
+- **Resolution auto mode**: Added `Auto` under Settings > Resolution. It detects loaded image aspect ratio and maps to **16:9 / 9:16 / 1:1**.
+
+### Changed
+- **Settings tab order**: Reordered to **Spectrum Analyzer / Effects / Audio / Clip Length / Settings**.
+- **Effects UI**: Unified Space 1/2/3 into a single **Space** entry; type selection moved into the effect parameter panel.
+- **Effects parameters**: Effect parameter section is now collapsible (default collapsed), matching spectrum parameters.
+- **Color input UI**: Replaced native color picker with **16-color palette + #RRGGBB text input** (with validation) for weather colors.
+
+### Fixed
+- **Auto-orientation initial render**: Fixed issue where image aspect ratio could appear incorrect immediately after load in auto orientation mode (correct after preview). Background draw now uses intrinsic image size (`naturalWidth`/`naturalHeight`) in both Canvas 2D and WebGL paths.
 
 ### Removed
 - **Google Analytics**: removed `lib/Gtag.tsx`, `lib/gaId.ts`, app integration, and `@types/gtag.js`. No client-side analytics or tracking cookies in this fork.

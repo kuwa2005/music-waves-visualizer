@@ -102,7 +102,9 @@ let imageCache: ImageCache | null = null;
 
 // 画像のハッシュを生成（簡易版）
 function getImageHash(image: HTMLImageElement, canvasWidth: number, canvasHeight: number): string {
-  return `${image.src}-${image.width}-${image.height}-${canvasWidth}-${canvasHeight}`;
+  const w = image.naturalWidth || image.width || 0;
+  const h = image.naturalHeight || image.height || 0;
+  return `${image.src}-${w}-${h}-${canvasWidth}-${canvasHeight}`;
 }
 
 // キャッシュをクリア（キャンバスサイズ変更時などに使用）
@@ -144,8 +146,8 @@ function drawImageToOffscreen(
   offscreenCtx.fillRect(0, 0, canvasWidth, canvasHeight);
 
   // 画像のサイズ計算（アスペクト比維持、隙間なしで最大表示＝cover）
-  const rawWidth = image.width;
-  const rawHeight = image.height;
+  const rawWidth = image.naturalWidth || image.width || 1;
+  const rawHeight = image.naturalHeight || image.height || 1;
   const scale = Math.max(canvasWidth / rawWidth, canvasHeight / rawHeight);
   const imageCtxWidth = Math.round(rawWidth * scale);
   const imageCtxHeight = Math.round(rawHeight * scale);

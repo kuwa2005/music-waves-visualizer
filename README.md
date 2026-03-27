@@ -19,10 +19,11 @@ https://lil.la/visualizer/
 - **File loading**: Drag & drop or button to load image and audio files
 - **Auto image scaling**: Loaded images are scaled to recommended resolution (1920×1080, etc.) with aspect ratio preserved
 - **Spectrum analyzer**: OFF plus **5 selectable styles** in the UI (frequency bars, circle, symmetric bars, dots, glyco). *Line (mode 1) and symmetric waveform (mode 5) remain in the engine but are hidden from the toolbar; old saved sessions using those modes fall back to frequency bars.*
-- **3 resolutions**: 1920×1080, 1080×1920, 1920×1920
+- **Resolution mode**: Manual (1920×1080 / 1080×1920 / 1920×1920) and **Auto** (detect from loaded image aspect ratio as 16:9 / 9:16 / 1:1)
 - **Clip length limit (short platforms)**: For preview/recording you can limit playback to a window with presets: **YouTube (60s)**, **TikTok (60s)**, **NicoNico (300s)**. Playback starts at the specified start position and ends after the specified duration.
+- **Settings tabs**: Spectrum Analyzer / Effects / Audio / Clip Length / Settings
 - **Display & volume settings**: Scale/position adjustment (saved per layout), target LUFS (YouTube -14, NicoNico -15, custom)
-- **Effects**: Space (3 types), vignette, rainbow, curtain, sparkle (きらきら), dust (atmosphere). Shown during preview/recording only. Per-effect strength (weak/medium/strong). Sparkle/dust use compact rendering (no large radial glow halos)
+- **Effects**: Space (select type 1/2/3 in parameter panel), vignette, rainbow, curtain, sparkle (きらきら), dust (atmosphere), rain, snow. Shown during preview/recording only. Per-effect strength (weak/medium/strong). Sparkle/dust use compact rendering (no large radial glow halos)
 - **Preview**: Real-time waveform display while playing music
 - **Video generation**: MP4 output
 - **Settings management**: Export all settings, import with overwrite of existing keys only
@@ -73,9 +74,9 @@ npm run build:html
 
 1. **Load files**: Drag & drop or use buttons to select image and audio
 2. **Select spectrum analyzer**: Choose from the visible modes (OFF + five styles)
-3. **Select resolution**: Choose from 3 resolutions
-4. **Display & volume (optional)**: Scale, position, target LUFS
-5. **Effects (optional)**: Space, vignette, rainbow, curtain, sparkle, dust
+3. **Settings > Resolution**: Use Auto or manual 3 layouts
+4. **Audio (optional)**: Configure target LUFS
+5. **Effects (optional)**: Select effect and adjust parameters (collapsible panel)
 6. **Preview**: Play music and view waveform
 7. **Generate video**: Output MP4 (do not switch windows during generation)
 8. **Clear**: Reset to initial state
@@ -124,9 +125,10 @@ MIT License. See [LICENSE](./LICENSE). Dependencies: [NOTICE](./NOTICE).
 - **ファイル読み込み**: ドラッグ&ドロップまたはボタンから画像・音楽ファイルを読み込み
 - **画像の自動スケーリング**: 読み込んだ画像を推奨解像度に自動拡大・縮小
 - **スペクトラムアナライザー**: UI では OFF＋5種（周波数バー・円形・上下対称バー・ドット・グライコ風）。折れ線(1)・波形上下対称(5)は描画ロジックのみ残しボタン非表示。旧保存で1/5のときは周波数バーにフォールバック
-- **3つの解像度**: 1920×1080、1080×1920、1920×1920
+- **解像度モード**: 手動3種（1920×1080、1080×1920、1920×1920）＋**自動**（画像比率から16:9/9:16/1:1を判定）
 - **表示・音量設定**: 倍率・位置の調整、目標LUFS（YouTube -14、ニコニコ -15、任意値）
-- **エフェクト**: 宇宙空間（3種）、ビネット、レインボー、カーテン、きらきら、空気感（ほこり）
+- **設定タブ**: スペアナ / エフェクト / 音設定 / 動画長 / 設定
+- **エフェクト**: 宇宙空間（タイプ1/2/3はパラメータで選択）、ビネット、レインボー、カーテン、きらきら、空気感（ほこり）、雨、雪
 - **プレビュー・動画生成・設定管理・クリア**
 - **バイリンガルUI**: ブラウザ言語に応じて日本語/英語を自動切り替え
 
