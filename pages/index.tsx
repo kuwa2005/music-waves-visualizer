@@ -55,6 +55,7 @@ import {
 
 type ShortOutputPreset = "all" | "tiktok" | "youtube" | "niconico";
 type ResolvedClip = { full: true } | { full: false; start: number; duration: number };
+const MODE_COOKIE_KEY = "mwv_mode";
 const BASIC_COLOR_PALETTE_16 = [
   "#000000",
   "#ffffff",
@@ -82,6 +83,19 @@ function normalizeHexColorInput(input: string): string {
 
 function isHexColorCode(value: string): boolean {
   return /^#[0-9A-F]{6}$/.test(value);
+}
+
+function getCookieValue(name: string): string | null {
+  if (typeof document === "undefined") return null;
+  const parts = document.cookie.split("; ").map((v) => v.trim());
+  const hit = parts.find((v) => v.startsWith(`${name}=`));
+  if (!hit) return null;
+  return decodeURIComponent(hit.slice(name.length + 1));
+}
+
+function setCookieValue(name: string, value: string, maxAgeSec: number): void {
+  if (typeof document === "undefined") return;
+  document.cookie = `${name}=${encodeURIComponent(value)}; path=/; max-age=${maxAgeSec}; samesite=lax`;
 }
 
 function getShortPlatformMaxSec(p: ShortOutputPreset): number {
@@ -273,7 +287,7 @@ const Home: NextPage = () => {
   // Canvas Size（セッション用、エクスポート対象外）
   type CanvasLayout = "1920x1080" | "1080x1920" | "1920x1920";
   type CanvasSize = CanvasLayout | "auto";
-  const [canvasSize, setCanvasSize] = useState<CanvasSize>("1920x1080");
+  const [canvasSize, setCanvasSize] = useState<CanvasSize>("auto");
   
   // Mode adjustment parameters
   // offsetX, offsetYはパーセンテージ（-150%〜150%）
@@ -369,8 +383,8 @@ const Home: NextPage = () => {
   const [glycoColorSet, setGlycoColorSet] = useState<string>("amber");
 
   // 音量設定（共通設定: 目標LUFS、null=正規化なし）
-  const [targetLufs, setTargetLufs] = useState<number | null>(null);
-  const [targetLufsCustom, setTargetLufsCustom] = useState<string>("");
+  const [targetLufs, setTargetLufs] = useState<number | null>(-14);
+  const [targetLufsCustom, setTargetLufsCustom] = useState<string>("-14");
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (targetLufs != null) localStorage.setItem("common_targetLufs", String(targetLufs));
@@ -424,14 +438,12 @@ const Home: NextPage = () => {
     [detectCanvasLayoutFromImage]
   );
 
-  // セッション用: モード・解像度（エクスポート対象外）
+  // セッション用: モード（Cookie）
   useEffect(() => {
     if (typeof window === "undefined") return;
-    localStorage.setItem("session_mode", String(mode));
-    if (canvasSize !== "auto") {
-      localStorage.setItem("session_canvasSize", canvasSize);
-    }
-  }, [mode, canvasSize]);
+    // 1年保存
+    setCookieValue(MODE_COOKIE_KEY, String(mode), 60 * 60 * 24 * 365);
+  }, [mode]);
 
   // レイアウト別スペアナ設定のキー（縦/横/正方形 × モード）
   const LAYOUTS: CanvasLayout[] = ["1920x1080", "1080x1920", "1920x1920"];
@@ -738,18 +750,16 @@ const Home: NextPage = () => {
 
   // マウント後にlocalStorageから設定を読み込み（ハイドレーション一致のためクライアントのみ）
   useEffect(() => {
-    const savedMode = localStorage.getItem("session_mode");
-    let modeVal = savedMode ? parseInt(savedMode, 10) : 0;
+    const savedModeCookie = getCookieValue(MODE_COOKIE_KEY);
+    let modeVal = savedModeCookie ? parseInt(savedModeCookie, 10) : 0;
     // UI 非表示のモード（折れ線=1・波形上下対称=5）は周波数バーへ
     if (modeVal === 1 || modeVal === 5) {
       modeVal = 0;
-      localStorage.setItem("session_mode", "0");
+      setCookieValue(MODE_COOKIE_KEY, "0", 60 * 60 * 24 * 365);
     }
     setMode(modeVal);
-
-    const savedSize = localStorage.getItem("session_canvasSize");
-    const sizeVal = (savedSize === "1080x1920" || savedSize === "1920x1920") ? savedSize : "1920x1080";
-    setCanvasSize(sizeVal);
+    // リロード時の初期値は常に自動判定ON
+    setCanvasSize("auto");
 
     const savedEffectType = localStorage.getItem("common_effectType");
     if (savedEffectType && VALID_SAVED_EFFECT_TYPES.includes(savedEffectType as EffectType)) {
@@ -785,12 +795,9 @@ const Home: NextPage = () => {
       }
     }
 
-    const savedLufs = localStorage.getItem("common_targetLufs");
-    if (savedLufs) {
-      const n = parseFloat(savedLufs);
-      setTargetLufs(n);
-      setTargetLufsCustom(n !== -14 && n !== -15 ? String(n) : "");
-    }
+    // リロード時の初期値は YouTube 推奨（-14 LUFS）
+    setTargetLufs(-14);
+    setTargetLufsCustom("-14");
 
     const savedRenderer = localStorage.getItem("common_rendererType");
     if (savedRenderer === "canvas2d" || savedRenderer === "webgl") {
@@ -833,7 +840,7 @@ const Home: NextPage = () => {
       }
     } catch (_e) { /* ignore */ }
 
-    const adj = loadSettings(sizeVal as CanvasLayout, modeVal);
+    const adj = loadSettings("1920x1080", modeVal);
     if (adj) setModeAdjustments(adj);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -1404,7 +1411,7 @@ const Home: NextPage = () => {
     setEncodeStatus("idle");
     setEncodeProgress(0);
     setMode(0);
-    setCanvasSize("1920x1080");
+    setCanvasSize("auto");
     setModeAdjustments({
       scaleX: 1.0,
       scaleY: 1.0,
@@ -1418,8 +1425,8 @@ const Home: NextPage = () => {
     setShortDurationSecStr("");
     setRainWeather(DEFAULT_RAIN_WEATHER);
     setSnowWeather(DEFAULT_SNOW_WEATHER);
-    setTargetLufs(null);
-    setTargetLufsCustom("");
+    setTargetLufs(-14);
+    setTargetLufsCustom("-14");
     exitConfirmRef.current = false;
     openSnackBar(t("snackbar.cleared"));
   };
@@ -2407,8 +2414,8 @@ const Home: NextPage = () => {
                           setEffectDensities(defaultEffectDensities());
                           setRainWeather(DEFAULT_RAIN_WEATHER);
                           setSnowWeather(DEFAULT_SNOW_WEATHER);
-                          setTargetLufs(null);
-                          setTargetLufsCustom("");
+                          setTargetLufs(-14);
+                          setTargetLufsCustom("-14");
                           setModeAdjustments(DEFAULT_ADJUSTMENTS);
                           openSnackBar(t("snackbar.allCleared"));
                         }
