@@ -45,6 +45,8 @@
     "weatherAngle": "降り注ぐ角度: {{value}}°",
     "weatherAmount": "量: {{value}}%",
     "weatherColor": "色",
+    "weatherColorCode": "カラーコード (#RRGGBB)",
+    "weatherColorCodeInvalid": "カラーコードは #RRGGBB 形式で入力してください",
     "strength": "強度:",
     "weak": "弱",
     "medium": "中",

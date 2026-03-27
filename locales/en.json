@@ -45,6 +45,8 @@
     "weatherAngle": "Fall angle: {{value}}°",
     "weatherAmount": "Amount: {{value}}%",
     "weatherColor": "Color",
+    "weatherColorCode": "Color code (#RRGGBB)",
+    "weatherColorCodeInvalid": "Enter color code in #RRGGBB format",
     "strength": "Strength:",
     "weak": "Weak",
     "medium": "Medium",

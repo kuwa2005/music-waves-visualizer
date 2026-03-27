@@ -55,6 +55,34 @@ import {
 
 type ShortOutputPreset = "all" | "tiktok" | "youtube" | "niconico";
 type ResolvedClip = { full: true } | { full: false; start: number; duration: number };
+const BASIC_COLOR_PALETTE_16 = [
+  "#000000",
+  "#ffffff",
+  "#ff0000",
+  "#00ff00",
+  "#0000ff",
+  "#ffff00",
+  "#00ffff",
+  "#ff00ff",
+  "#808080",
+  "#800000",
+  "#808000",
+  "#008000",
+  "#800080",
+  "#008080",
+  "#000080",
+  "#ffa500",
+] as const;
+
+function normalizeHexColorInput(input: string): string {
+  const raw = input.trim();
+  if (!raw) return "";
+  return raw.startsWith("#") ? raw.toUpperCase() : `#${raw.toUpperCase()}`;
+}
+
+function isHexColorCode(value: string): boolean {
+  return /^#[0-9A-F]{6}$/.test(value);
+}
 
 function getShortPlatformMaxSec(p: ShortOutputPreset): number {
   if (p === "tiktok" || p === "youtube") return 60;
@@ -312,6 +340,8 @@ const Home: NextPage = () => {
   const [snowWeather, setSnowWeather] = useState<WeatherAdjust>(DEFAULT_SNOW_WEATHER);
 
   const [settingsTab, setSettingsTab] = useState(0);
+  const [rainColorInput, setRainColorInput] = useState<string>(DEFAULT_RAIN_WEATHER.color.toUpperCase());
+  const [snowColorInput, setSnowColorInput] = useState<string>(DEFAULT_SNOW_WEATHER.color.toUpperCase());
 
   const effectForCanvas = useMemo((): EffectParams | undefined => {
     if (effectType === "none") return undefined;
@@ -626,6 +656,14 @@ const Home: NextPage = () => {
       return newAdjustments;
     });
   };
+
+  useEffect(() => {
+    setRainColorInput(rainWeather.color.toUpperCase());
+  }, [rainWeather.color]);
+
+  useEffect(() => {
+    setSnowColorInput(snowWeather.color.toUpperCase());
+  }, [snowWeather.color]);
 
   const onChangeMode = (event: SelectChangeEvent<string>) => {
     const newMode = Number(event.target.value);
@@ -1822,16 +1860,49 @@ const Home: NextPage = () => {
                       step={0.05}
                       onChange={(_, v) => setRainWeather((p) => ({ ...p, amount: v as number }))}
                     />
-                    <Box sx={{ display: "flex", alignItems: "center", gap: 1, mt: 1 }}>
-                      <Typography variant="caption" color="textSecondary">
+                    <Box sx={{ mt: 1.5 }}>
+                      <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 0.5 }}>
                         {t("effect.weatherColor")}
                       </Typography>
-                      <input
-                        type="color"
-                        value={rainWeather.color}
-                        onChange={(e) => setRainWeather((p) => ({ ...p, color: e.target.value }))}
-                        style={{ width: 40, height: 32, border: "none", cursor: "pointer", background: "transparent" }}
-                        aria-label={t("effect.weatherColor")}
+                      <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.75, mb: 1 }}>
+                        {BASIC_COLOR_PALETTE_16.map((c) => (
+                          <Box
+                            key={`rain-${c}`}
+                            component="button"
+                            type="button"
+                            aria-label={`${t("effect.weatherColor")} ${c}`}
+                            onClick={() => setRainWeather((p) => ({ ...p, color: c }))}
+                            sx={{
+                              width: 24,
+                              height: 24,
+                              borderRadius: 0.75,
+                              border: rainWeather.color.toUpperCase() === c.toUpperCase() ? "2px solid #111" : "1px solid #999",
+                              backgroundColor: c,
+                              cursor: "pointer",
+                              p: 0,
+                            }}
+                          />
+                        ))}
+                      </Box>
+                      <TextField
+                        size="small"
+                        label={t("effect.weatherColorCode")}
+                        value={rainColorInput}
+                        onChange={(e) => {
+                          const next = normalizeHexColorInput(e.target.value);
+                          setRainColorInput(next);
+                          if (isHexColorCode(next)) {
+                            setRainWeather((p) => ({ ...p, color: next }));
+                          }
+                        }}
+                        error={rainColorInput.length > 0 && !isHexColorCode(rainColorInput)}
+                        helperText={
+                          rainColorInput.length > 0 && !isHexColorCode(rainColorInput)
+                            ? t("effect.weatherColorCodeInvalid")
+                            : " "
+                        }
+                        inputProps={{ inputMode: "text", pattern: "#?[0-9a-fA-F]{6}" }}
+                        sx={{ width: 220 }}
                       />
                     </Box>
                   </Box>
@@ -1858,16 +1929,49 @@ const Home: NextPage = () => {
                       step={0.05}
                       onChange={(_, v) => setSnowWeather((p) => ({ ...p, amount: v as number }))}
                     />
-                    <Box sx={{ display: "flex", alignItems: "center", gap: 1, mt: 1 }}>
-                      <Typography variant="caption" color="textSecondary">
+                    <Box sx={{ mt: 1.5 }}>
+                      <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 0.5 }}>
                         {t("effect.weatherColor")}
                       </Typography>
-                      <input
-                        type="color"
-                        value={snowWeather.color}
-                        onChange={(e) => setSnowWeather((p) => ({ ...p, color: e.target.value }))}
-                        style={{ width: 40, height: 32, border: "none", cursor: "pointer", background: "transparent" }}
-                        aria-label={t("effect.weatherColor")}
+                      <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.75, mb: 1 }}>
+                        {BASIC_COLOR_PALETTE_16.map((c) => (
+                          <Box
+                            key={`snow-${c}`}
+                            component="button"
+                            type="button"
+                            aria-label={`${t("effect.weatherColor")} ${c}`}
+                            onClick={() => setSnowWeather((p) => ({ ...p, color: c }))}
+                            sx={{
+                              width: 24,
+                              height: 24,
+                              borderRadius: 0.75,
+                              border: snowWeather.color.toUpperCase() === c.toUpperCase() ? "2px solid #111" : "1px solid #999",
+                              backgroundColor: c,
+                              cursor: "pointer",
+                              p: 0,
+                            }}
+                          />
+                        ))}
+                      </Box>
+                      <TextField
+                        size="small"
+                        label={t("effect.weatherColorCode")}
+                        value={snowColorInput}
+                        onChange={(e) => {
+                          const next = normalizeHexColorInput(e.target.value);
+                          setSnowColorInput(next);
+                          if (isHexColorCode(next)) {
+                            setSnowWeather((p) => ({ ...p, color: next }));
+                          }
+                        }}
+                        error={snowColorInput.length > 0 && !isHexColorCode(snowColorInput)}
+                        helperText={
+                          snowColorInput.length > 0 && !isHexColorCode(snowColorInput)
+                            ? t("effect.weatherColorCodeInvalid")
+                            : " "
+                        }
+                        inputProps={{ inputMode: "text", pattern: "#?[0-9a-fA-F]{6}" }}
+                        sx={{ width: 220 }}
                       />
                     </Box>
                   </Box>
