@@ -45,6 +45,7 @@
     "weatherAngle": "降り注ぐ角度: {{value}}°",
     "weatherAmount": "量: {{value}}%",
     "weatherColor": "色",
+    "parameters": "パラメータ調整（折りたたみ）",
     "weatherColorCode": "カラーコード (#RRGGBB)",
     "weatherColorCodeInvalid": "カラーコードは #RRGGBB 形式で入力してください",
     "strength": "強度:",
