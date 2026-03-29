@@ -485,14 +485,14 @@ export const drawBars = (
       }
     }
   } else if (mode === 3) {
-    // モード3: 上下対称バー
+    // モード3: 上下対称バー（横軸は対数周波数ビン＝モード6と同系。線形だと右側がナイキスト寄りで無反応に近くなる）
     analyser.getByteFrequencyData(bufferData);
     const barsLength = 128;
     const barWidth = canvasWidth / barsLength;
     const centerY = canvasHeight / 2;
     
     for (let i = 0; i < barsLength; i++) {
-      const barHeight = bufferData[i] * 2;
+      const barHeight = glycoBarRawEnergy(i, barsLength, bufferLength, bufferData) * 2;
       if (useRainbow34) {
         const hue = (i / barsLength) * 360;
         const gradient = ctx.createLinearGradient(
@@ -523,7 +523,7 @@ export const drawBars = (
       );
     }
   } else if (mode === 4) {
-    // モード4: ドット表示（32列×16行をキャンバス全幅・全高で使い切る）
+    // モード4: ドット表示（32列×16行）。列→FFT は対数ビン（グライコと同系）で帯域を横全体に載せる
     analyser.getByteFrequencyData(bufferData);
     const dotsPerRow = 32;
     const dotsPerCol = 16;
@@ -532,8 +532,7 @@ export const drawBars = (
     const dotRadius = Math.min(dotSizeX, dotSizeY) / 3;
     
     for (let col = 0; col < dotsPerRow; col++) {
-      const freqIndex = Math.floor((col / dotsPerRow) * bufferLength);
-      const value = bufferData[freqIndex];
+      const value = glycoBarRawEnergy(col, dotsPerRow, bufferLength, bufferData);
       
       for (let row = 0; row < dotsPerCol; row++) {
         const threshold = (255 / dotsPerCol) * (dotsPerCol - row);

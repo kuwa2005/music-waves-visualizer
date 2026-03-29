@@ -6,6 +6,7 @@
 - **`npm run build:html:lil-la`**: One-shot static build with `NEXT_PUBLIC_SITE_URL=https://lil.la` for [lil.la/visualizer](https://lil.la/visualizer/) (canonical / OG). Documented in [docs/BUILD.md](./docs/BUILD.md), [README](./README.md), and [`.env.production.example`](./.env.production.example).
 
 ### Changed
+- **Modes 3 & 4 (symmetric bars & dots)**: Horizontal axis now uses **log-spaced FFT bins** via `glycoBarToFftBin` / `glycoBarRawEnergy` (same family as mode 6), fixing mostly dead right columns from linear `i/bufferLength` mapping (Canvas 2D + WebGL).
 - **Spectrum update rate (modes 1 & 5)**: Waveform redraw throttling is fixed at **`SPECTRUM_THROTTLE_TARGET_FPS` (60)** (Canvas 2D + WebGL); the **更新レート** slider is removed (`SpectrumSettings.fps` removed).
 - **Spectrum size (all modes)**: Layout/mode **width & height scale** sliders and `clampModeAdjustments` now **0.1–5.0×** (was 0.5–5.0×) so small displays can shrink the analyzer further.
 - **Mode 6 (glyco)**: Log-spaced bins (`GLYCO_LOG_BIN_MAX_FRAC`), right-edge **local max** (`glycoBarRawEnergy`). Vertical mapping uses shared **`glycoAdjustedLevel`** (γ≈1.18 peak compression) and **`GLYCO_BAR_VERTICAL_SCALE`** headroom so bars do not sit at MAX as often (Canvas 2D + WebGL).

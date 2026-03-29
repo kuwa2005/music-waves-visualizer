@@ -1568,7 +1568,7 @@ function drawMode3(
   const [sr, sg, sb] = getSpectrumSecondaryRgb(settings);
 
   for (let i = 0; i < barsLength; i++) {
-    const barHeight = bufferData[i] * 2;
+    const barHeight = glycoBarRawEnergy(i, barsLength, bufferData.length, bufferData) * 2;
     let r1: number;
     let g1: number;
     let b1: number;
@@ -1623,8 +1623,7 @@ function drawMode4(
   const [sr, sg, sb] = getSpectrumSecondaryRgb(settings);
 
   for (let col = 0; col < dotsPerRow; col++) {
-    const freqIndex = Math.floor((col / dotsPerRow) * bufferLength);
-    const value = bufferData[freqIndex];
+    const value = glycoBarRawEnergy(col, dotsPerRow, bufferLength, bufferData);
     const tcol = col / dotsPerRow;
 
     for (let row = 0; row < dotsPerCol; row++) {
