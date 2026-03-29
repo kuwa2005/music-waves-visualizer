@@ -35,6 +35,7 @@ node scripts/copy-ffmpeg-core.cjs
 | `npm run dev` | Next.js dev server (localhost) |
 | `npm run build` | Production build (standalone layout for Docker) |
 | `npm run build:html` | Static export → `visualizer/` for Apache/nginx hosting |
+| `npm run build:html:lil-la` | Same as `build:html` + `NEXT_PUBLIC_SITE_URL=https://lil.la`（[lil.la/visualizer](https://lil.la/visualizer/) 向け SEO メタ用） |
 | `npm run start` | Run production server after `npm run build` |
 | `npm run lint` | ESLint |
 
