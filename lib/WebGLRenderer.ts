@@ -12,6 +12,7 @@ import {
   glycoBarRawEnergy,
   glycoAdjustedLevel,
   GLYCO_BAR_VERTICAL_SCALE,
+  SPECTRUM_THROTTLE_TARGET_FPS,
 } from './Canvas';
 import {
   updateAndGetSpaceParticles,
@@ -1085,7 +1086,6 @@ function renderFrame(): void {
 
     const settings: SpectrumSettings = latestSpectrumSettings ?? {
       opacity: 0.9,
-      fps: 30,
       lineWidthWaveform: 3.2,
       lineWidthCircle: 3.2,
       lineWidthSymWave: 3.6,
@@ -1126,11 +1126,11 @@ function renderFrame(): void {
 
     audioRForEffects = getAudioReactive();
 
-    // 更新レートを設定値に合わせて落とす（約 settings.fps fps）
+    // モード1・5: スペアナ本体を SPECTRUM_THROTTLE_TARGET_FPS に合わせて間引く
     let skipSpectrumDraw = false;
     if (mode === 1 || mode === 5) {
       const now = performance.now();
-      const interval = 1000 / settings.fps;
+      const interval = 1000 / SPECTRUM_THROTTLE_TARGET_FPS;
       const key = mode === 1 ? '_lastTimeMode1' : '_lastTimeMode5';
       const last = (renderFrame as any)[key] ?? 0;
       if (now - last < interval) {

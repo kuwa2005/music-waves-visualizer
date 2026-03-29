@@ -371,7 +371,6 @@ const Home: NextPage = () => {
 
   // スペクトラム調整
   const [spectrumOpacityPercent, setSpectrumOpacityPercent] = useState<number>(10);  // 透過率0-100%、0=完全表示
-  const [spectrumFps, setSpectrumFps] = useState<number>(30);               // 1〜60
   const [lineWidthWaveform, setLineWidthWaveform] = useState<number>(3.2);  // mode1
   const [lineWidthCircle, setLineWidthCircle] = useState<number>(3.2);      // mode2
   const [lineWidthSymWave, setLineWidthSymWave] = useState<number>(3.6);    // mode5
@@ -1249,7 +1248,6 @@ const Home: NextPage = () => {
     const isEffectActive = isPlaySound || isRecording;
     const spectrumSettings = {
       opacity: 1 - spectrumOpacityPercent / 100,
-      fps: spectrumFps,
       lineWidthWaveform,
       lineWidthCircle,
       lineWidthSymWave,
@@ -1297,7 +1295,6 @@ const Home: NextPage = () => {
     isRecording,
     glycoColorSet,
     spectrumOpacityPercent,
-    spectrumFps,
     lineWidthWaveform,
     lineWidthCircle,
     lineWidthSymWave,
@@ -1676,7 +1673,6 @@ const Home: NextPage = () => {
     const effect = effectForCanvas;
     const spectrumSettings = {
       opacity: 1 - spectrumOpacityPercent / 100,
-      fps: spectrumFps,
       lineWidthWaveform,
       lineWidthCircle,
       lineWidthSymWave,
@@ -2285,16 +2281,6 @@ const Home: NextPage = () => {
                       label={t("spectrumWave.rainbowSymDot")}
                       sx={{ mb: 2, display: "flex", alignItems: "center" }}
                     />
-                    <Box sx={{ mb: 2 }}>
-                      <Typography gutterBottom>{t("displayVolume.fps", { value: spectrumFps })}</Typography>
-                      <Slider
-                        value={spectrumFps}
-                        min={1}
-                        max={60}
-                        step={1}
-                        onChange={(_, v) => setSpectrumFps(v as number)}
-                      />
-                    </Box>
                     {mode === 1 && (
                       <Box sx={{ mb: 3 }}>
                         <Typography gutterBottom>{t("displayVolume.lineWidthWaveform", { value: lineWidthWaveform.toFixed(1) })}</Typography>

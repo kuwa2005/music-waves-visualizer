@@ -12,11 +12,13 @@ export type ModeAdjustments = {
   offsetY: number;
 };
 
+/** モード1・5のスペアナデータ更新間隔の目標fps（UI設定なし・固定）。 */
+export const SPECTRUM_THROTTLE_TARGET_FPS = 60;
+
 export type SpectrumColorPresetKey = "white" | "cyan" | "magenta" | "green" | "gold" | "custom";
 
 export type SpectrumSettings = {
   opacity: number;
-  fps: number;
   lineWidthWaveform: number;
   lineWidthCircle: number;
   lineWidthSymWave: number;
@@ -310,7 +312,6 @@ export const drawBars = (
 ) => {
   const settings: SpectrumSettings = spectrumSettings ?? {
     opacity: 0.9,
-    fps: 30,
     lineWidthWaveform: 3.2,
     lineWidthCircle: 3.2,
     lineWidthSymWave: 3.6,
@@ -366,9 +367,9 @@ export const drawBars = (
     return animationFrameId;
   }
 
-  // 折れ線/波形モードの描画更新頻度を設定値に合わせて落とす
+  // 折れ線/波形モード: データ取り込みを SPECTRUM_THROTTLE_TARGET_FPS に合わせて間引く
   const now = performance.now();
-  const interval = 1000 / settings.fps;
+  const interval = 1000 / SPECTRUM_THROTTLE_TARGET_FPS;
   if (mode === 1) {
     const last = (drawBars as any)._lastTimeMode1 ?? 0;
     if (now - last < interval) {
