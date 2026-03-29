@@ -6,6 +6,7 @@
 - **Issue #14**: New spectrum mode **7 — Spectrum fill** (filled area under frequency curve + top outline); Canvas 2D and WebGL; layout/mode settings key `7` in export/import.
 - **Issue #16**: **Multi-image gallery**: multi-select / drag-drop multiple still images, **Add image** append, **Prev/Next**, **auto-advance** during preview/recording (2–30s interval, persisted in `localStorage`). First image still sets canvas layout for Auto mode.
 - **Issue #17**: **Scanlines** overlay effect (CRT-style horizontal lines); Canvas 2D and WebGL; strength presets; saved like other effects.
+- **Issue #23**: **Gallery image transitions** (none / random per switch / crossfade, wipes, iris, slides, zoom, checker, venetian, diagonal, flash); Canvas 2D + WebGL via `lib/galleryImageTransition.ts`. **Spectrum scale** 0.5–5× and **offset** ±150% (integer-clamped in save/import). **Spectrum color**: 20-color palette (10-column grid) + `#RRGGBB` (`common_spectrumColorHex`; legacy preset migration). **Shared palette** in `lib/colorPalette.ts`. **Space / sparkle / dust** tint colors (`effectTintColor`, palette + hex). **Scanlines** strength increased. Settings export adds `galleryTransitionMode`, particle colors, `spectrumColorHex`; i18n `gallery.tr*` (ja/en).
 
 ## [1.0.2] - 2026-03-29
 

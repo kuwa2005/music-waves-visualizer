@@ -20,6 +20,7 @@ import {
   type EffectType,
   type AudioReactiveData,
 } from './Effects';
+import { drawGalleryBackground, peekGalleryImageTransitionFrame } from './galleryImageTransition';
 
 const BASE_LINE_WIDTH_WAVEFORM = 2.0;
 const BASE_LINE_WIDTH_CIRCLE = 2.0;
@@ -435,6 +436,66 @@ function drawBackgroundWebGL(
   // 背景色でクリア
   gl.clearColor(34 / 255, 34 / 255, 34 / 255, 1.0);
   gl.clear(gl.COLOR_BUFFER_BIT);
+
+  const galleryTransition = peekGalleryImageTransitionFrame();
+  if (galleryTransition) {
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = canvasWidth;
+    tempCanvas.height = canvasHeight;
+    const tctx = tempCanvas.getContext('2d', {
+      alpha: false,
+      desynchronized: true,
+      willReadFrequently: false,
+    });
+    if (tctx) {
+      drawGalleryBackground(tctx, canvasWidth, canvasHeight, null, galleryTransition);
+      if (!ctx.imageTexture) {
+        ctx.imageTexture = gl.createTexture();
+      }
+      gl.bindTexture(gl.TEXTURE_2D, ctx.imageTexture);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, tempCanvas);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      ctx.imageCache = { image: null, width: -1, height: -1 };
+      gl.useProgram(textureProgram);
+      if (texResolutionLocation) {
+        gl.uniform2f(texResolutionLocation, canvasWidth, canvasHeight);
+      }
+      const positions = new Float32Array([
+        0, 0,
+        canvasWidth, 0,
+        0, canvasHeight,
+        0, canvasHeight,
+        canvasWidth, 0,
+        canvasWidth, canvasHeight,
+      ]);
+      const texCoords = new Float32Array([
+        0, 0,
+        1, 0,
+        0, 1,
+        0, 1,
+        1, 0,
+        1, 1,
+      ]);
+      gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+      gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
+      gl.enableVertexAttribArray(texPositionLocation);
+      gl.vertexAttribPointer(texPositionLocation, 2, gl.FLOAT, false, 0, 0);
+      gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
+      gl.bufferData(gl.ARRAY_BUFFER, texCoords, gl.STATIC_DRAW);
+      gl.enableVertexAttribArray(texCoordLocation);
+      gl.vertexAttribPointer(texCoordLocation, 2, gl.FLOAT, false, 0, 0);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, ctx.imageTexture);
+      if (textureLocation) {
+        gl.uniform1i(textureLocation, 0);
+      }
+      gl.drawArrays(gl.TRIANGLES, 0, 6);
+    }
+    return;
+  }
 
   // 画像がない場合は背景色のみ
   if (!image) {
@@ -1137,7 +1198,8 @@ function renderFrame(): void {
         latestEffect.density,
         deltaTime,
         variant,
-        variant === "spaceAudio" ? audioRForEffects : undefined
+        variant === "spaceAudio" ? audioRForEffects : undefined,
+        latestEffect.effectTintColor
       );
       for (const p of particles) {
         const r = p.r / 255;
@@ -1158,7 +1220,8 @@ function renderFrame(): void {
           canvasHeight,
           latestEffect.density,
           deltaTime,
-          audioRForEffects
+          audioRForEffects,
+          latestEffect.effectTintColor
         );
         for (const p of parts) {
           const rad = Math.max(1, p.radius);
@@ -1206,7 +1269,8 @@ function renderFrame(): void {
           canvasHeight,
           latestEffect.density,
           deltaTime,
-          audioRForEffects
+          audioRForEffects,
+          latestEffect.effectTintColor
         );
         for (const p of parts) {
           drawCircle(
@@ -1281,15 +1345,19 @@ function renderFrame(): void {
       gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     } else if (latestEffect.type === "scanlines") {
       const strength = DENSITY_STRENGTH[latestEffect.density];
-      const spacing = latestEffect.density === 3 ? 3 : latestEffect.density === 2 ? 4 : 5;
-      const base = 0.055 + 0.11 * strength;
+      const spacing = latestEffect.density === 3 ? 2 : latestEffect.density === 2 ? 3 : 4;
+      const base = 0.14 + 0.22 * strength;
       const pulse =
-        0.82 +
-        0.18 *
+        0.78 +
+        0.22 *
           Math.min(1, audioRForEffects.volume * 0.7 + audioRForEffects.bass * 0.35);
-      const alpha = Math.min(0.2, base * pulse);
+      const alpha = Math.min(0.42, base * pulse);
+      const lineH = latestEffect.density === 3 ? 2 : 1;
       for (let y = 0; y < canvasHeight; y += spacing) {
-        drawRect(glContext, 0, y, canvasWidth, 1, 0, 0, 0, alpha);
+        drawRect(glContext, 0, y, canvasWidth, lineH, 0, 0, 0, alpha);
+        if (lineH === 2 && y + 1 < canvasHeight) {
+          drawRect(glContext, 0, y + 1, canvasWidth, 1, 0, 0, 0, alpha * 0.35);
+        }
       }
     } else {
       drawEffectOverlayWebGL(glContext, canvasWidth, canvasHeight, latestEffect, audioRForEffects);
@@ -1314,7 +1382,7 @@ function renderFrame(): void {
  */
 export const drawBarsWebGL = (
   canvas: HTMLCanvasElement,
-  imageCtx: HTMLImageElement,
+  imageCtx: HTMLImageElement | null,
   mode: number,
   analyser: AnalyserNode,
   adjustments?: ModeAdjustments,

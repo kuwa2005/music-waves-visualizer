@@ -29,6 +29,8 @@ export interface EffectParams {
   weatherAmount?: number;
   /** 雨・雪: 色 #RRGGBB */
   weatherColor?: string;
+  /** 宇宙・きらきら・空気感: トーン色 #RRGGBB */
+  effectTintColor?: string;
 }
 
 /** 音源連動用メトリクス（0〜1正規化） */
@@ -126,7 +128,8 @@ export function updateAndGetSpaceParticles(
   density: EffectDensity,
   deltaTime: number,
   variant: SpaceVariant = "space",
-  audio?: AudioReactiveData
+  audio?: AudioReactiveData,
+  tintHex?: string
 ): Array<{ x: number; y: number; size: number; alpha: number; r: number; g: number; b: number }> {
   const maxRadius = Math.sqrt(width * width + height * height) / 2 + 150;
   const centerX = width / 2;
@@ -194,14 +197,19 @@ export function updateAndGetSpaceParticles(
     alpha *= twinkle;
 
     const color = STAR_COLORS[p.colorIndex];
+    const [tr, tg, tb] = parseWeatherColorHex(tintHex, [255, 255, 255]);
+    const mix = tintHex ? 0.52 : 0;
+    const r = Math.round(color.r * (1 - mix) + tr * mix);
+    const g = Math.round(color.g * (1 - mix) + tg * mix);
+    const b = Math.round(color.b * (1 - mix) + tb * mix);
     result.push({
       x,
       y,
       size: p.size,
       alpha: Math.min(1, alpha),
-      r: color.r,
-      g: color.g,
-      b: color.b,
+      r,
+      g,
+      b,
     });
   }
 
@@ -223,13 +231,14 @@ export function drawSpaceEffectCanvas(
   height: number,
   density: EffectDensity,
   variant: SpaceVariant = "space",
-  audio?: AudioReactiveData
+  audio?: AudioReactiveData,
+  tintHex?: string
 ): void {
   const now = performance.now();
   const deltaTime = Math.min(now - lastTime, 50);
   lastTime = now;
 
-  const particles = updateAndGetSpaceParticles(width, height, density, deltaTime, variant, audio);
+  const particles = updateAndGetSpaceParticles(width, height, density, deltaTime, variant, audio, tintHex);
 
   ctx.save();
   for (const p of particles) {
@@ -393,7 +402,7 @@ interface SparkleParticle {
 }
 
 let sparkleParticles: SparkleParticle[] = [];
-let lastSparkleParams: { density: EffectDensity; width: number; height: number } | null = null;
+let lastSparkleParams: { density: EffectDensity; width: number; height: number; tint: string } | null = null;
 
 /** 弱≒従来の「強」、中間、強≒従来の強の約3倍 */
 const SPARKLE_COUNTS: Record<EffectDensity, number> = { 1: 220, 2: 440, 3: 660 };
@@ -479,16 +488,19 @@ export function updateAndGetSparkleParticles(
   height: number,
   density: EffectDensity,
   deltaTime: number,
-  audio?: AudioReactiveData
+  audio?: AudioReactiveData,
+  tintHex?: string
 ): SparkleParticleDraw[] {
+  const tintKey = (tintHex && /^#?[0-9a-fA-F]{6}$/.test(tintHex.trim()) ? tintHex.trim() : "") || "__default__";
   if (
     !lastSparkleParams ||
     lastSparkleParams.density !== density ||
     lastSparkleParams.width !== width ||
-    lastSparkleParams.height !== height
+    lastSparkleParams.height !== height ||
+    lastSparkleParams.tint !== tintKey
   ) {
     initSparkleParticles(width, height, density);
-    lastSparkleParams = { density, width, height };
+    lastSparkleParams = { density, width, height, tint: tintKey };
   }
   const a = audio ?? SILENT_AUDIO_REACTIVE;
   const strength = DENSITY_STRENGTH[density];
@@ -563,13 +575,14 @@ export function updateAndGetSparkleParticles(
     );
     if (alpha < 0.02) continue;
 
+    const [tr, tg, tb] = parseWeatherColorHex(tintHex, [255, 255, 255]);
     out.push({
       x: p.x,
       y: p.y,
       radius: rad,
-      r: 255,
-      g: 255,
-      b: 255,
+      r: tr,
+      g: tg,
+      b: tb,
       alpha,
       starKind: p.starKind,
       rotation: p.rotation,
@@ -642,9 +655,10 @@ function drawSparkleCanvas(
   height: number,
   density: EffectDensity,
   deltaTime: number,
-  audio: AudioReactiveData
+  audio: AudioReactiveData,
+  tintHex?: string
 ): void {
-  const list = updateAndGetSparkleParticles(width, height, density, deltaTime, audio);
+  const list = updateAndGetSparkleParticles(width, height, density, deltaTime, audio, tintHex);
   ctx.save();
   ctx.globalCompositeOperation = "source-over";
   for (const p of list) {
@@ -727,21 +741,27 @@ function initDustParticles(width: number, height: number, density: EffectDensity
 /**
  * WebGL 用: ほこり粒子を更新して描画用リストを返す
  */
+let lastDustTintKey = "";
+
 export function updateAndGetDustParticles(
   width: number,
   height: number,
   density: EffectDensity,
   deltaTime: number,
-  audio?: AudioReactiveData
+  audio?: AudioReactiveData,
+  tintHex?: string
 ): Array<{ x: number; y: number; radius: number; r: number; g: number; b: number; alpha: number }> {
+  const tintKey = (tintHex && /^#?[0-9a-fA-F]{6}$/.test(tintHex.trim()) ? tintHex.trim() : "") || "__default__";
   if (
     !lastDustParams ||
     lastDustParams.density !== density ||
     lastDustParams.width !== width ||
-    lastDustParams.height !== height
+    lastDustParams.height !== height ||
+    lastDustTintKey !== tintKey
   ) {
     initDustParticles(width, height, density);
     lastDustParams = { density, width, height };
+    lastDustTintKey = tintKey;
   }
   const a = audio ?? SILENT_AUDIO_REACTIVE;
   const strength = DENSITY_STRENGTH[density];
@@ -763,13 +783,23 @@ export function updateAndGetDustParticles(
     const alpha = Math.min(1, rawAlpha * DUST_INTENSITY_MUL);
     const gray = 210 + Math.floor(Math.sin(p.phase * 0.7) * 40);
     const blueLift = Math.floor(Math.sin(p.phase * 1.1) * 18);
+    let r = Math.min(255, gray + blueLift);
+    let g = Math.min(255, gray + 6);
+    let b = Math.min(255, gray + 18 + blueLift);
+    if (tintHex) {
+      const [tr, tg, tb] = parseWeatherColorHex(tintHex, [r, g, b]);
+      const mix = 0.58;
+      r = Math.round(r * (1 - mix) + tr * mix);
+      g = Math.round(g * (1 - mix) + tg * mix);
+      b = Math.round(b * (1 - mix) + tb * mix);
+    }
     out.push({
       x: p.x,
       y: p.y,
       radius: p.size * (1.05 + 0.08 * Math.min(DUST_INTENSITY_MUL, 4)),
-      r: Math.min(255, gray + blueLift),
-      g: Math.min(255, gray + 6),
-      b: Math.min(255, gray + 18 + blueLift),
+      r,
+      g,
+      b,
       alpha,
     });
   }
@@ -782,9 +812,10 @@ function drawDustCanvas(
   height: number,
   density: EffectDensity,
   deltaTime: number,
-  audio: AudioReactiveData
+  audio: AudioReactiveData,
+  tintHex?: string
 ): void {
-  const list = updateAndGetDustParticles(width, height, density, deltaTime, audio);
+  const list = updateAndGetDustParticles(width, height, density, deltaTime, audio, tintHex);
   ctx.save();
   // WebGL 側（SRC_ALPHA + ONE の単色円）に合わせ、ラジアルグロウは使わない
   ctx.globalCompositeOperation = "lighter";
@@ -1096,14 +1127,20 @@ function drawScanlinesCanvas(
   audio: AudioReactiveData
 ): void {
   const strength = DENSITY_STRENGTH[density];
-  const spacing = density === 3 ? 3 : density === 2 ? 4 : 5;
-  const base = 0.055 + 0.11 * strength;
-  const pulse = 0.82 + 0.18 * Math.min(1, audio.volume * 0.7 + audio.bass * 0.35);
-  const alpha = Math.min(0.2, base * pulse);
+  const spacing = density === 3 ? 2 : density === 2 ? 3 : 4;
+  const base = 0.14 + 0.22 * strength;
+  const pulse = 0.78 + 0.22 * Math.min(1, audio.volume * 0.7 + audio.bass * 0.35);
+  const alpha = Math.min(0.42, base * pulse);
+  const lineH = density === 3 ? 2 : 1;
   ctx.save();
   ctx.fillStyle = `rgba(0,0,0,${alpha})`;
   for (let y = 0; y < height; y += spacing) {
-    ctx.fillRect(0, y, width, 1);
+    ctx.fillRect(0, y, width, lineH);
+    if (lineH === 2 && y + 1 < height) {
+      ctx.fillStyle = `rgba(0,0,0,${alpha * 0.35})`;
+      ctx.fillRect(0, y + 1, width, 1);
+      ctx.fillStyle = `rgba(0,0,0,${alpha})`;
+    }
   }
   ctx.restore();
 }
@@ -1128,15 +1165,15 @@ export function drawEffectOverlayCanvas(
   lastOverlayDrawTime = nowOverlay;
   try {
     if (effect.type === "space") {
-      drawSpaceEffectCanvas(ctx, width, height, effect.density, "space");
+      drawSpaceEffectCanvas(ctx, width, height, effect.density, "space", undefined, effect.effectTintColor);
       return;
     }
     if (effect.type === "spaceConstant") {
-      drawSpaceEffectCanvas(ctx, width, height, effect.density, "spaceConstant");
+      drawSpaceEffectCanvas(ctx, width, height, effect.density, "spaceConstant", undefined, effect.effectTintColor);
       return;
     }
     if (effect.type === "spaceAudio") {
-      drawSpaceEffectCanvas(ctx, width, height, effect.density, "spaceAudio", a);
+      drawSpaceEffectCanvas(ctx, width, height, effect.density, "spaceAudio", a, effect.effectTintColor);
       return;
     }
     switch (effect.type) {
@@ -1156,10 +1193,10 @@ export function drawEffectOverlayCanvas(
         drawGlitchCanvas(ctx, width, height, effect.density, a);
         break;
       case "sparkle":
-        drawSparkleCanvas(ctx, width, height, effect.density, overlayDelta, a);
+        drawSparkleCanvas(ctx, width, height, effect.density, overlayDelta, a, effect.effectTintColor);
         break;
       case "dust":
-        drawDustCanvas(ctx, width, height, effect.density, overlayDelta, a);
+        drawDustCanvas(ctx, width, height, effect.density, overlayDelta, a, effect.effectTintColor);
         break;
       case "rain":
         drawRainCanvas(ctx, width, height, effect.density, overlayDelta, a, effect);

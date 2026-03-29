@@ -1,4 +1,5 @@
 import { drawEffectOverlayCanvas, type EffectParams, type AudioReactiveData } from "./Effects";
+import { drawGalleryBackground, peekGalleryImageTransitionFrame } from "./galleryImageTransition";
 
 const BASE_LINE_WIDTH_WAVEFORM = 2.0;
 const BASE_LINE_WIDTH_CIRCLE   = 2.0;
@@ -20,6 +21,8 @@ export type SpectrumSettings = {
   lineWidthCircle: number;
   lineWidthSymWave: number;
   glycoColorSet?: string;
+  /** スペアナのベース色 #RRGGBB（優先。インポート互換で preset も参照） */
+  spectrumColorHex?: string;
   /** 周波数バー・波形・円形など単色寄りモードのベース色（モード6グライコは従来の色セットを維持） */
   spectrumColorPreset?: SpectrumColorPresetKey;
   spectrumCustomHex?: string;
@@ -35,6 +38,19 @@ const SPECTRUM_PRESET_RGB: Record<Exclude<SpectrumColorPresetKey, "custom">, [nu
   gold: [255, 200, 80],
 };
 
+/** 旧プリセット保存値から #RRGGBB へ（スペアナ色の移行用） */
+export function legacySpectrumPresetToHex(preset: string | undefined, customHex: string | undefined): string {
+  if (preset === "custom" && customHex && /^#[0-9a-fA-F]{6}$/.test(customHex)) {
+    return customHex.toUpperCase();
+  }
+  const k = preset as SpectrumColorPresetKey;
+  if (k && k !== "custom" && SPECTRUM_PRESET_RGB[k as Exclude<SpectrumColorPresetKey, "custom">]) {
+    const [r, g, b] = SPECTRUM_PRESET_RGB[k as Exclude<SpectrumColorPresetKey, "custom">];
+    return `#${[r, g, b].map((x) => x.toString(16).padStart(2, "0")).join("")}`.toUpperCase();
+  }
+  return "#FFFFFF";
+}
+
 export function parseSpectrumHexRgb(hex: string): [number, number, number] | null {
   if (!/^#[0-9a-fA-F]{6}$/.test(hex)) return null;
   return [
@@ -45,6 +61,8 @@ export function parseSpectrumHexRgb(hex: string): [number, number, number] | nul
 }
 
 export function getSpectrumPrimaryRgb(settings: SpectrumSettings): [number, number, number] {
+  const fromHex = settings.spectrumColorHex && parseSpectrumHexRgb(settings.spectrumColorHex);
+  if (fromHex) return fromHex;
   const preset = settings.spectrumColorPreset ?? "white";
   if (preset === "custom") {
     const p = parseSpectrumHexRgb(settings.spectrumCustomHex ?? "#FFFFFF");
@@ -267,12 +285,13 @@ export const drawBars = (
     offsetY: 0,
   };
 
-  // 画像をオフスクリーンキャンバスからコピー（高速化）
-  if (imageCtx) {
+  const galleryTransition = peekGalleryImageTransitionFrame();
+  if (galleryTransition) {
+    drawGalleryBackground(ctx, canvasWidth, canvasHeight, imageCtx, galleryTransition);
+  } else if (imageCtx) {
     const offscreenCanvas = drawImageToOffscreen(imageCtx, canvasWidth, canvasHeight);
     ctx.drawImage(offscreenCanvas, 0, 0);
   } else {
-    // 画像がない場合は背景のみ描画
     ctx.fillStyle = "rgba(34, 34, 34, 1.0)";
     ctx.fillRect(0, 0, canvasWidth, canvasHeight);
   }

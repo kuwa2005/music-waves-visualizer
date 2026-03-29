@@ -45,8 +45,17 @@ import {
   stopCanvas2DAnimation,
   GLYCO_COLOR_SETS,
   GLYCO_GRADIENT_SETS,
-  type SpectrumColorPresetKey,
+  legacySpectrumPresetToHex,
 } from "../lib/Canvas";
+import { DEFAULT_COLOR_PALETTE_20 } from "../lib/colorPalette";
+import {
+  startGalleryImageTransition,
+  clearGalleryImageTransition,
+  GALLERY_TRANSITION_RANDOM_POOL,
+  GALLERY_TRANSITION_SELECT_OPTIONS,
+  isValidGalleryTransitionUserMode,
+  type GalleryTransitionUserMode,
+} from "../lib/galleryImageTransition";
 import { drawBarsWebGL, getFPSWebGL, cleanupWebGL, stopWebGLAnimation, clearWebGLImageCache } from "../lib/WebGLRenderer";
 import type { EffectType, EffectDensity, EffectParams } from "../lib/Effects";
 import { getGpuInfo, getGpuDisplayName, benchmarkRenderers, type GpuInfo } from "../lib/GpuDetector";
@@ -69,25 +78,6 @@ import {
 type ShortOutputPreset = "all" | "tiktok" | "youtube" | "niconico";
 type ResolvedClip = { full: true } | { full: false; start: number; duration: number };
 const MODE_COOKIE_KEY = "mwv_mode";
-const BASIC_COLOR_PALETTE_16 = [
-  "#000000",
-  "#ffffff",
-  "#ff0000",
-  "#00ff00",
-  "#0000ff",
-  "#ffff00",
-  "#00ffff",
-  "#ff00ff",
-  "#808080",
-  "#800000",
-  "#808000",
-  "#008000",
-  "#800080",
-  "#008080",
-  "#000080",
-  "#ffa500",
-] as const;
-
 function normalizeHexColorInput(input: string): string {
   const raw = input.trim();
   if (!raw) return "";
@@ -120,15 +110,6 @@ function getShortPlatformMaxSec(p: ShortOutputPreset): number {
 const hasWindow = () => {
   return typeof window === "object";
 };
-
-const VALID_SPECTRUM_COLOR_PRESETS: SpectrumColorPresetKey[] = [
-  "white",
-  "cyan",
-  "magenta",
-  "green",
-  "gold",
-  "custom",
-];
 
 type GalleryImageEntry = {
   img: HTMLImageElement;
@@ -388,6 +369,29 @@ const Home: NextPage = () => {
   const [snowColorInput, setSnowColorInput] = useState<string>(DEFAULT_SNOW_WEATHER.color.toUpperCase());
   const isSpaceEffect = effectType === "space" || effectType === "spaceConstant" || effectType === "spaceAudio";
 
+  // スペクトラム調整
+  const [spectrumOpacityPercent, setSpectrumOpacityPercent] = useState<number>(10);  // 透過率0-100%、0=完全表示
+  const [spectrumFps, setSpectrumFps] = useState<number>(30);               // 1〜60
+  const [lineWidthWaveform, setLineWidthWaveform] = useState<number>(3.2);  // mode1
+  const [lineWidthCircle, setLineWidthCircle] = useState<number>(3.2);      // mode2
+  const [lineWidthSymWave, setLineWidthSymWave] = useState<number>(3.6);    // mode5
+  const [glycoColorSet, setGlycoColorSet] = useState<string>("amber");
+  const DEFAULT_SPECTRUM_HEX = "#FFFFFF";
+  const DEFAULT_SPACE_PARTICLE = "#E0EEFF";
+  const DEFAULT_SPARKLE_PARTICLE = "#FFFFFF";
+  const DEFAULT_DUST_PARTICLE = "#D8E8FF";
+  const [spectrumColorHex, setSpectrumColorHex] = useState<string>(DEFAULT_SPECTRUM_HEX);
+  const [spectrumColorInput, setSpectrumColorInput] = useState<string>(DEFAULT_SPECTRUM_HEX);
+  const [galleryTransitionMode, setGalleryTransitionMode] =
+    useState<GalleryTransitionUserMode>("crossfade");
+  const [spaceParticleColor, setSpaceParticleColor] = useState<string>(DEFAULT_SPACE_PARTICLE);
+  const [sparkleParticleColor, setSparkleParticleColor] = useState<string>(DEFAULT_SPARKLE_PARTICLE);
+  const [dustParticleColor, setDustParticleColor] = useState<string>(DEFAULT_DUST_PARTICLE);
+  const [spaceColorInput, setSpaceColorInput] = useState<string>(DEFAULT_SPACE_PARTICLE.toUpperCase());
+  const [sparkleColorInput, setSparkleColorInput] = useState<string>(DEFAULT_SPARKLE_PARTICLE.toUpperCase());
+  const [dustColorInput, setDustColorInput] = useState<string>(DEFAULT_DUST_PARTICLE.toUpperCase());
+  const [spectrumRainbowColorful, setSpectrumRainbowColorful] = useState<boolean>(true);
+
   const effectForCanvas = useMemo((): EffectParams | undefined => {
     if (effectType === "none") return undefined;
     const base: EffectParams = { type: effectType, density: effectDensity };
@@ -399,20 +403,24 @@ const Home: NextPage = () => {
       base.weatherAngleDeg = snowWeather.angleDeg;
       base.weatherAmount = snowWeather.amount;
       base.weatherColor = snowWeather.color;
+    } else if (effectType === "space" || effectType === "spaceConstant" || effectType === "spaceAudio") {
+      base.effectTintColor = spaceParticleColor;
+    } else if (effectType === "sparkle") {
+      base.effectTintColor = sparkleParticleColor;
+    } else if (effectType === "dust") {
+      base.effectTintColor = dustParticleColor;
     }
     return base;
-  }, [effectType, effectDensity, rainWeather, snowWeather]);
+  }, [
+    effectType,
+    effectDensity,
+    rainWeather,
+    snowWeather,
+    spaceParticleColor,
+    sparkleParticleColor,
+    dustParticleColor,
+  ]);
 
-  // スペクトラム調整
-  const [spectrumOpacityPercent, setSpectrumOpacityPercent] = useState<number>(10);  // 透過率0-100%、0=完全表示
-  const [spectrumFps, setSpectrumFps] = useState<number>(30);               // 1〜60
-  const [lineWidthWaveform, setLineWidthWaveform] = useState<number>(3.2);  // mode1
-  const [lineWidthCircle, setLineWidthCircle] = useState<number>(3.2);      // mode2
-  const [lineWidthSymWave, setLineWidthSymWave] = useState<number>(3.6);    // mode5
-  const [glycoColorSet, setGlycoColorSet] = useState<string>("amber");
-  const [spectrumColorPreset, setSpectrumColorPreset] = useState<SpectrumColorPresetKey>("white");
-  const [spectrumCustomHex, setSpectrumCustomHex] = useState<string>("#FFFFFF");
-  const [spectrumRainbowColorful, setSpectrumRainbowColorful] = useState<boolean>(true);
   const [recordVideoBitrateMbps, setRecordVideoBitrateMbps] = useState<number>(8);
   const [exportAudioBitrateKbps, setExportAudioBitrateKbps] = useState<128 | 192 | 256>(192);
 
@@ -432,8 +440,11 @@ const Home: NextPage = () => {
     localStorage.setItem("common_effectDensities", JSON.stringify(effectDensities));
     localStorage.setItem("common_glycoColorSet", glycoColorSet);
     localStorage.setItem("common_spectrumOpacityPercent", String(spectrumOpacityPercent));
-    localStorage.setItem("common_spectrumColorPreset", spectrumColorPreset);
-    localStorage.setItem("common_spectrumCustomHex", spectrumCustomHex);
+    localStorage.setItem("common_spectrumColorHex", spectrumColorHex);
+    localStorage.setItem("common_galleryTransitionMode", galleryTransitionMode);
+    localStorage.setItem("common_spaceParticleColor", spaceParticleColor);
+    localStorage.setItem("common_sparkleParticleColor", sparkleParticleColor);
+    localStorage.setItem("common_dustParticleColor", dustParticleColor);
     localStorage.setItem("common_spectrumRainbowColorful", spectrumRainbowColorful ? "1" : "0");
     localStorage.setItem("common_recordVideoBitrateMbps", String(recordVideoBitrateMbps));
     localStorage.setItem("common_exportAudioBitrateKbps", String(exportAudioBitrateKbps));
@@ -442,8 +453,11 @@ const Home: NextPage = () => {
     effectDensities,
     glycoColorSet,
     spectrumOpacityPercent,
-    spectrumColorPreset,
-    spectrumCustomHex,
+    spectrumColorHex,
+    galleryTransitionMode,
+    spaceParticleColor,
+    sparkleParticleColor,
+    dustParticleColor,
     spectrumRainbowColorful,
     recordVideoBitrateMbps,
     exportAudioBitrateKbps,
@@ -510,22 +524,30 @@ const Home: NextPage = () => {
     }
   };
 
+  const clampModeAdjustments = (adj: ModeAdjustments): ModeAdjustments => ({
+    scaleX: Math.min(5, Math.max(0.5, adj.scaleX)),
+    scaleY: Math.min(5, Math.max(0.5, adj.scaleY)),
+    offsetX: Math.min(150, Math.max(-150, Math.round(adj.offsetX))),
+    offsetY: Math.min(150, Math.max(-150, Math.round(adj.offsetY))),
+  });
+
   // レイアウト×モードの設定を読み込み
   const loadSettings = (layout: CanvasLayout, m: number): ModeAdjustments | null => {
     try {
       const key = getSettingsKey(layout, m);
       const saved = localStorage.getItem(key);
       if (saved) {
-        return JSON.parse(saved);
+        return clampModeAdjustments(JSON.parse(saved) as ModeAdjustments);
       }
       // 旧形式のキー（mode_size）にも対応
       const legacyKey = `spectrumSettings_${m}_${layout}`;
       const legacy = localStorage.getItem(legacyKey);
       if (legacy) {
-        const parsed = JSON.parse(legacy);
-        localStorage.setItem(key, legacy);
+        const parsed = JSON.parse(legacy) as ModeAdjustments;
+        const clamped = clampModeAdjustments(parsed);
+        localStorage.setItem(key, JSON.stringify(clamped));
         localStorage.removeItem(legacyKey);
-        return parsed;
+        return clamped;
       }
     } catch (error) {
       console.error("設定の読み込みに失敗しました:", error);
@@ -553,14 +575,17 @@ const Home: NextPage = () => {
         effectDensities,
         glycoColorSet,
         spectrumOpacityPercent,
-        spectrumColorPreset,
-        spectrumCustomHex,
+        spectrumColorHex,
         spectrumRainbowColorful,
         recordVideoBitrateMbps,
         exportAudioBitrateKbps,
         rendererType,
         rainWeather,
         snowWeather,
+        galleryTransitionMode,
+        spaceParticleColor,
+        sparkleParticleColor,
+        dustParticleColor,
       },
       spectrumSettings,
     };
@@ -580,7 +605,12 @@ const Home: NextPage = () => {
       "common_spectrumOpacityPercent",
       "common_spectrumColorPreset",
       "common_spectrumCustomHex",
+      "common_spectrumColorHex",
       "common_spectrumRainbowColorful",
+      "common_galleryTransitionMode",
+      "common_spaceParticleColor",
+      "common_sparkleParticleColor",
+      "common_dustParticleColor",
       "common_recordVideoBitrateMbps",
       "common_exportAudioBitrateKbps",
       "common_rainWeather",
@@ -633,15 +663,38 @@ const Home: NextPage = () => {
             setSpectrumOpacityPercent(v);
           }
         }
-        if (c.spectrumColorPreset && VALID_SPECTRUM_COLOR_PRESETS.includes(c.spectrumColorPreset)) {
-          localStorage.setItem("common_spectrumColorPreset", c.spectrumColorPreset);
-          setSpectrumColorPreset(c.spectrumColorPreset);
+        if (typeof c.spectrumColorHex === "string" && /^#[0-9a-fA-F]{6}$/.test(c.spectrumColorHex)) {
+          const hx = c.spectrumColorHex.toUpperCase();
+          localStorage.setItem("common_spectrumColorHex", hx);
+          setSpectrumColorHex(hx);
+          setSpectrumColorInput(hx);
+        } else if (c.spectrumColorPreset != null || typeof c.spectrumCustomHex === "string") {
+          const migrated = legacySpectrumPresetToHex(
+            c.spectrumColorPreset != null ? String(c.spectrumColorPreset) : "white",
+            typeof c.spectrumCustomHex === "string" ? c.spectrumCustomHex : undefined
+          );
+          localStorage.setItem("common_spectrumColorHex", migrated);
+          setSpectrumColorHex(migrated);
+          setSpectrumColorInput(migrated);
         }
-        if (typeof c.spectrumCustomHex === "string" && /^#[0-9a-fA-F]{6}$/.test(c.spectrumCustomHex)) {
-          const hx = c.spectrumCustomHex.toUpperCase();
-          localStorage.setItem("common_spectrumCustomHex", hx);
-          setSpectrumCustomHex(hx);
+        if (
+          c.galleryTransitionMode &&
+          isValidGalleryTransitionUserMode(String(c.galleryTransitionMode))
+        ) {
+          const gm = c.galleryTransitionMode as GalleryTransitionUserMode;
+          localStorage.setItem("common_galleryTransitionMode", gm);
+          setGalleryTransitionMode(gm);
         }
+        const applyParticle = (hex: unknown, storageKey: string, setter: (v: string) => void) => {
+          if (typeof hex === "string" && /^#[0-9a-fA-F]{6}$/.test(hex)) {
+            const u = hex.toUpperCase();
+            localStorage.setItem(storageKey, u);
+            setter(u);
+          }
+        };
+        applyParticle(c.spaceParticleColor, "common_spaceParticleColor", setSpaceParticleColor);
+        applyParticle(c.sparkleParticleColor, "common_sparkleParticleColor", setSparkleParticleColor);
+        applyParticle(c.dustParticleColor, "common_dustParticleColor", setDustParticleColor);
         if (c.spectrumRainbowColorful === true || c.spectrumRainbowColorful === false) {
           localStorage.setItem(
             "common_spectrumRainbowColorful",
@@ -704,7 +757,7 @@ const Home: NextPage = () => {
               if (!isNaN(m) && m >= 0 && m <= 7 && layoutData[mStr]) {
                 const adj = layoutData[mStr];
                 if (adj && typeof adj.scaleX === "number" && typeof adj.scaleY === "number" && typeof adj.offsetX === "number" && typeof adj.offsetY === "number") {
-                  saveSettings(layout, m, adj);
+                  saveSettings(layout, m, clampModeAdjustments(adj as ModeAdjustments));
                 }
               }
             });
@@ -795,6 +848,50 @@ const Home: NextPage = () => {
     setSnowColorInput(snowWeather.color.toUpperCase());
   }, [snowWeather.color]);
 
+  useEffect(() => {
+    setSpaceColorInput(spaceParticleColor.toUpperCase());
+  }, [spaceParticleColor]);
+
+  useEffect(() => {
+    setSparkleColorInput(sparkleParticleColor.toUpperCase());
+  }, [sparkleParticleColor]);
+
+  useEffect(() => {
+    setDustColorInput(dustParticleColor.toUpperCase());
+  }, [dustParticleColor]);
+
+  const galleryTransitionI18nKey = (mode: GalleryTransitionUserMode): string => {
+    const map: Record<GalleryTransitionUserMode, string> = {
+      none: "gallery.trNone",
+      random: "gallery.trRandom",
+      crossfade: "gallery.trCrossfade",
+      wipeLeft: "gallery.trWipeLeft",
+      wipeRight: "gallery.trWipeRight",
+      wipeUp: "gallery.trWipeUp",
+      wipeDown: "gallery.trWipeDown",
+      iris: "gallery.trIris",
+      slideLeft: "gallery.trSlideLeft",
+      slideRight: "gallery.trSlideRight",
+      slideUp: "gallery.trSlideUp",
+      slideDown: "gallery.trSlideDown",
+      zoomIn: "gallery.trZoomIn",
+      zoomOut: "gallery.trZoomOut",
+      checker: "gallery.trChecker",
+      venetian: "gallery.trVenetian",
+      diagonalWipe: "gallery.trDiagonalWipe",
+      flash: "gallery.trFlash",
+    };
+    return map[mode];
+  };
+
+  const paletteGridSx = {
+    display: "grid",
+    gridTemplateColumns: "repeat(10, 28px)",
+    gap: "6px",
+    justifyContent: "center",
+    mb: 1,
+  } as const;
+
   const onChangeMode = (event: SelectChangeEvent<string>) => {
     const newMode = Number(event.target.value);
     saveSettings(activeCanvasLayout, mode, modeAdjustments);
@@ -842,6 +939,8 @@ const Home: NextPage = () => {
   const imageFileName =
     imageGallery.length === 0 ? "" : imageGallery[activeGalleryIndex].name;
 
+  const prevGalleryIndexForTransitionRef = useRef<number | null>(null);
+
   useEffect(() => {
     if (imageGallery.length === 0) {
       setGalleryIndex(0);
@@ -849,6 +948,37 @@ const Home: NextPage = () => {
     }
     setGalleryIndex((i) => Math.min(i, imageGallery.length - 1));
   }, [imageGallery.length]);
+
+  useEffect(() => {
+    if (imageGallery.length <= 1) {
+      prevGalleryIndexForTransitionRef.current =
+        imageGallery.length === 0 ? null : activeGalleryIndex;
+      clearGalleryImageTransition();
+      return;
+    }
+    const prev = prevGalleryIndexForTransitionRef.current;
+    if (prev === null) {
+      prevGalleryIndexForTransitionRef.current = activeGalleryIndex;
+      return;
+    }
+    if (prev !== activeGalleryIndex) {
+      const from = imageGallery[prev]?.img;
+      const to = imageGallery[activeGalleryIndex]?.img;
+      if (from && to && galleryTransitionMode !== "none") {
+        let kind: (typeof GALLERY_TRANSITION_RANDOM_POOL)[number];
+        if (galleryTransitionMode === "random") {
+          kind =
+            GALLERY_TRANSITION_RANDOM_POOL[
+              Math.floor(Math.random() * GALLERY_TRANSITION_RANDOM_POOL.length)
+            ]!;
+        } else {
+          kind = galleryTransitionMode as (typeof GALLERY_TRANSITION_RANDOM_POOL)[number];
+        }
+        startGalleryImageTransition(from, to, kind);
+      }
+      prevGalleryIndexForTransitionRef.current = activeGalleryIndex;
+    }
+  }, [activeGalleryIndex, imageGallery, galleryTransitionMode]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -942,13 +1072,39 @@ const Home: NextPage = () => {
       }
     }
 
-    const savedSpecPreset = localStorage.getItem("common_spectrumColorPreset");
-    if (savedSpecPreset && VALID_SPECTRUM_COLOR_PRESETS.includes(savedSpecPreset as SpectrumColorPresetKey)) {
-      setSpectrumColorPreset(savedSpecPreset as SpectrumColorPresetKey);
+    const savedSpectrumHex = localStorage.getItem("common_spectrumColorHex");
+    if (savedSpectrumHex && /^#[0-9a-fA-F]{6}$/.test(savedSpectrumHex)) {
+      const u = savedSpectrumHex.toUpperCase();
+      setSpectrumColorHex(u);
+      setSpectrumColorInput(u);
+    } else {
+      const legacyPreset = localStorage.getItem("common_spectrumColorPreset");
+      const legacyCustom = localStorage.getItem("common_spectrumCustomHex");
+      const migrated = legacySpectrumPresetToHex(legacyPreset ?? undefined, legacyCustom ?? undefined);
+      setSpectrumColorHex(migrated);
+      setSpectrumColorInput(migrated);
     }
-    const savedSpecHex = localStorage.getItem("common_spectrumCustomHex");
-    if (savedSpecHex && /^#[0-9a-fA-F]{6}$/.test(savedSpecHex)) {
-      setSpectrumCustomHex(savedSpecHex.toUpperCase());
+    const savedGalTransition = localStorage.getItem("common_galleryTransitionMode");
+    if (savedGalTransition && isValidGalleryTransitionUserMode(savedGalTransition)) {
+      setGalleryTransitionMode(savedGalTransition as GalleryTransitionUserMode);
+    }
+    const savedSpaceC = localStorage.getItem("common_spaceParticleColor");
+    if (savedSpaceC && /^#[0-9a-fA-F]{6}$/.test(savedSpaceC)) {
+      const u = savedSpaceC.toUpperCase();
+      setSpaceParticleColor(u);
+      setSpaceColorInput(u);
+    }
+    const savedSparkleC = localStorage.getItem("common_sparkleParticleColor");
+    if (savedSparkleC && /^#[0-9a-fA-F]{6}$/.test(savedSparkleC)) {
+      const u = savedSparkleC.toUpperCase();
+      setSparkleParticleColor(u);
+      setSparkleColorInput(u);
+    }
+    const savedDustC = localStorage.getItem("common_dustParticleColor");
+    if (savedDustC && /^#[0-9a-fA-F]{6}$/.test(savedDustC)) {
+      const u = savedDustC.toUpperCase();
+      setDustParticleColor(u);
+      setDustColorInput(u);
     }
     const savedRainbow = localStorage.getItem("common_spectrumRainbowColorful");
     if (savedRainbow === "0") setSpectrumRainbowColorful(false);
@@ -1085,8 +1241,7 @@ const Home: NextPage = () => {
       lineWidthCircle,
       lineWidthSymWave,
       glycoColorSet,
-      spectrumColorPreset,
-      spectrumCustomHex,
+      spectrumColorHex,
       spectrumRainbowColorful,
     };
 
@@ -1133,8 +1288,7 @@ const Home: NextPage = () => {
     lineWidthWaveform,
     lineWidthCircle,
     lineWidthSymWave,
-    spectrumColorPreset,
-    spectrumCustomHex,
+    spectrumColorHex,
     spectrumRainbowColorful,
   ]);
 
@@ -1514,8 +1668,7 @@ const Home: NextPage = () => {
       lineWidthCircle,
       lineWidthSymWave,
       glycoColorSet,
-      spectrumColorPreset,
-      spectrumCustomHex,
+      spectrumColorHex,
       spectrumRainbowColorful,
     };
     if (canvasRef.current && analyserRef.current) {
@@ -1712,8 +1865,15 @@ const Home: NextPage = () => {
     setSnowWeather(DEFAULT_SNOW_WEATHER);
     setTargetLufs(-14);
     setTargetLufsCustom("-14");
-    setSpectrumColorPreset("white");
-    setSpectrumCustomHex("#FFFFFF");
+    setSpectrumColorHex("#FFFFFF");
+    setSpectrumColorInput("#FFFFFF");
+    setGalleryTransitionMode("crossfade");
+    setSpaceParticleColor(DEFAULT_SPACE_PARTICLE);
+    setSparkleParticleColor(DEFAULT_SPARKLE_PARTICLE);
+    setDustParticleColor(DEFAULT_DUST_PARTICLE);
+    setSpaceColorInput(DEFAULT_SPACE_PARTICLE.toUpperCase());
+    setSparkleColorInput(DEFAULT_SPARKLE_PARTICLE.toUpperCase());
+    setDustColorInput(DEFAULT_DUST_PARTICLE.toUpperCase());
     setSpectrumRainbowColorful(true);
     setRecordVideoBitrateMbps(8);
     setExportAudioBitrateKbps(192);
@@ -1858,72 +2018,93 @@ const Home: NextPage = () => {
               </Typography>
             </Box>
             {imageGallery.length > 0 && (
-              <Box
-                sx={{
-                  display: "flex",
-                  flexWrap: "wrap",
-                  gap: 1,
-                  alignItems: "center",
-                  justifyContent: "center",
-                  width: "100%",
-                }}
-              >
-                <IconButton
-                  size="small"
-                  disabled={imageGallery.length <= 1}
-                  onClick={() =>
-                    setGalleryIndex(
-                      (i) => (i - 1 + imageGallery.length) % imageGallery.length
-                    )
-                  }
-                  aria-label="gallery-prev"
+              <>
+                <Box
+                  sx={{
+                    display: "flex",
+                    flexWrap: "wrap",
+                    gap: 1,
+                    alignItems: "center",
+                    justifyContent: "center",
+                    width: "100%",
+                  }}
                 >
-                  <NavigateBefore />
-                </IconButton>
-                <Typography variant="caption" color="textSecondary">
-                  {t("gallery.counter", {
-                    current: activeGalleryIndex + 1,
-                    total: imageGallery.length,
-                  })}
-                </Typography>
-                <IconButton
-                  size="small"
-                  disabled={imageGallery.length <= 1}
-                  onClick={() =>
-                    setGalleryIndex((i) => (i + 1) % imageGallery.length)
-                  }
-                  aria-label="gallery-next"
-                >
-                  <NavigateNext />
-                </IconButton>
-                <FormControlLabel
-                  control={
-                    <Switch
-                      size="small"
-                      checked={galleryAutoEnabled}
-                      onChange={(_, c) => setGalleryAutoEnabled(c)}
-                      disabled={imageGallery.length <= 1}
-                    />
-                  }
-                  label={t("gallery.autoSwitch")}
-                  sx={{ ml: 0.5 }}
-                />
-                <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, minWidth: 140 }}>
-                  <Typography variant="caption" color="textSecondary" sx={{ whiteSpace: "nowrap" }}>
-                    {t("gallery.autoInterval", { sec: galleryAutoSec })}
-                  </Typography>
-                  <Slider
+                  <IconButton
                     size="small"
-                    value={galleryAutoSec}
-                    min={2}
-                    max={30}
-                    step={1}
-                    disabled={imageGallery.length <= 1 || !galleryAutoEnabled}
-                    onChange={(_, v) => setGalleryAutoSec(v as number)}
-                    sx={{ width: 100 }}
+                    disabled={imageGallery.length <= 1}
+                    onClick={() =>
+                      setGalleryIndex(
+                        (i) => (i - 1 + imageGallery.length) % imageGallery.length
+                      )
+                    }
+                    aria-label="gallery-prev"
+                  >
+                    <NavigateBefore />
+                  </IconButton>
+                  <Typography variant="caption" color="textSecondary">
+                    {t("gallery.counter", {
+                      current: activeGalleryIndex + 1,
+                      total: imageGallery.length,
+                    })}
+                  </Typography>
+                  <IconButton
+                    size="small"
+                    disabled={imageGallery.length <= 1}
+                    onClick={() =>
+                      setGalleryIndex((i) => (i + 1) % imageGallery.length)
+                    }
+                    aria-label="gallery-next"
+                  >
+                    <NavigateNext />
+                  </IconButton>
+                  <FormControlLabel
+                    control={
+                      <Switch
+                        size="small"
+                        checked={galleryAutoEnabled}
+                        onChange={(_, c) => setGalleryAutoEnabled(c)}
+                        disabled={imageGallery.length <= 1}
+                      />
+                    }
+                    label={t("gallery.autoSwitch")}
+                    sx={{ ml: 0.5 }}
                   />
+                  <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, minWidth: 140 }}>
+                    <Typography variant="caption" color="textSecondary" sx={{ whiteSpace: "nowrap" }}>
+                      {t("gallery.autoInterval", { sec: galleryAutoSec })}
+                    </Typography>
+                    <Slider
+                      size="small"
+                      value={galleryAutoSec}
+                      min={2}
+                      max={30}
+                      step={1}
+                      disabled={imageGallery.length <= 1 || !galleryAutoEnabled}
+                      onChange={(_, v) => setGalleryAutoSec(v as number)}
+                      sx={{ width: 100 }}
+                    />
+                  </Box>
                 </Box>
-              </Box>
+                {imageGallery.length > 1 && (
+                  <FormControl size="small" sx={{ width: "100%", maxWidth: 440, mt: 1.5, mx: "auto" }}>
+                    <InputLabel id="gallery-transition-label">{t("gallery.imageTransition")}</InputLabel>
+                    <Select
+                      labelId="gallery-transition-label"
+                      value={galleryTransitionMode}
+                      label={t("gallery.imageTransition")}
+                      onChange={(e) =>
+                        setGalleryTransitionMode(e.target.value as GalleryTransitionUserMode)
+                      }
+                    >
+                      {GALLERY_TRANSITION_SELECT_OPTIONS.map((m) => (
+                        <MenuItem key={m} value={m}>
+                          {t(galleryTransitionI18nKey(m))}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                )}
+              </>
             )}
             <Box sx={{ display: "flex", gap: 1.5, alignItems: "center", justifyContent: "center", width: "100%" }}>
               <Button
@@ -2029,39 +2210,57 @@ const Home: NextPage = () => {
                     <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600 }}>
                       {t("spectrumWave.title")}
                     </Typography>
-                    <FormControl size="small" fullWidth sx={{ mb: 2 }}>
-                      <InputLabel>{t("spectrumWave.preset")}</InputLabel>
-                      <Select
-                        value={spectrumColorPreset}
-                        label={t("spectrumWave.preset")}
-                        onChange={(e) => setSpectrumColorPreset(e.target.value as SpectrumColorPresetKey)}
-                      >
-                        <MenuItem value="white">{t("spectrumWave.presetWhite")}</MenuItem>
-                        <MenuItem value="cyan">{t("spectrumWave.presetCyan")}</MenuItem>
-                        <MenuItem value="magenta">{t("spectrumWave.presetMagenta")}</MenuItem>
-                        <MenuItem value="green">{t("spectrumWave.presetGreen")}</MenuItem>
-                        <MenuItem value="gold">{t("spectrumWave.presetGold")}</MenuItem>
-                        <MenuItem value="custom">{t("spectrumWave.presetCustom")}</MenuItem>
-                      </Select>
-                    </FormControl>
-                    {spectrumColorPreset === "custom" && (
-                      <TextField
-                        size="small"
-                        fullWidth
-                        label={t("spectrumWave.customHex")}
-                        value={spectrumCustomHex}
-                        onChange={(e) => {
-                          let v = e.target.value.trim();
-                          if (v.length > 0 && !v.startsWith("#")) v = `#${v}`;
-                          if (v.length <= 7) setSpectrumCustomHex(v.toUpperCase());
-                        }}
-                        error={!/^#[0-9A-F]{6}$/.test(spectrumCustomHex)}
-                        helperText={
-                          !/^#[0-9A-F]{6}$/.test(spectrumCustomHex) ? t("spectrumWave.customInvalid") : undefined
+                    <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 0.5 }}>
+                      {t("effect.weatherColor")}
+                    </Typography>
+                    <Box sx={paletteGridSx}>
+                      {DEFAULT_COLOR_PALETTE_20.map((c) => (
+                        <Box
+                          key={`spec-${c}`}
+                          component="button"
+                          type="button"
+                          aria-label={`${t("spectrumWave.title")} ${c}`}
+                          onClick={() => {
+                            const u = c.toUpperCase();
+                            setSpectrumColorHex(u);
+                            setSpectrumColorInput(u);
+                          }}
+                          sx={{
+                            width: 28,
+                            height: 28,
+                            borderRadius: 0.75,
+                            border:
+                              spectrumColorHex.toUpperCase() === c.toUpperCase()
+                                ? "2px solid #111"
+                                : "1px solid #999",
+                            backgroundColor: c,
+                            cursor: "pointer",
+                            p: 0,
+                          }}
+                        />
+                      ))}
+                    </Box>
+                    <TextField
+                      size="small"
+                      fullWidth
+                      label={t("effect.weatherColorCode")}
+                      value={spectrumColorInput}
+                      onChange={(e) => {
+                        const next = normalizeHexColorInput(e.target.value);
+                        setSpectrumColorInput(next);
+                        if (isHexColorCode(next)) {
+                          setSpectrumColorHex(next);
                         }
-                        sx={{ mb: 2 }}
-                      />
-                    )}
+                      }}
+                      error={spectrumColorInput.length > 0 && !isHexColorCode(spectrumColorInput)}
+                      helperText={
+                        spectrumColorInput.length > 0 && !isHexColorCode(spectrumColorInput)
+                          ? t("effect.weatherColorCodeInvalid")
+                          : " "
+                      }
+                      inputProps={{ inputMode: "text", pattern: "#?[0-9a-fA-F]{6}" }}
+                      sx={{ mb: 2 }}
+                    />
                     <FormControlLabel
                       control={
                         <Switch
@@ -2157,13 +2356,14 @@ const Home: NextPage = () => {
                     <Slider
                       value={modeAdjustments.scaleX}
                       onChange={(_, value) => handleAdjustmentChange("scaleX", value as number)}
-                      min={0.1}
-                      max={3.0}
+                      min={0.5}
+                      max={5.0}
                       step={0.1}
                       marks={[
                         { value: 0.5, label: "0.5" },
                         { value: 1.0, label: "1.0" },
                         { value: 2.0, label: "2.0" },
+                        { value: 5.0, label: "5.0" },
                       ]}
                     />
                     <Typography gutterBottom sx={{ mt: 3 }}>
@@ -2172,18 +2372,19 @@ const Home: NextPage = () => {
                     <Slider
                       value={modeAdjustments.scaleY}
                       onChange={(_, value) => handleAdjustmentChange("scaleY", value as number)}
-                      min={0.1}
-                      max={3.0}
+                      min={0.5}
+                      max={5.0}
                       step={0.1}
                       marks={[
                         { value: 0.5, label: "0.5" },
                         { value: 1.0, label: "1.0" },
                         { value: 2.0, label: "2.0" },
+                        { value: 5.0, label: "5.0" },
                       ]}
                     />
                     <Typography gutterBottom sx={{ mt: 3 }}>
                       {t("displayVolume.offsetX", {
-                        value: modeAdjustments.offsetX.toFixed(1),
+                        value: Math.round(modeAdjustments.offsetX),
                         px: Math.round((getCanvasDimensions(activeCanvasLayout).width * modeAdjustments.offsetX) / 100),
                       })}
                     </Typography>
@@ -2201,7 +2402,7 @@ const Home: NextPage = () => {
                     />
                     <Typography gutterBottom sx={{ mt: 3 }}>
                       {t("displayVolume.offsetY", {
-                        value: modeAdjustments.offsetY.toFixed(1),
+                        value: Math.round(modeAdjustments.offsetY),
                         px: Math.round((getCanvasDimensions(activeCanvasLayout).height * modeAdjustments.offsetY) / 100),
                       })}
                     </Typography>
@@ -2288,31 +2489,193 @@ const Home: NextPage = () => {
                       </Box>
                     )}
                     {isSpaceEffect && (
-                      <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1, justifyContent: "center", alignItems: "center", mt: 1.5 }}>
-                        <Typography variant="caption" color="textSecondary">
-                          {t("effect.spaceType")}
+                      <>
+                        <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1, justifyContent: "center", alignItems: "center", mt: 1.5 }}>
+                          <Typography variant="caption" color="textSecondary">
+                            {t("effect.spaceType")}
+                          </Typography>
+                          <Button
+                            variant={effectType === "space" ? "contained" : "outlined"}
+                            onClick={() => setEffectType("space")}
+                            size="small"
+                          >
+                            {t("effect.space1")}
+                          </Button>
+                          <Button
+                            variant={effectType === "spaceConstant" ? "contained" : "outlined"}
+                            onClick={() => setEffectType("spaceConstant")}
+                            size="small"
+                          >
+                            {t("effect.space2")}
+                          </Button>
+                          <Button
+                            variant={effectType === "spaceAudio" ? "contained" : "outlined"}
+                            onClick={() => setEffectType("spaceAudio")}
+                            size="small"
+                          >
+                            {t("effect.space3")}
+                          </Button>
+                        </Box>
+                        <Box sx={{ width: "100%", maxWidth: 440, mt: 2, mx: "auto" }}>
+                          <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 0.5 }}>
+                            {t("effect.weatherColor")}
+                          </Typography>
+                          <Box sx={paletteGridSx}>
+                            {DEFAULT_COLOR_PALETTE_20.map((c) => (
+                              <Box
+                                key={`space-${c}`}
+                                component="button"
+                                type="button"
+                                aria-label={`${t("effect.space")} ${c}`}
+                                onClick={() => {
+                                  const u = c.toUpperCase();
+                                  setSpaceParticleColor(u);
+                                  setSpaceColorInput(u);
+                                }}
+                                sx={{
+                                  width: 28,
+                                  height: 28,
+                                  borderRadius: 0.75,
+                                  border:
+                                    spaceParticleColor.toUpperCase() === c.toUpperCase()
+                                      ? "2px solid #111"
+                                      : "1px solid #999",
+                                  backgroundColor: c,
+                                  cursor: "pointer",
+                                  p: 0,
+                                }}
+                              />
+                            ))}
+                          </Box>
+                          <TextField
+                            size="small"
+                            label={t("effect.weatherColorCode")}
+                            value={spaceColorInput}
+                            onChange={(e) => {
+                              const next = normalizeHexColorInput(e.target.value);
+                              setSpaceColorInput(next);
+                              if (isHexColorCode(next)) {
+                                setSpaceParticleColor(next);
+                              }
+                            }}
+                            error={spaceColorInput.length > 0 && !isHexColorCode(spaceColorInput)}
+                            helperText={
+                              spaceColorInput.length > 0 && !isHexColorCode(spaceColorInput)
+                                ? t("effect.weatherColorCodeInvalid")
+                                : " "
+                            }
+                            inputProps={{ inputMode: "text", pattern: "#?[0-9a-fA-F]{6}" }}
+                            sx={{ width: 220, mt: 0.5 }}
+                          />
+                        </Box>
+                      </>
+                    )}
+                    {effectType === "sparkle" && (
+                      <Box sx={{ width: "100%", maxWidth: 440, mt: 2, mx: "auto" }}>
+                        <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 0.5 }}>
+                          {t("effect.weatherColor")}
                         </Typography>
-                        <Button
-                          variant={effectType === "space" ? "contained" : "outlined"}
-                          onClick={() => setEffectType("space")}
+                        <Box sx={paletteGridSx}>
+                          {DEFAULT_COLOR_PALETTE_20.map((c) => (
+                            <Box
+                              key={`sparkle-${c}`}
+                              component="button"
+                              type="button"
+                              aria-label={`${t("effect.sparkle")} ${c}`}
+                              onClick={() => {
+                                const u = c.toUpperCase();
+                                setSparkleParticleColor(u);
+                                setSparkleColorInput(u);
+                              }}
+                              sx={{
+                                width: 28,
+                                height: 28,
+                                borderRadius: 0.75,
+                                border:
+                                  sparkleParticleColor.toUpperCase() === c.toUpperCase()
+                                    ? "2px solid #111"
+                                    : "1px solid #999",
+                                backgroundColor: c,
+                                cursor: "pointer",
+                                p: 0,
+                              }}
+                            />
+                          ))}
+                        </Box>
+                        <TextField
                           size="small"
-                        >
-                          {t("effect.space1")}
-                        </Button>
-                        <Button
-                          variant={effectType === "spaceConstant" ? "contained" : "outlined"}
-                          onClick={() => setEffectType("spaceConstant")}
+                          label={t("effect.weatherColorCode")}
+                          value={sparkleColorInput}
+                          onChange={(e) => {
+                            const next = normalizeHexColorInput(e.target.value);
+                            setSparkleColorInput(next);
+                            if (isHexColorCode(next)) {
+                              setSparkleParticleColor(next);
+                            }
+                          }}
+                          error={sparkleColorInput.length > 0 && !isHexColorCode(sparkleColorInput)}
+                          helperText={
+                            sparkleColorInput.length > 0 && !isHexColorCode(sparkleColorInput)
+                              ? t("effect.weatherColorCodeInvalid")
+                              : " "
+                          }
+                          inputProps={{ inputMode: "text", pattern: "#?[0-9a-fA-F]{6}" }}
+                          sx={{ width: 220, mt: 0.5 }}
+                        />
+                      </Box>
+                    )}
+                    {effectType === "dust" && (
+                      <Box sx={{ width: "100%", maxWidth: 440, mt: 2, mx: "auto" }}>
+                        <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 0.5 }}>
+                          {t("effect.weatherColor")}
+                        </Typography>
+                        <Box sx={paletteGridSx}>
+                          {DEFAULT_COLOR_PALETTE_20.map((c) => (
+                            <Box
+                              key={`dust-${c}`}
+                              component="button"
+                              type="button"
+                              aria-label={`${t("effect.dust")} ${c}`}
+                              onClick={() => {
+                                const u = c.toUpperCase();
+                                setDustParticleColor(u);
+                                setDustColorInput(u);
+                              }}
+                              sx={{
+                                width: 28,
+                                height: 28,
+                                borderRadius: 0.75,
+                                border:
+                                  dustParticleColor.toUpperCase() === c.toUpperCase()
+                                    ? "2px solid #111"
+                                    : "1px solid #999",
+                                backgroundColor: c,
+                                cursor: "pointer",
+                                p: 0,
+                              }}
+                            />
+                          ))}
+                        </Box>
+                        <TextField
                           size="small"
-                        >
-                          {t("effect.space2")}
-                        </Button>
-                        <Button
-                          variant={effectType === "spaceAudio" ? "contained" : "outlined"}
-                          onClick={() => setEffectType("spaceAudio")}
-                          size="small"
-                        >
-                          {t("effect.space3")}
-                        </Button>
+                          label={t("effect.weatherColorCode")}
+                          value={dustColorInput}
+                          onChange={(e) => {
+                            const next = normalizeHexColorInput(e.target.value);
+                            setDustColorInput(next);
+                            if (isHexColorCode(next)) {
+                              setDustParticleColor(next);
+                            }
+                          }}
+                          error={dustColorInput.length > 0 && !isHexColorCode(dustColorInput)}
+                          helperText={
+                            dustColorInput.length > 0 && !isHexColorCode(dustColorInput)
+                              ? t("effect.weatherColorCodeInvalid")
+                              : " "
+                          }
+                          inputProps={{ inputMode: "text", pattern: "#?[0-9a-fA-F]{6}" }}
+                          sx={{ width: 220, mt: 0.5 }}
+                        />
                       </Box>
                     )}
                     {effectType === "rain" && (
@@ -2341,8 +2704,8 @@ const Home: NextPage = () => {
                           <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 0.5 }}>
                             {t("effect.weatherColor")}
                           </Typography>
-                          <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.75, mb: 1 }}>
-                            {BASIC_COLOR_PALETTE_16.map((c) => (
+                          <Box sx={paletteGridSx}>
+                            {DEFAULT_COLOR_PALETTE_20.map((c) => (
                               <Box
                                 key={`rain-${c}`}
                                 component="button"
@@ -2350,8 +2713,8 @@ const Home: NextPage = () => {
                                 aria-label={`${t("effect.weatherColor")} ${c}`}
                                 onClick={() => setRainWeather((p) => ({ ...p, color: c }))}
                                 sx={{
-                                  width: 24,
-                                  height: 24,
+                                  width: 28,
+                                  height: 28,
                                   borderRadius: 0.75,
                                   border: rainWeather.color.toUpperCase() === c.toUpperCase() ? "2px solid #111" : "1px solid #999",
                                   backgroundColor: c,
@@ -2410,8 +2773,8 @@ const Home: NextPage = () => {
                           <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 0.5 }}>
                             {t("effect.weatherColor")}
                           </Typography>
-                          <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.75, mb: 1 }}>
-                            {BASIC_COLOR_PALETTE_16.map((c) => (
+                          <Box sx={paletteGridSx}>
+                            {DEFAULT_COLOR_PALETTE_20.map((c) => (
                               <Box
                                 key={`snow-${c}`}
                                 component="button"
@@ -2419,8 +2782,8 @@ const Home: NextPage = () => {
                                 aria-label={`${t("effect.weatherColor")} ${c}`}
                                 onClick={() => setSnowWeather((p) => ({ ...p, color: c }))}
                                 sx={{
-                                  width: 24,
-                                  height: 24,
+                                  width: 28,
+                                  height: 28,
                                   borderRadius: 0.75,
                                   border: snowWeather.color.toUpperCase() === c.toUpperCase() ? "2px solid #111" : "1px solid #999",
                                   backgroundColor: c,
