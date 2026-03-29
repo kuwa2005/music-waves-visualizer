@@ -82,6 +82,9 @@ export function getSpectrumSecondaryRgb(settings: SpectrumSettings): [number, nu
   ];
 }
 
+/** 対数マップの上限ビン（ナイキストのこの割合まで）。それ以上は音楽では無音に近く右端が死にやすい */
+const GLYCO_LOG_BIN_MAX_FRAC = 0.66;
+
 /**
  * グライコ風（モード6）: バー index を FFT ビンへ対数周波数で対応付け。
  * 線形割り当てだと右側がナイキスト近傍の高域のみになり、音楽では無音に近く見える問題を避ける。
@@ -91,11 +94,34 @@ export function glycoBarToFftBin(i: number, barsLength: number, bufferLength: nu
   if (barsLength === 1) return Math.min(1, bufferLength - 1);
   const t = i / (barsLength - 1);
   const minB = 1;
-  const maxB = bufferLength - 1;
+  const maxB = Math.max(minB + 2, Math.floor((bufferLength - 1) * GLYCO_LOG_BIN_MAX_FRAC));
   const lnLo = Math.log(minB);
   const lnHi = Math.log(maxB);
   const b = Math.exp(lnLo + t * (lnHi - lnLo));
   return Math.min(maxB, Math.max(0, Math.floor(b)));
+}
+
+/**
+ * グライコ用生エネルギー。右端数本は±2ビンの最大を取り、きらびゆる反応を補う。
+ */
+export function glycoBarRawEnergy(
+  i: number,
+  barsLength: number,
+  bufferLength: number,
+  bufferData: Uint8Array
+): number {
+  const c = glycoBarToFftBin(i, barsLength, bufferLength);
+  if (i < barsLength - 5) {
+    return bufferData[c];
+  }
+  let m = bufferData[c];
+  for (let d = -2; d <= 2; d++) {
+    const idx = c + d;
+    if (idx >= 0 && idx < bufferLength) {
+      m = Math.max(m, bufferData[idx]);
+    }
+  }
+  return m;
 }
 
 /** グライコ風の色セット: バー色・ピーク色 [r,g,b] 0-255 */
@@ -582,17 +608,19 @@ export const drawBars = (
     analyser.getByteFrequencyData(bufferData);
     const barsLength = 64;
     const barWidth = canvasWidth / barsLength;
-    const scale = (canvasHeight / 255) * 1.2;
+    const scale = (canvasHeight / 255) * 1.05;
     const holdMs = 350;
     const decayPerFrame = 2.5;
     const now = performance.now();
     const colorSet = settings.glycoColorSet ?? "amber";
 
-    // 高音域ほどわずかに感度アップ（全帯域MAXにならない程度）
+    // 対数マップ後は低〜中域の生値が大きく取りやすいので、ガンマで頭を抑えつつ高音だけわずかに持ち上げる
     const getAdjustedValue = (i: number, rawValue: number) => {
-      const t = i / barsLength; // 0=低音, 1=高音
-      const gain = 1 + t * 0.25; // 高音域で最大1.25倍
-      return Math.min(255, rawValue * gain);
+      const t = i / (barsLength - 1);
+      const clamped = Math.min(255, Math.max(0, rawValue));
+      const shaped = 255 * Math.pow(clamped / 255, 0.9);
+      const gain = 1 + t * 0.06;
+      return Math.min(255, shaped * gain);
     };
 
     const peakState = (drawBars as any)._glycoPeak ?? { peak: [] as number[], lastPeakTime: [] as number[], lastMode: -1 };
@@ -626,7 +654,7 @@ export const drawBars = (
     const peakLineWidth = 5; // ピーク「-」を太く
 
     for (let i = 0; i < barsLength; i++) {
-      const rawValue = bufferData[glycoBarToFftBin(i, barsLength, bufferLength)];
+      const rawValue = glycoBarRawEnergy(i, barsLength, bufferLength, bufferData);
       const value = getAdjustedValue(i, rawValue);
       const barHeight = Math.min(value * scale, canvasHeight);
       const x = i * barWidth;

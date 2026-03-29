@@ -6,7 +6,7 @@
 - **`npm run build:html:lil-la`**: One-shot static build with `NEXT_PUBLIC_SITE_URL=https://lil.la` for [lil.la/visualizer](https://lil.la/visualizer/) (canonical / OG). Documented in [docs/BUILD.md](./docs/BUILD.md), [README](./README.md), and [`.env.production.example`](./.env.production.example).
 
 ### Changed
-- **Mode 6 (glyco)**: Frequency bars now map FFT bins with **log-spaced indices** (`glycoBarToFftBin`) so the right side uses musically relevant bands instead of a linear slice into mostly empty high-frequency bins (Canvas 2D + WebGL).
+- **Mode 6 (glyco)**: Frequency bars use **log-spaced indices** with an upper bin cap (`GLYCO_LOG_BIN_MAX_FRAC`), **local max** over ±2 bins on the rightmost bars (`glycoBarRawEnergy`), softer **gamma + treble gain**, and slightly lower **vertical scale** to reduce MAX clipping after the log remap (Canvas 2D + WebGL).
 - **Gallery auto-advance**: Enabled automatically only when the gallery goes from one image to **two or more**; turned **off** when only one or zero images remain. Manual OFF is kept when adding more images without dropping below two. Interval `common_galleryAutoSec` remains saved; `common_galleryAutoEnabled` is no longer persisted (removed on load).
 - **SEO / HTML**: Expanded `<meta description>`, keywords, robots, canonical (when `NEXT_PUBLIC_SITE_URL` or `NEXT_PUBLIC_DOMAIN`), Open Graph / Twitter cards, `theme-color`, JSON-LD `WebApplication`, `favicon`/`apple-touch-icon` paths with `assetBasePath`; added `pages/_document.tsx` (`lang="ja"`) and `public/robots.txt`. Documented `NEXT_PUBLIC_SITE_URL` in [docs/BUILD.md](./docs/BUILD.md).
 
