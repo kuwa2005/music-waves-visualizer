@@ -82,6 +82,22 @@ export function getSpectrumSecondaryRgb(settings: SpectrumSettings): [number, nu
   ];
 }
 
+/**
+ * グライコ風（モード6）: バー index を FFT ビンへ対数周波数で対応付け。
+ * 線形割り当てだと右側がナイキスト近傍の高域のみになり、音楽では無音に近く見える問題を避ける。
+ */
+export function glycoBarToFftBin(i: number, barsLength: number, bufferLength: number): number {
+  if (bufferLength < 2 || barsLength < 1) return 0;
+  if (barsLength === 1) return Math.min(1, bufferLength - 1);
+  const t = i / (barsLength - 1);
+  const minB = 1;
+  const maxB = bufferLength - 1;
+  const lnLo = Math.log(minB);
+  const lnHi = Math.log(maxB);
+  const b = Math.exp(lnLo + t * (lnHi - lnLo));
+  return Math.min(maxB, Math.max(0, Math.floor(b)));
+}
+
 /** グライコ風の色セット: バー色・ピーク色 [r,g,b] 0-255 */
 export const GLYCO_COLOR_SETS: Record<string, { bar: [number, number, number]; dash: [number, number, number] }> = {
   amber: { bar: [255, 180, 0], dash: [255, 220, 100] },
@@ -610,7 +626,7 @@ export const drawBars = (
     const peakLineWidth = 5; // ピーク「-」を太く
 
     for (let i = 0; i < barsLength; i++) {
-      const rawValue = bufferData[Math.floor((i / barsLength) * bufferLength)];
+      const rawValue = bufferData[glycoBarToFftBin(i, barsLength, bufferLength)];
       const value = getAdjustedValue(i, rawValue);
       const barHeight = Math.min(value * scale, canvasHeight);
       const x = i * barWidth;

@@ -9,6 +9,7 @@ import {
   GLYCO_GRADIENT_SETS,
   getSpectrumPrimaryRgb,
   getSpectrumSecondaryRgb,
+  glycoBarToFftBin,
 } from './Canvas';
 import {
   updateAndGetSpaceParticles,
@@ -1775,7 +1776,7 @@ function drawMode6Glyco(
   };
 
   for (let i = 0; i < barsLength; i++) {
-    const rawValue = bufferData[Math.floor((i / barsLength) * bufferLength)];
+    const rawValue = bufferData[glycoBarToFftBin(i, barsLength, bufferLength)];
     const value = getAdjustedValue(i, rawValue);
     const barHeight = Math.min(value * scale, canvasHeight);
     const x = i * barWidth;
