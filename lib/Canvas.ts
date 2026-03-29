@@ -124,6 +124,19 @@ export function glycoBarRawEnergy(
   return m;
 }
 
+/**
+ * グライコ縦ダイナミクス（Canvas/WebGL 共通）。
+ * 対数ビン寄せ後はバイト値が高めに出やすいので γ>1 でピークを圧縮し、描画側で GLYCO_BAR_VERTICAL_SCALE を掛けてヘッドルームを確保する。
+ */
+export const GLYCO_LEVEL_GAMMA = 1.18;
+export const GLYCO_BAR_VERTICAL_SCALE = 0.88;
+
+export function glycoAdjustedLevel(rawValue: number): number {
+  const clamped = Math.min(255, Math.max(0, rawValue));
+  const shaped = 255 * Math.pow(clamped / 255, GLYCO_LEVEL_GAMMA);
+  return Math.min(255, shaped);
+}
+
 /** グライコ風の色セット: バー色・ピーク色 [r,g,b] 0-255 */
 export const GLYCO_COLOR_SETS: Record<string, { bar: [number, number, number]; dash: [number, number, number] }> = {
   amber: { bar: [255, 180, 0], dash: [255, 220, 100] },
@@ -608,20 +621,11 @@ export const drawBars = (
     analyser.getByteFrequencyData(bufferData);
     const barsLength = 64;
     const barWidth = canvasWidth / barsLength;
-    const scale = (canvasHeight / 255) * 1.05;
+    const scale = (canvasHeight / 255) * GLYCO_BAR_VERTICAL_SCALE;
     const holdMs = 350;
     const decayPerFrame = 2.5;
     const now = performance.now();
     const colorSet = settings.glycoColorSet ?? "amber";
-
-    // 対数マップ後は低〜中域の生値が大きく取りやすいので、ガンマで頭を抑えつつ高音だけわずかに持ち上げる
-    const getAdjustedValue = (i: number, rawValue: number) => {
-      const t = i / (barsLength - 1);
-      const clamped = Math.min(255, Math.max(0, rawValue));
-      const shaped = 255 * Math.pow(clamped / 255, 0.9);
-      const gain = 1 + t * 0.06;
-      return Math.min(255, shaped * gain);
-    };
 
     const peakState = (drawBars as any)._glycoPeak ?? { peak: [] as number[], lastPeakTime: [] as number[], lastMode: -1 };
     if (peakState.lastMode !== 6) {
@@ -655,7 +659,7 @@ export const drawBars = (
 
     for (let i = 0; i < barsLength; i++) {
       const rawValue = glycoBarRawEnergy(i, barsLength, bufferLength, bufferData);
-      const value = getAdjustedValue(i, rawValue);
+      const value = glycoAdjustedLevel(rawValue);
       const barHeight = Math.min(value * scale, canvasHeight);
       const x = i * barWidth;
 

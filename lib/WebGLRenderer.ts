@@ -10,6 +10,8 @@ import {
   getSpectrumPrimaryRgb,
   getSpectrumSecondaryRgb,
   glycoBarRawEnergy,
+  glycoAdjustedLevel,
+  GLYCO_BAR_VERTICAL_SCALE,
 } from './Canvas';
 import {
   updateAndGetSpaceParticles,
@@ -1737,7 +1739,7 @@ function drawMode6Glyco(
   const bufferLength = bufferData.length;
   const barsLength = 64;
   const barWidth = canvasWidth / barsLength;
-  const scale = (canvasHeight / 255) * 1.05;
+  const scale = (canvasHeight / 255) * GLYCO_BAR_VERTICAL_SCALE;
   const holdMs = 350;
   const decayPerFrame = 2.5;
   const now = performance.now();
@@ -1746,14 +1748,6 @@ function drawMode6Glyco(
   const useVerticalGradient = colorSet === "verticalEQ";
   const useVerticalGradientFixed = colorSet === "verticalEQFixed";
   const peakLineWidth = 5; // ピーク「-」を太く
-
-  const getAdjustedValue = (i: number, rawValue: number) => {
-    const t = i / (barsLength - 1);
-    const clamped = Math.min(255, Math.max(0, rawValue));
-    const shaped = 255 * Math.pow(clamped / 255, 0.9);
-    const gain = 1 + t * 0.06;
-    return Math.min(255, shaped * gain);
-  };
 
   const effAdj: ModeAdjustments = { ...adj, scaleY: adj.scaleY / 3, scaleX: adj.scaleX };
 
@@ -1779,7 +1773,7 @@ function drawMode6Glyco(
 
   for (let i = 0; i < barsLength; i++) {
     const rawValue = glycoBarRawEnergy(i, barsLength, bufferLength, bufferData);
-    const value = getAdjustedValue(i, rawValue);
+    const value = glycoAdjustedLevel(rawValue);
     const barHeight = Math.min(value * scale, canvasHeight);
     const x = i * barWidth;
 
