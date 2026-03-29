@@ -6,7 +6,7 @@ A web application that creates audio waveform videos by loading image and music 
 
 https://lil.la/visualizer/
 
-When building the static bundle for that host, set `NEXT_PUBLIC_SITE_URL=https://lil.la` (no trailing slash) so Open Graph and `canonical` URLs resolve correctly — see [docs/BUILD.md](./docs/BUILD.md) and [`.env.production.example`](./.env.production.example).
+Static build with SEO-friendly absolute URLs for that host: `npm run build:html:lil-la` (or `NEXT_PUBLIC_SITE_URL=https://lil.la npm run build:html`). See [docs/BUILD.md](./docs/BUILD.md) and [`.env.production.example`](./.env.production.example).
 
 ### Screenshot
 

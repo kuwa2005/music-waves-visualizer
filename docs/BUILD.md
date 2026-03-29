@@ -52,8 +52,10 @@ node scripts/copy-ffmpeg-core.cjs
 このフォークの公開先の一例です（[Music Waves Visualizer(改)](https://lil.la/visualizer/)）。静的出力時は **ビルド時** に次のように **`NEXT_PUBLIC_SITE_URL`** を渡すと、SNS・検索向けメタの URL が `https://lil.la/visualizer/` 系になります。
 
 ```bash
-BUILD_HTML=1 NEXT_PUBLIC_SITE_URL=https://lil.la npm run build:html
+npm run build:html:lil-la
 ```
+
+（上記は `NEXT_PUBLIC_SITE_URL=https://lil.la` を付けたうえで `build:html` と同じ処理です。手書きするなら `NEXT_PUBLIC_SITE_URL=https://lil.la npm run build:html` でも同じ結果です。）
 
 テンプレートはリポジトリ直下の [`.env.production.example`](../.env.production.example) を参照してください。
 

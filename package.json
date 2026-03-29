@@ -11,6 +11,7 @@
     "dev": "next dev",
     "build": "next build",
     "build:html": "node scripts/copy-ffmpeg-core.cjs && mv pages/api .api.bak 2>/dev/null; BUILD_HTML=1 npx next build && npx next export -o out && mv .api.bak pages/api 2>/dev/null; rm -rf visualizer && mkdir -p visualizer && cp -r out/* visualizer && cp htaccess-for-export visualizer/.htaccess && cp html-deploy-README.txt visualizer/README.txt",
+    "build:html:lil-la": "NEXT_PUBLIC_SITE_URL=https://lil.la npm run build:html",
     "deploy:https": "bash scripts/deploy-https-notify.sh",
     "release:zip": "bash scripts/make-release-zip.sh",
     "start": "next start",
