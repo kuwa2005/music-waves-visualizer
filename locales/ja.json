@@ -6,7 +6,8 @@
   },
   "dropZone": {
     "hint": "ファイルをドラッグ&ドロップ（複数ファイル対応）",
-    "selectImage": "画像を選ぶ",
+    "selectImage": "画像を選ぶ（複数可）",
+    "addImage": "画像を追加",
     "selectAudio": "音楽ファイルを選ぶ",
     "unselected": "未選択",
     "caption": "静止画と音楽ファイルを自動判定します。MP4などの動画は「音楽ファイル」から選ぶと音声として使えます。"
@@ -21,6 +22,7 @@
     "dot": "ドット表示",
     "symWave": "波形（上下対称）",
     "glyco": "グライコ風",
+    "areaFill": "スペクトラム面",
     "parameters": "パラメータ調整（折りたたみ）"
   },
   "resolution": {
@@ -45,6 +47,7 @@
     "dust": "空気感",
     "rain": "雨",
     "snow": "雪",
+    "scanlines": "スキャンライン",
     "weatherAngle": "降り注ぐ角度: {{value}}°",
     "weatherAmount": "量: {{value}}%",
     "weatherColor": "色",
@@ -161,6 +164,7 @@
     "recording": "動画を録画しています...",
     "convertComplete": "動画の変換が完了しました！",
     "convertFailed": "動画の変換に失敗しました: {{error}}",
+    "imagesLoadedCount": "{{count}} 枚の画像を読み込みました",
     "cleared": "クリアしました",
     "exportSuccess": "設定をJSONファイルにエクスポートしました",
     "importSuccess": "設定をインポートしました（存在する項目のみ上書き）",
@@ -172,6 +176,12 @@
     "warning": "生成中はウィンドウを切り替えたり閉じないでください",
     "loadingFfmpeg": "FFmpegを読み込み中...",
     "converting": "MP4変換中... {{progress}}%"
+  },
+  "gallery": {
+    "counter": "{{current}} / {{total}}",
+    "currentName": "{{name}}（全{{total}}枚）",
+    "autoSwitch": "自動切替（再生・録画中）",
+    "autoInterval": "間隔 {{sec}} 秒"
   },
   "beforeUnload": "このサイトを離れますか？",
   "recordSize": "録画サイズ: {{width}}×{{height}}px",

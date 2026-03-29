@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.3] - 2026-03-29
+
+### Added
+- **Issue #14**: New spectrum mode **7 — Spectrum fill** (filled area under frequency curve + top outline); Canvas 2D and WebGL; layout/mode settings key `7` in export/import.
+- **Issue #16**: **Multi-image gallery**: multi-select / drag-drop multiple still images, **Add image** append, **Prev/Next**, **auto-advance** during preview/recording (2–30s interval, persisted in `localStorage`). First image still sets canvas layout for Auto mode.
+- **Issue #17**: **Scanlines** overlay effect (CRT-style horizontal lines); Canvas 2D and WebGL; strength presets; saved like other effects.
+
 ## [1.0.2] - 2026-03-29
 
 ### Added

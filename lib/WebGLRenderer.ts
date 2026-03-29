@@ -34,6 +34,7 @@ const EFFECT_TYPE_TO_GL: Record<EffectType, number> = {
   dust: 0,
   rain: 0,
   snow: 0,
+  scanlines: 0,
   filmGrain: 1,
   vignette: 2,
   rainbow: 3,
@@ -1116,6 +1117,10 @@ function renderFrame(): void {
         analyser.getByteFrequencyData(bufferData);
         drawMode6Glyco(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
         break;
+      case 7:
+        analyser.getByteFrequencyData(bufferData);
+        drawMode7Area(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
+        break;
     }
   }
 
@@ -1274,6 +1279,18 @@ function renderFrame(): void {
         );
       }
       gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    } else if (latestEffect.type === "scanlines") {
+      const strength = DENSITY_STRENGTH[latestEffect.density];
+      const spacing = latestEffect.density === 3 ? 3 : latestEffect.density === 2 ? 4 : 5;
+      const base = 0.055 + 0.11 * strength;
+      const pulse =
+        0.82 +
+        0.18 *
+          Math.min(1, audioRForEffects.volume * 0.7 + audioRForEffects.bass * 0.35);
+      const alpha = Math.min(0.2, base * pulse);
+      for (let y = 0; y < canvasHeight; y += spacing) {
+        drawRect(glContext, 0, y, canvasWidth, 1, 0, 0, 0, alpha);
+      }
     } else {
       drawEffectOverlayWebGL(glContext, canvasWidth, canvasHeight, latestEffect, audioRForEffects);
     }
@@ -1755,6 +1772,49 @@ function drawMode6Glyco(
       const { dash } = getColor(i);
       drawLine(ctx, dx1, dy1, dx2, dy2, dash[0] / 255, dash[1] / 255, dash[2] / 255, dashOpacity, peakLineWidth);
     }
+  }
+}
+
+/** モード7: 周波数スペクトラム面（縦帯の積み上げ＋上縁ライン） */
+function drawMode7Area(
+  ctx: WebGLRendererContext,
+  bufferData: Uint8Array,
+  canvasWidth: number,
+  canvasHeight: number,
+  adj: ModeAdjustments,
+  settings: SpectrumSettings
+): void {
+  const bufferLength = bufferData.length;
+  const barsLength = 128;
+  const barWidth = canvasWidth / barsLength;
+  const op = settings.opacity;
+  const [pr, pg, pb] = getSpectrumPrimaryRgb(settings);
+  const [sr, sg, sb] = getSpectrumSecondaryRgb(settings);
+  for (let i = 0; i < barsLength; i++) {
+    const h = bufferData[Math.floor((i / barsLength) * bufferLength)];
+    const yTop = canvasHeight - h;
+    const x0 = i * barWidth;
+    const t = barsLength <= 1 ? 0 : i / (barsLength - 1);
+    const r = (pr + (sr - pr) * t) / 255;
+    const gCol = (pg + (sg - pg) * t) / 255;
+    const bCol = (pb + (sb - pb) * t) / 255;
+    const [x1, y1] = applyTransform(x0, yTop, canvasWidth, canvasHeight, adj);
+    const [x2, y2] = applyTransform(x0 + barWidth, canvasHeight, canvasWidth, canvasHeight, adj);
+    const rx = Math.min(x1, x2);
+    const ry = Math.min(y1, y2);
+    drawRect(ctx, rx, ry, Math.abs(x2 - x1), Math.abs(y2 - y1), r, gCol, bCol, 0.78 * op);
+  }
+  const lineW = Math.max(1, BASE_LINE_WIDTH_WAVEFORM * 0.55);
+  for (let i = 0; i < barsLength - 1; i++) {
+    const h0 = bufferData[Math.floor((i / barsLength) * bufferLength)];
+    const h1 = bufferData[Math.floor(((i + 1) / barsLength) * bufferLength)];
+    const x0 = i * barWidth + barWidth / 2;
+    const x1 = (i + 1) * barWidth + barWidth / 2;
+    const y0 = canvasHeight - h0;
+    const y1 = canvasHeight - h1;
+    const [tx0, ty0] = applyTransform(x0, y0, canvasWidth, canvasHeight, adj);
+    const [tx1, ty1] = applyTransform(x1, y1, canvasWidth, canvasHeight, adj);
+    drawLine(ctx, tx0, ty0, tx1, ty1, sr / 255, sg / 255, sb / 255, 0.92 * op, lineW);
   }
 }
 

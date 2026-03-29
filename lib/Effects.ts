@@ -15,7 +15,8 @@ export type EffectType =
   | "sparkle"
   | "dust"
   | "rain"
-  | "snow";
+  | "snow"
+  | "scanlines";
 
 export type EffectDensity = 1 | 2 | 3;
 
@@ -1086,6 +1087,27 @@ function drawGlitchCanvas(
   ctx.restore();
 }
 
+/** CRT風の水平スキャンライン（密度で間隔、音量で強度がわずかに変化） */
+function drawScanlinesCanvas(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  density: EffectDensity,
+  audio: AudioReactiveData
+): void {
+  const strength = DENSITY_STRENGTH[density];
+  const spacing = density === 3 ? 3 : density === 2 ? 4 : 5;
+  const base = 0.055 + 0.11 * strength;
+  const pulse = 0.82 + 0.18 * Math.min(1, audio.volume * 0.7 + audio.bass * 0.35);
+  const alpha = Math.min(0.2, base * pulse);
+  ctx.save();
+  ctx.fillStyle = `rgba(0,0,0,${alpha})`;
+  for (let y = 0; y < height; y += spacing) {
+    ctx.fillRect(0, y, width, 1);
+  }
+  ctx.restore();
+}
+
 /** 音声データなし時のデフォルト（無音・プレビュー停止中のエフェクト用） */
 export const SILENT_AUDIO_REACTIVE: AudioReactiveData = { bass: 0.2, volume: 0.2, highFreq: 0.1 };
 
@@ -1144,6 +1166,9 @@ export function drawEffectOverlayCanvas(
         break;
       case "snow":
         drawSnowCanvas(ctx, width, height, effect.density, overlayDelta, a, effect);
+        break;
+      case "scanlines":
+        drawScanlinesCanvas(ctx, width, height, effect.density, a);
         break;
       default:
         break;

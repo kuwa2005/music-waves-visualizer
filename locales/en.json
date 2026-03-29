@@ -6,7 +6,8 @@
   },
   "dropZone": {
     "hint": "Drag & drop files (multiple files supported)",
-    "selectImage": "Select Image",
+    "selectImage": "Select image(s)",
+    "addImage": "Add image",
     "selectAudio": "Select Music File",
     "unselected": "Not selected",
     "caption": "Still images and audio are auto-detected. For MP4 and other videos, use the music file picker for audio."
@@ -21,6 +22,7 @@
     "dot": "Dots",
     "symWave": "Waveform (Symmetric)",
     "glyco": "Glyco Style",
+    "areaFill": "Spectrum fill",
     "parameters": "Parameter adjustments (collapsed)"
   },
   "resolution": {
@@ -45,6 +47,7 @@
     "dust": "Atmosphere",
     "rain": "Rain",
     "snow": "Snow",
+    "scanlines": "Scanlines",
     "weatherAngle": "Fall angle: {{value}}°",
     "weatherAmount": "Amount: {{value}}%",
     "weatherColor": "Color",
@@ -161,6 +164,7 @@
     "recording": "Recording video...",
     "convertComplete": "Video conversion complete!",
     "convertFailed": "Video conversion failed: {{error}}",
+    "imagesLoadedCount": "Loaded {{count}} images",
     "cleared": "Cleared",
     "exportSuccess": "Settings exported to JSON",
     "importSuccess": "Settings imported (existing keys overwritten)",
@@ -172,6 +176,12 @@
     "warning": "Do not switch windows or close while generating",
     "loadingFfmpeg": "Loading FFmpeg...",
     "converting": "Converting to MP4... {{progress}}%"
+  },
+  "gallery": {
+    "counter": "{{current}} / {{total}}",
+    "currentName": "{{name}} ({{total}} images)",
+    "autoSwitch": "Auto-advance (while playing/recording)",
+    "autoInterval": "Interval {{sec}}s"
   },
   "beforeUnload": "Leave this site?",
   "recordSize": "Record size: {{width}}×{{height}}px",

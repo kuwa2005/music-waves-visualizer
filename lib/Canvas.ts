@@ -511,6 +511,37 @@ export const drawBars = (
     ctx.translate(0, -canvasHeight);
     ctx.stroke();
     ctx.restore();
+  } else if (mode === 7) {
+    // モード7: 周波数スペクトラム面（下辺固定の塗りつぶし＋上縁ライン）
+    analyser.getByteFrequencyData(bufferData);
+    const barsLength = 128;
+    const barWidth = canvasWidth / barsLength;
+    ctx.beginPath();
+    ctx.moveTo(0, canvasHeight);
+    for (let i = 0; i < barsLength; i++) {
+      const h = bufferData[Math.floor((i / barsLength) * bufferLength)];
+      const x = i * barWidth + barWidth / 2;
+      ctx.lineTo(x, canvasHeight - h);
+    }
+    ctx.lineTo(canvasWidth, canvasHeight);
+    ctx.closePath();
+    const g = ctx.createLinearGradient(0, canvasHeight, 0, 0);
+    const op = settings.opacity;
+    g.addColorStop(0, `rgba(${pr}, ${pg}, ${pb}, ${0.78 * op})`);
+    g.addColorStop(1, `rgba(${sr}, ${sg}, ${sb}, ${0.38 * op})`);
+    ctx.fillStyle = g;
+    ctx.fill();
+    ctx.beginPath();
+    for (let i = 0; i < barsLength; i++) {
+      const h = bufferData[Math.floor((i / barsLength) * bufferLength)];
+      const x = i * barWidth + barWidth / 2;
+      const y = canvasHeight - h;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.strokeStyle = `rgba(${sr}, ${sg}, ${sb}, ${0.92 * op})`;
+    ctx.lineWidth = Math.max(1, BASE_LINE_WIDTH_WAVEFORM * 0.55);
+    ctx.stroke();
   } else if (mode === 6) {
     // モード6: グライコ風（1980年代コンポ風ピークホールド）
     analyser.getByteFrequencyData(bufferData);

@@ -23,6 +23,7 @@ import {
   Tab,
   Switch,
   FormControlLabel,
+  IconButton,
 } from "@mui/material";
 import {
   FiberManualRecord,
@@ -32,6 +33,8 @@ import {
   VideoLibrary,
   DeleteSweep,
   Warning,
+  NavigateBefore,
+  NavigateNext,
 } from "@mui/icons-material";
 import i18n from "i18next";
 import { CustomSnackbar } from "../components/CustomSnackbar";
@@ -127,6 +130,12 @@ const VALID_SPECTRUM_COLOR_PRESETS: SpectrumColorPresetKey[] = [
   "custom",
 ];
 
+type GalleryImageEntry = {
+  img: HTMLImageElement;
+  name: string;
+  objectUrl: string;
+};
+
 const Home: NextPage = () => {
   const t = useCallback((key: string, options?: Record<string, unknown>) => i18n.t(key, options), []);
   // クライアントサイドのみ
@@ -147,7 +156,6 @@ const Home: NextPage = () => {
   const [isPlaySound, setIsPlaySound] = useState<boolean>(false);
   const [playSoundDisabled, setPlaySoundDisabled] = useState<boolean>(true);
   const [recordMovieDisabled, setRecordMovieDisabled] = useState<boolean>(true);
-  const [imageFileName, setImageFileName] = useState<string>("");
   const [audioFileName, setAudioFileName] = useState<string>("");
   const [fps, setFps] = useState<number>(0);
   const [isRecording, setIsRecording] = useState<boolean>(false);
@@ -332,6 +340,7 @@ const Home: NextPage = () => {
     "dust",
     "rain",
     "snow",
+    "scanlines",
   ];
   const EFFECT_TYPES_STRENGTH_LEGACY_HIDDEN: EffectType[] = ["vignette", "rainbow", "curtain"];
   const ALL_EFFECT_STRENGTH_TYPES: EffectType[] = [
@@ -350,6 +359,7 @@ const Home: NextPage = () => {
     "dust",
     "rain",
     "snow",
+    "scanlines",
   ];
   const defaultEffectDensities = (): Partial<Record<EffectType, EffectDensity>> => {
     const o: Partial<Record<EffectType, EffectDensity>> = {};
@@ -530,7 +540,7 @@ const Home: NextPage = () => {
     const spectrumSettings: Record<string, Record<string, ModeAdjustments>> = {};
     LAYOUTS.forEach((layout) => {
       const layoutData: Record<string, ModeAdjustments> = {};
-      [0, 1, 2, 3, 4, 5, 6].forEach((m) => {
+      [0, 1, 2, 3, 4, 5, 6, 7].forEach((m) => {
         const loaded = loadSettings(layout, m);
         layoutData[String(m)] = loaded ?? DEFAULT_ADJUSTMENTS;
       });
@@ -560,7 +570,7 @@ const Home: NextPage = () => {
   // 全設定をクリア（インポート前の一括リセット用）
   const clearAllSettings = () => {
     LAYOUTS.forEach((layout) => {
-      [0, 1, 2, 3, 4, 5, 6].forEach((m) => localStorage.removeItem(getSettingsKey(layout, m)));
+      [0, 1, 2, 3, 4, 5, 6, 7].forEach((m) => localStorage.removeItem(getSettingsKey(layout, m)));
     });
     [
       "common_targetLufs",
@@ -691,7 +701,7 @@ const Home: NextPage = () => {
           if (layoutData && typeof layoutData === "object") {
             Object.keys(layoutData).forEach((mStr) => {
               const m = parseInt(mStr, 10);
-              if (!isNaN(m) && m >= 0 && m <= 6 && layoutData[mStr]) {
+              if (!isNaN(m) && m >= 0 && m <= 7 && layoutData[mStr]) {
                 const adj = layoutData[mStr];
                 if (adj && typeof adj.scaleX === "number" && typeof adj.scaleY === "number" && typeof adj.offsetX === "number" && typeof adj.offsetY === "number") {
                   saveSettings(layout, m, adj);
@@ -817,8 +827,69 @@ const Home: NextPage = () => {
 
   // Canvas
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  // Canvas用ImageContext
-  const [imageCtx, setImageCtx] = useState<HTMLImageElement>(null);
+  const [imageGallery, setImageGallery] = useState<GalleryImageEntry[]>([]);
+  const [galleryIndex, setGalleryIndex] = useState(0);
+  const [galleryAutoEnabled, setGalleryAutoEnabled] = useState(false);
+  const [galleryAutoSec, setGalleryAutoSec] = useState(5);
+  const galleryAutoTimerRef = useRef<number | null>(null);
+  const imageGalleryLenRef = useRef(0);
+  imageGalleryLenRef.current = imageGallery.length;
+
+  const activeGalleryIndex =
+    imageGallery.length === 0 ? 0 : Math.min(galleryIndex, imageGallery.length - 1);
+  const imageCtx =
+    imageGallery.length === 0 ? null : imageGallery[activeGalleryIndex].img;
+  const imageFileName =
+    imageGallery.length === 0 ? "" : imageGallery[activeGalleryIndex].name;
+
+  useEffect(() => {
+    if (imageGallery.length === 0) {
+      setGalleryIndex(0);
+      return;
+    }
+    setGalleryIndex((i) => Math.min(i, imageGallery.length - 1));
+  }, [imageGallery.length]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    localStorage.setItem("common_galleryAutoEnabled", galleryAutoEnabled ? "1" : "0");
+    localStorage.setItem("common_galleryAutoSec", String(galleryAutoSec));
+  }, [galleryAutoEnabled, galleryAutoSec]);
+
+  useEffect(() => {
+    if (galleryAutoTimerRef.current != null) {
+      window.clearInterval(galleryAutoTimerRef.current);
+      galleryAutoTimerRef.current = null;
+    }
+    if (
+      !galleryAutoEnabled ||
+      imageGallery.length <= 1 ||
+      (!isPlaySound && !isRecording)
+    ) {
+      return;
+    }
+    const ms = Math.round(Math.max(2, Math.min(60, galleryAutoSec)) * 1000);
+    galleryAutoTimerRef.current = window.setInterval(() => {
+      setGalleryIndex((i) => {
+        const len = imageGalleryLenRef.current;
+        if (len <= 1) return i;
+        return (i + 1) % len;
+      });
+    }, ms);
+    return () => {
+      if (galleryAutoTimerRef.current != null) {
+        window.clearInterval(galleryAutoTimerRef.current);
+        galleryAutoTimerRef.current = null;
+      }
+    };
+  }, [
+    galleryAutoEnabled,
+    galleryAutoSec,
+    imageGallery.length,
+    isPlaySound,
+    isRecording,
+  ]);
+
   const activeCanvasLayout = useMemo(
     () => resolveCanvasLayout(canvasSize, imageCtx),
     [canvasSize, imageCtx, resolveCanvasLayout]
@@ -891,6 +962,15 @@ const Home: NextPage = () => {
     const savedAudBr = localStorage.getItem("common_exportAudioBitrateKbps");
     if (savedAudBr === "128" || savedAudBr === "192" || savedAudBr === "256") {
       setExportAudioBitrateKbps(Number(savedAudBr) as 128 | 192 | 256);
+    }
+
+    const savedGalAuto = localStorage.getItem("common_galleryAutoEnabled");
+    if (savedGalAuto === "1") setGalleryAutoEnabled(true);
+    else if (savedGalAuto === "0") setGalleryAutoEnabled(false);
+    const savedGalSec = localStorage.getItem("common_galleryAutoSec");
+    if (savedGalSec) {
+      const n = parseFloat(savedGalSec);
+      if (!isNaN(n) && n >= 2 && n <= 60) setGalleryAutoSec(n);
     }
 
     // リロード時の初期値は YouTube 推奨（-14 LUFS）
@@ -1071,55 +1151,120 @@ const Home: NextPage = () => {
     return () => clearInterval(fpsInterval);
   }, [rendererType]);
 
-  // 画像読み込み処理（共通）
-  const loadImageFile = (file: File) => {
-    const gi = gateImageFile(file);
-    if (snackbarFileGate(gi, "image")) {
-      return;
+  const primeCanvasForImage = (image: HTMLImageElement) => {
+    if (!canvasRef.current) return;
+    const resolvedLayout = resolveCanvasLayout(canvasSize, image);
+    const dims = getCanvasDimensions(resolvedLayout);
+    if (canvasRef.current.width !== dims.width || canvasRef.current.height !== dims.height) {
+      canvasRef.current.width = dims.width;
+      canvasRef.current.height = dims.height;
     }
-    const image = new Image();
-    image.onload = () => {
-      if (!canvasRef.current) {
+    clearImageCache();
+    clearWebGLImageCache();
+    const immediateCtx = canvasRef.current.getContext("2d", { alpha: false });
+    if (immediateCtx) {
+      immediateCtx.fillStyle = "rgba(34, 34, 34, 1.0)";
+      immediateCtx.fillRect(0, 0, dims.width, dims.height);
+      const rawW = image.naturalWidth || image.width || 1;
+      const rawH = image.naturalHeight || image.height || 1;
+      const scale = Math.max(dims.width / rawW, dims.height / rawH);
+      const drawW = Math.round(rawW * scale);
+      const drawH = Math.round(rawH * scale);
+      const x = (dims.width - drawW) / 2;
+      const y = (dims.height - drawH) / 2;
+      immediateCtx.drawImage(image, 0, 0, rawW, rawH, x, y, drawW, drawH);
+    }
+  };
+
+  /** replaceAll: 一覧を差し替え（複数枚は先頭でキャンバス確定後に連結）。false: 空なら新規、既存があれば追加 */
+  const loadGalleryImagesFromFiles = (files: File[], replaceAll: boolean) => {
+    const valid: File[] = [];
+    for (const file of files) {
+      if (isVideoFileByName(file.name)) {
+        openSnackBar(t("snackbar.imageVideoNotAllowed"));
+        continue;
+      }
+      if (!isImageFileByName(file.name)) {
+        openSnackBar(t("snackbar.imageTypeNotSupported"));
+        continue;
+      }
+      const gi = gateImageFile(file);
+      if (snackbarFileGate(gi, "image")) continue;
+      valid.push(file);
+    }
+    if (valid.length === 0) return;
+
+    let idx = 0;
+    const loadNext = () => {
+      if (idx >= valid.length) {
+        if (valid.length > 1) {
+          openSnackBar(t("snackbar.imagesLoadedCount", { count: valid.length }));
+        } else {
+          openSnackBar(t("snackbar.imageLoaded"));
+        }
         return;
       }
-      // auto時は画像ロード完了時点で先に解像度を確定し、初期1フレームの崩れを防ぐ
-      const resolvedLayout = resolveCanvasLayout(canvasSize, image);
-      const dims = getCanvasDimensions(resolvedLayout);
-      if (canvasRef.current.width !== dims.width || canvasRef.current.height !== dims.height) {
-        canvasRef.current.width = dims.width;
-        canvasRef.current.height = dims.height;
-      }
-      clearImageCache();
-      clearWebGLImageCache();
-      // 読み込み直後の1フレームは即時に2Dで背景を確定表示して比率崩れを防ぐ
-      const immediateCtx = canvasRef.current.getContext("2d", { alpha: false });
-      if (immediateCtx) {
-        immediateCtx.fillStyle = "rgba(34, 34, 34, 1.0)";
-        immediateCtx.fillRect(0, 0, dims.width, dims.height);
-        const rawW = image.naturalWidth || image.width || 1;
-        const rawH = image.naturalHeight || image.height || 1;
-        const scale = Math.max(dims.width / rawW, dims.height / rawH);
-        const drawW = Math.round(rawW * scale);
-        const drawH = Math.round(rawH * scale);
-        const x = (dims.width - drawW) / 2;
-        const y = (dims.height - drawH) / 2;
-        immediateCtx.drawImage(image, 0, 0, rawW, rawH, x, y, drawW, drawH);
-      }
+      const file = valid[idx];
+      const image = new Image();
+      const objectUrl = URL.createObjectURL(file);
+      image.onload = () => {
+        if (!canvasRef.current) {
+          URL.revokeObjectURL(objectUrl);
+          idx++;
+          loadNext();
+          return;
+        }
+        const entry: GalleryImageEntry = { img: image, name: file.name, objectUrl };
 
-      setImageCtx(image);
-      setImageFileName(file.name);
-      if (canvasSize === "auto") {
-        const loaded = loadSettings(resolvedLayout, mode);
-        setModeAdjustments(loaded ?? DEFAULT_ADJUSTMENTS);
-      }
-      exitConfirmRef.current = true;
-      openSnackBar(t("snackbar.imageLoaded"));
+        if (replaceAll) {
+          if (idx === 0) {
+            primeCanvasForImage(image);
+            setImageGallery((prev) => {
+              prev.forEach((p) => URL.revokeObjectURL(p.objectUrl));
+              return [entry];
+            });
+            setGalleryIndex(0);
+            const resolvedLayout = resolveCanvasLayout(canvasSize, image);
+            if (canvasSize === "auto") {
+              const loaded = loadSettings(resolvedLayout, mode);
+              setModeAdjustments(loaded ?? DEFAULT_ADJUSTMENTS);
+            }
+          } else {
+            setImageGallery((prev) => [...prev, entry]);
+            setGalleryIndex(idx);
+          }
+        } else {
+          setImageGallery((prev) => {
+            if (prev.length === 0) {
+              primeCanvasForImage(image);
+              const resolvedLayout = resolveCanvasLayout(canvasSize, image);
+              if (canvasSize === "auto") {
+                const loaded = loadSettings(resolvedLayout, mode);
+                setModeAdjustments(loaded ?? DEFAULT_ADJUSTMENTS);
+              }
+              setGalleryIndex(0);
+              return [entry];
+            }
+            const next = [...prev, entry];
+            setGalleryIndex(next.length - 1);
+            return next;
+          });
+        }
+
+        exitConfirmRef.current = true;
+        idx++;
+        loadNext();
+      };
+      image.onerror = (e) => {
+        console.error("画像の読み込みに失敗しました:", e);
+        URL.revokeObjectURL(objectUrl);
+        openSnackBar(t("snackbar.imageLoadFailed"));
+        idx++;
+        loadNext();
+      };
+      image.src = objectUrl;
     };
-    image.onerror = (e) => {
-      console.error("画像の読み込みに失敗しました:", e);
-      openSnackBar(t("snackbar.imageLoadFailed"));
-    };
-    image.src = URL.createObjectURL(file);
+    loadNext();
   };
 
   // 音楽読み込み処理（共通）
@@ -1143,23 +1288,19 @@ const Home: NextPage = () => {
     }
   };
 
-  // 画像ボタンから読み込み
+  // 画像ボタンから読み込み（複数選択で一括登録・差し替え）
   const imageLoad = (event: { target: HTMLInputElement }) => {
-    const file = event.target.files[0];
-    if (!file) {
-      return;
-    }
-    if (isVideoFileByName(file.name)) {
-      openSnackBar(t("snackbar.imageVideoNotAllowed"));
-      event.target.value = "";
-      return;
-    }
-    if (!isImageFileByName(file.name)) {
-      openSnackBar(t("snackbar.imageTypeNotSupported"));
-      event.target.value = "";
-      return;
-    }
-    loadImageFile(file);
+    const raw = Array.from(event.target.files ?? []);
+    if (raw.length === 0) return;
+    loadGalleryImagesFromFiles(raw, true);
+    event.target.value = "";
+  };
+
+  const appendImageLoad = (event: { target: HTMLInputElement }) => {
+    const raw = Array.from(event.target.files ?? []);
+    if (raw.length === 0) return;
+    loadGalleryImagesFromFiles(raw, false);
+    event.target.value = "";
   };
 
   // 音楽ボタンから読み込み
@@ -1188,13 +1329,12 @@ const Home: NextPage = () => {
       return;
     }
 
-    let imageFile: File | null = null;
+    const imageFiles: File[] = [];
     let audioFile: File | null = null;
 
-    // ファイルを分類
     for (const file of files) {
-      if (isImageFileByName(file.name) && !imageFile) {
-        imageFile = file;
+      if (isImageFileByName(file.name) && !isVideoFileByName(file.name)) {
+        imageFiles.push(file);
       } else if (isAudioFileByName(file.name) && !audioFile) {
         audioFile = file;
       } else if (isVideoFileByName(file.name)) {
@@ -1204,9 +1344,8 @@ const Home: NextPage = () => {
       }
     }
 
-    // 画像ファイルを読み込み
-    if (imageFile) {
-      loadImageFile(imageFile);
+    if (imageFiles.length > 0) {
+      loadGalleryImagesFromFiles(imageFiles, true);
     }
 
     if (audioFile) {
@@ -1543,11 +1682,11 @@ const Home: NextPage = () => {
     }
     clearImageCache();
     clearWebGLImageCache();
-    if (imageCtx?.src?.startsWith("blob:")) {
-      URL.revokeObjectURL(imageCtx.src);
-    }
-    setImageCtx(null);
-    setImageFileName("");
+    setImageGallery((prev) => {
+      prev.forEach((p) => URL.revokeObjectURL(p.objectUrl));
+      return [];
+    });
+    setGalleryIndex(0);
     setAudioFileName("");
     decodedAudioBufferRef.current = null;
     setIsPlaySound(false);
@@ -1668,38 +1807,124 @@ const Home: NextPage = () => {
             {t("dropZone.hint")}
           </Typography>
           <Box sx={{ display: "flex", flexDirection: "column", gap: 0.75, alignItems: "stretch" }}>
-            <Box sx={{ display: "flex", gap: 1.5, alignItems: "center", justifyContent: "center", width: "100%" }}>
+            <Box
+              sx={{
+                display: "flex",
+                gap: 1.5,
+                alignItems: "center",
+                justifyContent: "center",
+                width: "100%",
+                flexWrap: "wrap",
+              }}
+            >
               <Button
                 variant="outlined"
                 component="label"
                 startIcon={<PhotoLibrary />}
                 size="medium"
-                sx={{ flexShrink: 0, minWidth: 210 }}
+                sx={{ flexShrink: 0, minWidth: 200 }}
               >
                 {t("dropZone.selectImage")}
                 <input
                   type="file"
                   accept="image/*"
+                  multiple
                   onChange={imageLoad}
                   hidden
                 />
               </Button>
-              <Typography 
-                variant="body2" 
-                color="textSecondary" 
-                sx={{ 
-                  minWidth: 200,
+              <Button variant="outlined" component="label" size="medium" sx={{ flexShrink: 0, minWidth: 130 }}>
+                {t("dropZone.addImage")}
+                <input type="file" accept="image/*" multiple onChange={appendImageLoad} hidden />
+              </Button>
+              <Typography
+                variant="body2"
+                color="textSecondary"
+                sx={{
+                  minWidth: 160,
                   maxWidth: "100%",
-                  overflow: "hidden", 
-                  textOverflow: "ellipsis", 
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
                   whiteSpace: "nowrap",
                   flex: 1,
-                  textAlign: "left"
+                  textAlign: "left",
                 }}
               >
-                {imageFileName || t("dropZone.unselected")}
+                {imageGallery.length === 0
+                  ? t("dropZone.unselected")
+                  : imageGallery.length === 1
+                    ? imageFileName
+                    : t("gallery.currentName", { name: imageFileName, total: imageGallery.length })}
               </Typography>
             </Box>
+            {imageGallery.length > 0 && (
+              <Box
+                sx={{
+                  display: "flex",
+                  flexWrap: "wrap",
+                  gap: 1,
+                  alignItems: "center",
+                  justifyContent: "center",
+                  width: "100%",
+                }}
+              >
+                <IconButton
+                  size="small"
+                  disabled={imageGallery.length <= 1}
+                  onClick={() =>
+                    setGalleryIndex(
+                      (i) => (i - 1 + imageGallery.length) % imageGallery.length
+                    )
+                  }
+                  aria-label="gallery-prev"
+                >
+                  <NavigateBefore />
+                </IconButton>
+                <Typography variant="caption" color="textSecondary">
+                  {t("gallery.counter", {
+                    current: activeGalleryIndex + 1,
+                    total: imageGallery.length,
+                  })}
+                </Typography>
+                <IconButton
+                  size="small"
+                  disabled={imageGallery.length <= 1}
+                  onClick={() =>
+                    setGalleryIndex((i) => (i + 1) % imageGallery.length)
+                  }
+                  aria-label="gallery-next"
+                >
+                  <NavigateNext />
+                </IconButton>
+                <FormControlLabel
+                  control={
+                    <Switch
+                      size="small"
+                      checked={galleryAutoEnabled}
+                      onChange={(_, c) => setGalleryAutoEnabled(c)}
+                      disabled={imageGallery.length <= 1}
+                    />
+                  }
+                  label={t("gallery.autoSwitch")}
+                  sx={{ ml: 0.5 }}
+                />
+                <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, minWidth: 140 }}>
+                  <Typography variant="caption" color="textSecondary" sx={{ whiteSpace: "nowrap" }}>
+                    {t("gallery.autoInterval", { sec: galleryAutoSec })}
+                  </Typography>
+                  <Slider
+                    size="small"
+                    value={galleryAutoSec}
+                    min={2}
+                    max={30}
+                    step={1}
+                    disabled={imageGallery.length <= 1 || !galleryAutoEnabled}
+                    onChange={(_, v) => setGalleryAutoSec(v as number)}
+                    sx={{ width: 100 }}
+                  />
+                </Box>
+              </Box>
+            )}
             <Box sx={{ display: "flex", gap: 1.5, alignItems: "center", justifyContent: "center", width: "100%" }}>
               <Button
                 variant="outlined"
@@ -1767,6 +1992,7 @@ const Home: NextPage = () => {
                     { value: 2, label: t("spectrum.circle") },
                     { value: 3, label: t("spectrum.symBar") },
                     { value: 4, label: t("spectrum.dot") },
+                    { value: 7, label: t("spectrum.areaFill") },
                     { value: 6, label: t("spectrum.glyco") },
                   ].map((item) => (
                     <Button
@@ -2019,6 +2245,13 @@ const Home: NextPage = () => {
                   </Button>
                   <Button variant={effectType === "snow" ? "contained" : "outlined"} onClick={() => setEffectType("snow")} size="small">
                     {t("effect.snow")}
+                  </Button>
+                  <Button
+                    variant={effectType === "scanlines" ? "contained" : "outlined"}
+                    onClick={() => setEffectType("scanlines")}
+                    size="small"
+                  >
+                    {t("effect.scanlines")}
                   </Button>
                 </Box>
                 <Accordion sx={{ mt: 2 }}>
