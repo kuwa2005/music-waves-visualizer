@@ -6,6 +6,8 @@ A web application that creates audio waveform videos by loading image and music 
 
 https://lil.la/visualizer/
 
+When building the static bundle for that host, set `NEXT_PUBLIC_SITE_URL=https://lil.la` (no trailing slash) so Open Graph and `canonical` URLs resolve correctly — see [docs/BUILD.md](./docs/BUILD.md) and [`.env.production.example`](./.env.production.example).
+
 ### Screenshot
 
 <a href="./Image.jpg" target="_blank">

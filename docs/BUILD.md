@@ -47,6 +47,16 @@ node scripts/copy-ffmpeg-core.cjs
 | `NEXT_PUBLIC_SITE_URL` | **推奨** 本番のサイト基点 URL（末尾スラッシュなし）。`canonical`・`og:url`・`og:image` の**絶対 URL**に使用 |
 | `NEXT_PUBLIC_DOMAIN` | 互換用。未設定時は `NEXT_PUBLIC_SITE_URL` と同等として扱えます（OG・SEO用） |
 
+### 本番ホスト例（`https://lil.la/visualizer/`）
+
+このフォークの公開先の一例です（[Music Waves Visualizer(改)](https://lil.la/visualizer/)）。静的出力時は **ビルド時** に次のように **`NEXT_PUBLIC_SITE_URL`** を渡すと、SNS・検索向けメタの URL が `https://lil.la/visualizer/` 系になります。
+
+```bash
+BUILD_HTML=1 NEXT_PUBLIC_SITE_URL=https://lil.la npm run build:html
+```
+
+テンプレートはリポジトリ直下の [`.env.production.example`](../.env.production.example) を参照してください。
+
 ## Docker images
 
 - **`Dockerfile.static` + `docker-compose.https.yml`**: nginx serves static `visualizer/` on HTTPS (port 8443).

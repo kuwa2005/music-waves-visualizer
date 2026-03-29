@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Documentation
+- **Production URL**: Documented [lil.la/visualizer](https://lil.la/visualizer/) static build with `NEXT_PUBLIC_SITE_URL` in [docs/BUILD.md](./docs/BUILD.md), [README](./README.md), and [`.env.production.example`](./.env.production.example).
+
 ### Changed
 - **Gallery auto-advance**: Enabled automatically only when the gallery goes from one image to **two or more**; turned **off** when only one or zero images remain. Manual OFF is kept when adding more images without dropping below two. Interval `common_galleryAutoSec` remains saved; `common_galleryAutoEnabled` is no longer persisted (removed on load).
 - **SEO / HTML**: Expanded `<meta description>`, keywords, robots, canonical (when `NEXT_PUBLIC_SITE_URL` or `NEXT_PUBLIC_DOMAIN`), Open Graph / Twitter cards, `theme-color`, JSON-LD `WebApplication`, `favicon`/`apple-touch-icon` paths with `assetBasePath`; added `pages/_document.tsx` (`lang="ja"`) and `public/robots.txt`. Documented `NEXT_PUBLIC_SITE_URL` in [docs/BUILD.md](./docs/BUILD.md).
