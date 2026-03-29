@@ -5,6 +5,7 @@ Central entry point for setup, security, and FFmpeg notes for this fork (**kuwa2
 | Document | Description |
 |----------|-------------|
 | [BUILD.md](./BUILD.md) | Dependencies, `npm install`, static / Docker builds, FFmpeg asset copy |
+| [INSTALL_LOCAL_STATIC.md](./INSTALL_LOCAL_STATIC.md) | GitHub Release ZIP / copy `visualizer/` only: paths, local HTTP, COOP/COEP, MP4 caveats |
 | [SECURITY.md](./SECURITY.md) | Headers, file limits, Docker defaults, dependency audits |
 | [FFMPEG.md](./FFMPEG.md) | Self-hosted `@ffmpeg/core`, COOP/COEP, upstream PR #23 (0.12) vs this fork |
 
@@ -28,6 +29,7 @@ Central entry point for setup, security, and FFmpeg notes for this fork (**kuwa2
 | 文書 | 内容 |
 |------|------|
 | [BUILD.md](./BUILD.md) | 依存関係・インストール・ビルド手順 |
+| [INSTALL_LOCAL_STATIC.md](./INSTALL_LOCAL_STATIC.md) | リリース ZIP・`visualizer/` 単体利用時のパス・ローカル配信・MP4 用ヘッダ注意 |
 | [SECURITY.md](./SECURITY.md) | セキュリティ関連の設定と運用 |
 | [FFMPEG.md](./FFMPEG.md) | FFmpeg WASM の配信方式・上流 PR との違い |
 

@@ -26,14 +26,14 @@ const App = ({ Component, pageProps }: AppProps) => {
   return (
     <>
       <Head>
-        <title>Music Waves Visualizer</title>
+        <title>Music Waves Visualizer(改) #MWV</title>
         <meta name="description" content={META_DESCRIPTION} />
         <meta name="viewport" content="width=device-width,initial-scale=1" />
         <meta
           name="format-detection"
           content="telephone=no, email=no, address=no"
         />
-        <meta property="og:title" content="Music Waves Visualizer" />
+        <meta property="og:title" content="Music Waves Visualizer(改) #MWV" />
         <meta property="og:description" content={META_DESCRIPTION} />
         <meta property="og:type" content="website" />
         <meta property="og:url" content={baseURL} />

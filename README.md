@@ -98,6 +98,11 @@ See [SPECIFICATION.md](./SPECIFICATION.md) for details.
 - **[USER_TERMS.md](./USER_TERMS.md)**: Terms of Service (EN + 日本語)
 - **[PRIVACY_POLICY.md](./PRIVACY_POLICY.md)**: Privacy policy
 - **[EU_GDPR_NOTICE.md](./EU_GDPR_NOTICE.md)**: EU/EEA users — GDPR-related summary (non-legal advice)
+- **[docs/INSTALL_LOCAL_STATIC.md](./docs/INSTALL_LOCAL_STATIC.md)**: GitHub Release ZIP / hosting `visualizer/` only (paths, headers, MP4 caveats)
+
+## GitHub Releases
+
+[Releases](https://github.com/kuwa2005/music-waves-visualizer/releases) ship a **static ZIP** (no Node.js needed on the host): `visualizer/` plus **`INSTALL_LOCAL_STATIC.md`** and **`docs-bundled/`** (license, changelog, hosting, FFmpeg, nginx sample, terms/privacy). Maintainer: `npm run release:zip` (runs `npm run build:html` when `visualizer/` is missing).
 
 ## Credits
 
@@ -157,3 +162,8 @@ npm run build:html
 - [USER_TERMS.md](./USER_TERMS.md): 利用規約
 - [PRIVACY_POLICY.md](./PRIVACY_POLICY.md): プライバシーポリシー
 - [EU_GDPR_NOTICE.md](./EU_GDPR_NOTICE.md): EU/EEA 向け GDPR 関連の案内（法的助言ではありません）
+- [docs/INSTALL_LOCAL_STATIC.md](./docs/INSTALL_LOCAL_STATIC.md): リリース ZIP・`visualizer/` 単体利用時の手順と注意（パス・ヘッダ・MP4）
+
+### GitHub Releases
+
+[Releases](https://github.com/kuwa2005/music-waves-visualizer/releases) に **静的版 ZIP** を添付しています（配信先に Node.js は不要）。中身は `visualizer/` と **`INSTALL_LOCAL_STATIC.md`**、および **`docs-bundled/`**（ライセンス・変更履歴・ホスティング・FFmpeg・nginx サンプル・規約類）。メンテ用: `npm run release:zip`（`visualizer/` が無いときは `build:html` を実行）。

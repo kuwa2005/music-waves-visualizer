@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.1] - 2026-03-29
+
+### Added
+- **GitHub Releases static bundle**: `npm run release:zip` → `dist/music-waves-visualizer-static-v*.zip` with `visualizer/`, root **`INSTALL_LOCAL_STATIC.md`**, and **`docs-bundled/`** (license, changelog, hosting, FFmpeg, nginx sample, terms/privacy). User guide: [docs/INSTALL_LOCAL_STATIC.md](./docs/INSTALL_LOCAL_STATIC.md).
+
+### Changed
+- Page `<title>` / `og:title`: **Music Waves Visualizer(改) #MWV**
+
 ## [Unreleased]
 
 ### Added
