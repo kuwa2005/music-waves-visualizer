@@ -525,8 +525,8 @@ const Home: NextPage = () => {
   };
 
   const clampModeAdjustments = (adj: ModeAdjustments): ModeAdjustments => ({
-    scaleX: Math.min(5, Math.max(0.5, adj.scaleX)),
-    scaleY: Math.min(5, Math.max(0.5, adj.scaleY)),
+    scaleX: Math.min(5, Math.max(0.1, adj.scaleX)),
+    scaleY: Math.min(5, Math.max(0.1, adj.scaleY)),
     offsetX: Math.min(150, Math.max(-150, Math.round(adj.offsetX))),
     offsetY: Math.min(150, Math.max(-150, Math.round(adj.offsetY))),
   });
@@ -2369,11 +2369,11 @@ const Home: NextPage = () => {
                     <Slider
                       value={modeAdjustments.scaleX}
                       onChange={(_, value) => handleAdjustmentChange("scaleX", value as number)}
-                      min={0.5}
+                      min={0.1}
                       max={5.0}
                       step={0.1}
                       marks={[
-                        { value: 0.5, label: "0.5" },
+                        { value: 0.1, label: "0.1" },
                         { value: 1.0, label: "1.0" },
                         { value: 2.0, label: "2.0" },
                         { value: 5.0, label: "5.0" },
@@ -2385,11 +2385,11 @@ const Home: NextPage = () => {
                     <Slider
                       value={modeAdjustments.scaleY}
                       onChange={(_, value) => handleAdjustmentChange("scaleY", value as number)}
-                      min={0.5}
+                      min={0.1}
                       max={5.0}
                       step={0.1}
                       marks={[
-                        { value: 0.5, label: "0.5" },
+                        { value: 0.1, label: "0.1" },
                         { value: 1.0, label: "1.0" },
                         { value: 2.0, label: "2.0" },
                         { value: 5.0, label: "5.0" },
