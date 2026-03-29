@@ -615,6 +615,8 @@ const Home: NextPage = () => {
       "common_exportAudioBitrateKbps",
       "common_rainWeather",
       "common_snowWeather",
+      "common_galleryAutoEnabled",
+      "common_galleryAutoSec",
     ].forEach((k) => localStorage.removeItem(k));
   };
 
@@ -929,8 +931,21 @@ const Home: NextPage = () => {
   const [galleryAutoEnabled, setGalleryAutoEnabled] = useState(false);
   const [galleryAutoSec, setGalleryAutoSec] = useState(5);
   const galleryAutoTimerRef = useRef<number | null>(null);
+  const galleryAutoPrevLenRef = useRef(0);
   const imageGalleryLenRef = useRef(0);
   imageGalleryLenRef.current = imageGallery.length;
+
+  /** 2枚目以降を読み込んだタイミングでのみ自動切替をON。1枚以下に戻したらOFF（手動OFFは枚数が増えても維持） */
+  useEffect(() => {
+    const n = imageGallery.length;
+    const prev = galleryAutoPrevLenRef.current;
+    if (n >= 2 && prev < 2) {
+      setGalleryAutoEnabled(true);
+    } else if (n <= 1) {
+      setGalleryAutoEnabled(false);
+    }
+    galleryAutoPrevLenRef.current = n;
+  }, [imageGallery.length]);
 
   const activeGalleryIndex =
     imageGallery.length === 0 ? 0 : Math.min(galleryIndex, imageGallery.length - 1);
@@ -982,9 +997,8 @@ const Home: NextPage = () => {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    localStorage.setItem("common_galleryAutoEnabled", galleryAutoEnabled ? "1" : "0");
     localStorage.setItem("common_galleryAutoSec", String(galleryAutoSec));
-  }, [galleryAutoEnabled, galleryAutoSec]);
+  }, [galleryAutoSec]);
 
   useEffect(() => {
     if (galleryAutoTimerRef.current != null) {
@@ -1120,9 +1134,8 @@ const Home: NextPage = () => {
       setExportAudioBitrateKbps(Number(savedAudBr) as 128 | 192 | 256);
     }
 
-    const savedGalAuto = localStorage.getItem("common_galleryAutoEnabled");
-    if (savedGalAuto === "1") setGalleryAutoEnabled(true);
-    else if (savedGalAuto === "0") setGalleryAutoEnabled(false);
+    localStorage.removeItem("common_galleryAutoEnabled");
+
     const savedGalSec = localStorage.getItem("common_galleryAutoSec");
     if (savedGalSec) {
       const n = parseFloat(savedGalSec);

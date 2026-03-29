@@ -44,7 +44,8 @@ node scripts/copy-ffmpeg-core.cjs
 |----------|--------|
 | `BUILD_HTML=1` | Enables `/visualizer` base path (see `next.config.js`) |
 | `NEXT_PUBLIC_DEVELOPER_MODE` / `NEXT_PUBLIC_DEV_MODE` | Enables FPS panel etc. (see [DEVELOPER_MODE.md](../DEVELOPER_MODE.md)) |
-| `NEXT_PUBLIC_DOMAIN` | Optional absolute site URL for OG meta in `_app.tsx` |
+| `NEXT_PUBLIC_SITE_URL` | **推奨** 本番のサイト基点 URL（末尾スラッシュなし）。`canonical`・`og:url`・`og:image` の**絶対 URL**に使用 |
+| `NEXT_PUBLIC_DOMAIN` | 互換用。未設定時は `NEXT_PUBLIC_SITE_URL` と同等として扱えます（OG・SEO用） |
 
 ## Docker images
 
