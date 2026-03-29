@@ -11,6 +11,8 @@ export type ModeAdjustments = {
   offsetY: number;
 };
 
+export type SpectrumColorPresetKey = "white" | "cyan" | "magenta" | "green" | "gold" | "custom";
+
 export type SpectrumSettings = {
   opacity: number;
   fps: number;
@@ -18,7 +20,49 @@ export type SpectrumSettings = {
   lineWidthCircle: number;
   lineWidthSymWave: number;
   glycoColorSet?: string;
+  /** 周波数バー・波形・円形など単色寄りモードのベース色（モード6グライコは従来の色セットを維持） */
+  spectrumColorPreset?: SpectrumColorPresetKey;
+  spectrumCustomHex?: string;
+  /** モード3・4で虹色グラデーションを使う（false でプリマリ色ベース） */
+  spectrumRainbowColorful?: boolean;
 };
+
+const SPECTRUM_PRESET_RGB: Record<Exclude<SpectrumColorPresetKey, "custom">, [number, number, number]> = {
+  white: [255, 255, 255],
+  cyan: [0, 255, 255],
+  magenta: [255, 0, 200],
+  green: [80, 255, 120],
+  gold: [255, 200, 80],
+};
+
+export function parseSpectrumHexRgb(hex: string): [number, number, number] | null {
+  if (!/^#[0-9a-fA-F]{6}$/.test(hex)) return null;
+  return [
+    parseInt(hex.slice(1, 3), 16),
+    parseInt(hex.slice(3, 5), 16),
+    parseInt(hex.slice(5, 7), 16),
+  ];
+}
+
+export function getSpectrumPrimaryRgb(settings: SpectrumSettings): [number, number, number] {
+  const preset = settings.spectrumColorPreset ?? "white";
+  if (preset === "custom") {
+    const p = parseSpectrumHexRgb(settings.spectrumCustomHex ?? "#FFFFFF");
+    if (p) return p;
+  } else if (SPECTRUM_PRESET_RGB[preset]) {
+    return SPECTRUM_PRESET_RGB[preset];
+  }
+  return [255, 255, 255];
+}
+
+export function getSpectrumSecondaryRgb(settings: SpectrumSettings): [number, number, number] {
+  const [r, g, b] = getSpectrumPrimaryRgb(settings);
+  return [
+    Math.min(255, Math.floor(r * 0.5 + 120)),
+    Math.min(255, Math.floor(g * 0.5 + 100)),
+    Math.min(255, Math.floor(b * 0.5 + 140)),
+  ];
+}
 
 /** グライコ風の色セット: バー色・ピーク色 [r,g,b] 0-255 */
 export const GLYCO_COLOR_SETS: Record<string, { bar: [number, number, number]; dash: [number, number, number] }> = {
@@ -298,6 +342,10 @@ export const drawBars = (
   const offsetXPixels = (canvasWidth * effAdj.offsetX) / 100;
   const offsetYPixels = (canvasHeight * effAdj.offsetY) / 100;
 
+  const [pr, pg, pb] = getSpectrumPrimaryRgb(settings);
+  const [sr, sg, sb] = getSpectrumSecondaryRgb(settings);
+  const useRainbow34 = settings.spectrumRainbowColorful !== false;
+
   ctx.save();
   ctx.translate(canvasWidth / 2 + offsetXPixels, canvasHeight / 2 + offsetYPixels);
   ctx.scale(effAdj.scaleX, effAdj.scaleY);
@@ -307,7 +355,7 @@ export const drawBars = (
     // OFF: スペアナ描画なし。早期 return しない（下の restore → エフェクトと WebGL case -1 を揃える）
   } else if (mode === 0) {
     analyser.getByteFrequencyData(bufferData);
-    ctx.fillStyle = "rgba(255, 255, 255, 0.8)";
+    ctx.fillStyle = `rgba(${pr}, ${pg}, ${pb}, 0.8)`;
     const barsLength = 128;
     const barWidth = canvasWidth / barsLength;
     let barX = 0;
@@ -318,7 +366,7 @@ export const drawBars = (
     }
 } else if (mode === 1) {
     analyser.getByteTimeDomainData(bufferData); //Waveform Data
-    ctx.strokeStyle = `rgba(255, 255, 255, ${settings.opacity})`;
+    ctx.strokeStyle = `rgba(${pr}, ${pg}, ${pb}, ${settings.opacity})`;
     ctx.lineWidth = BASE_LINE_WIDTH_WAVEFORM * settings.lineWidthWaveform;
     ctx.beginPath();
     const centerY = canvasHeight / 2;
@@ -335,7 +383,7 @@ export const drawBars = (
     ctx.stroke();
 } else if (mode === 2) {
     analyser.getByteFrequencyData(bufferData); //spectrum data
-    ctx.fillStyle = `rgba(255, 255, 255, ${settings.opacity})`;
+    ctx.fillStyle = `rgba(${pr}, ${pg}, ${pb}, ${settings.opacity})`;
 
     ctx.scale(0.5, 0.5);
     ctx.translate(canvasWidth, canvasHeight);
@@ -370,19 +418,28 @@ export const drawBars = (
     
     for (let i = 0; i < barsLength; i++) {
       const barHeight = bufferData[i] * 2;
-      const hue = (i / barsLength) * 360;
-      
-      // グラデーション付きバー
-      const gradient = ctx.createLinearGradient(
-        i * barWidth,
-        centerY - barHeight / 2,
-        i * barWidth,
-        centerY + barHeight / 2
-      );
-      gradient.addColorStop(0, `hsla(${hue}, 100%, 50%, 0.8)`);
-      gradient.addColorStop(1, `hsla(${hue + 60}, 100%, 70%, 0.8)`);
-      
-      ctx.fillStyle = gradient;
+      if (useRainbow34) {
+        const hue = (i / barsLength) * 360;
+        const gradient = ctx.createLinearGradient(
+          i * barWidth,
+          centerY - barHeight / 2,
+          i * barWidth,
+          centerY + barHeight / 2
+        );
+        gradient.addColorStop(0, `hsla(${hue}, 100%, 50%, 0.8)`);
+        gradient.addColorStop(1, `hsla(${hue + 60}, 100%, 70%, 0.8)`);
+        ctx.fillStyle = gradient;
+      } else {
+        const gradient = ctx.createLinearGradient(
+          i * barWidth,
+          centerY - barHeight / 2,
+          i * barWidth,
+          centerY + barHeight / 2
+        );
+        gradient.addColorStop(0, `rgba(${pr}, ${pg}, ${pb}, 0.85)`);
+        gradient.addColorStop(1, `rgba(${sr}, ${sg}, ${sb}, 0.85)`);
+        ctx.fillStyle = gradient;
+      }
       ctx.fillRect(
         i * barWidth,
         centerY - barHeight / 2,
@@ -406,9 +463,16 @@ export const drawBars = (
       for (let row = 0; row < dotsPerCol; row++) {
         const threshold = (255 / dotsPerCol) * (dotsPerCol - row);
         const opacity = value > threshold ? 0.8 : 0.2;
-        const hue = (col / dotsPerRow) * 360;
-        
-        ctx.fillStyle = `hsla(${hue}, 100%, 50%, ${opacity})`;
+        if (useRainbow34) {
+          const hue = (col / dotsPerRow) * 360;
+          ctx.fillStyle = `hsla(${hue}, 100%, 50%, ${opacity})`;
+        } else {
+          const t = col / dotsPerRow;
+          const r = Math.round(pr + (sr - pr) * t);
+          const g = Math.round(pg + (sg - pg) * t);
+          const b = Math.round(pb + (sb - pb) * t);
+          ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${opacity})`;
+        }
         ctx.beginPath();
         ctx.arc(
           col * dotSizeX + dotSizeX / 2,
@@ -423,7 +487,7 @@ export const drawBars = (
   } else if (mode === 5) {
     // モード5: 波形（上下対称）
     analyser.getByteTimeDomainData(bufferData);
-    ctx.strokeStyle = `rgba(255, 255, 255, ${settings.opacity})`;
+    ctx.strokeStyle = `rgba(${pr}, ${pg}, ${pb}, ${settings.opacity})`;
     ctx.lineWidth = settings.lineWidthSymWave;
     ctx.beginPath();
     

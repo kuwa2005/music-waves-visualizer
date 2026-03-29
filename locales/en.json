@@ -185,5 +185,25 @@
   },
   "audioSettings": {
     "title": "Audio Settings"
+  },
+  "videoQuality": {
+    "title": "Video quality (record & MP4)",
+    "videoBitrate": "Recording video bitrate: {{value}} Mbps",
+    "videoBitrateHint": "Applied when encoding WebM. Some browsers may ignore this value.",
+    "audioBitrate": "MP4 audio (AAC) bitrate",
+    "outputResolution": "Output resolution (canvas): {{width}} × {{height}} px"
+  },
+  "spectrumWave": {
+    "title": "Waveform color & style",
+    "preset": "Color preset",
+    "presetWhite": "White",
+    "presetCyan": "Cyan",
+    "presetMagenta": "Magenta",
+    "presetGreen": "Green",
+    "presetGold": "Gold",
+    "presetCustom": "Custom",
+    "customHex": "Color code (#RRGGBB)",
+    "customInvalid": "Use #RRGGBB format",
+    "rainbowSymDot": "Rainbow gradient for symmetric bars & dots (modes 3 & 4)"
   }
 }

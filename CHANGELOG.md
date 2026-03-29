@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.0.2] - 2026-03-29
+
+### Added
+- **Video quality (Issue #15)**: Settings tab — output canvas resolution display, **recording video bitrate** (1–40 Mbps, `MediaRecorder` `videoBitsPerSecond` when supported), **MP4 AAC bitrate** (128 / 192 / 256 kbps) passed to FFmpeg on loudnorm path. Persisted in `localStorage` and settings export/import.
+- **Waveform color & style (Issue #13)**: Spectrum tab — **color presets** (white / cyan / magenta / green / gold / custom `#RRGGBB`) for modes 0, 1, 2, 5 and for modes 3 & 4 when rainbow is off; **toggle** for rainbow gradient on symmetric bars & dots (modes 3 & 4). Canvas 2D and WebGL aligned. Export/import and clear reset included.
+
 ## [1.0.1] - 2026-03-29
 
 ### Added

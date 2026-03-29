@@ -185,5 +185,25 @@
   },
   "audioSettings": {
     "title": "音設定"
+  },
+  "videoQuality": {
+    "title": "動画品質（録画・MP4変換）",
+    "videoBitrate": "録画ビデオビットレート: {{value}} Mbps",
+    "videoBitrateHint": "WebM 記録時に指定します。ブラウザにより無視される場合があります。",
+    "audioBitrate": "MP4 音声（AAC）ビットレート",
+    "outputResolution": "出力解像度（キャンバス）: {{width}} × {{height}} px"
+  },
+  "spectrumWave": {
+    "title": "波形の色・スタイル",
+    "preset": "カラープリセット",
+    "presetWhite": "白",
+    "presetCyan": "シアン",
+    "presetMagenta": "マゼンタ",
+    "presetGreen": "グリーン",
+    "presetGold": "ゴールド",
+    "presetCustom": "カスタム",
+    "customHex": "カラーコード (#RRGGBB)",
+    "customInvalid": "#RRGGBB 形式で入力してください",
+    "rainbowSymDot": "上下対称バー・ドットで虹色グラデーション"
   }
 }

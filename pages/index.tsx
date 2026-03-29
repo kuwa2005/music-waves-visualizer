@@ -21,6 +21,8 @@ import {
   LinearProgress,
   Tabs,
   Tab,
+  Switch,
+  FormControlLabel,
 } from "@mui/material";
 import {
   FiberManualRecord,
@@ -33,7 +35,15 @@ import {
 } from "@mui/icons-material";
 import i18n from "i18next";
 import { CustomSnackbar } from "../components/CustomSnackbar";
-import { drawBars, clearImageCache, getFPS, stopCanvas2DAnimation, GLYCO_COLOR_SETS, GLYCO_GRADIENT_SETS } from "../lib/Canvas";
+import {
+  drawBars,
+  clearImageCache,
+  getFPS,
+  stopCanvas2DAnimation,
+  GLYCO_COLOR_SETS,
+  GLYCO_GRADIENT_SETS,
+  type SpectrumColorPresetKey,
+} from "../lib/Canvas";
 import { drawBarsWebGL, getFPSWebGL, cleanupWebGL, stopWebGLAnimation, clearWebGLImageCache } from "../lib/WebGLRenderer";
 import type { EffectType, EffectDensity, EffectParams } from "../lib/Effects";
 import { getGpuInfo, getGpuDisplayName, benchmarkRenderers, type GpuInfo } from "../lib/GpuDetector";
@@ -107,6 +117,15 @@ function getShortPlatformMaxSec(p: ShortOutputPreset): number {
 const hasWindow = () => {
   return typeof window === "object";
 };
+
+const VALID_SPECTRUM_COLOR_PRESETS: SpectrumColorPresetKey[] = [
+  "white",
+  "cyan",
+  "magenta",
+  "green",
+  "gold",
+  "custom",
+];
 
 const Home: NextPage = () => {
   const t = useCallback((key: string, options?: Record<string, unknown>) => i18n.t(key, options), []);
@@ -381,6 +400,11 @@ const Home: NextPage = () => {
   const [lineWidthCircle, setLineWidthCircle] = useState<number>(3.2);      // mode2
   const [lineWidthSymWave, setLineWidthSymWave] = useState<number>(3.6);    // mode5
   const [glycoColorSet, setGlycoColorSet] = useState<string>("amber");
+  const [spectrumColorPreset, setSpectrumColorPreset] = useState<SpectrumColorPresetKey>("white");
+  const [spectrumCustomHex, setSpectrumCustomHex] = useState<string>("#FFFFFF");
+  const [spectrumRainbowColorful, setSpectrumRainbowColorful] = useState<boolean>(true);
+  const [recordVideoBitrateMbps, setRecordVideoBitrateMbps] = useState<number>(8);
+  const [exportAudioBitrateKbps, setExportAudioBitrateKbps] = useState<128 | 192 | 256>(192);
 
   // 音量設定（共通設定: 目標LUFS、null=正規化なし）
   const [targetLufs, setTargetLufs] = useState<number | null>(-14);
@@ -398,7 +422,22 @@ const Home: NextPage = () => {
     localStorage.setItem("common_effectDensities", JSON.stringify(effectDensities));
     localStorage.setItem("common_glycoColorSet", glycoColorSet);
     localStorage.setItem("common_spectrumOpacityPercent", String(spectrumOpacityPercent));
-  }, [effectType, effectDensities, glycoColorSet, spectrumOpacityPercent]);
+    localStorage.setItem("common_spectrumColorPreset", spectrumColorPreset);
+    localStorage.setItem("common_spectrumCustomHex", spectrumCustomHex);
+    localStorage.setItem("common_spectrumRainbowColorful", spectrumRainbowColorful ? "1" : "0");
+    localStorage.setItem("common_recordVideoBitrateMbps", String(recordVideoBitrateMbps));
+    localStorage.setItem("common_exportAudioBitrateKbps", String(exportAudioBitrateKbps));
+  }, [
+    effectType,
+    effectDensities,
+    glycoColorSet,
+    spectrumOpacityPercent,
+    spectrumColorPreset,
+    spectrumCustomHex,
+    spectrumRainbowColorful,
+    recordVideoBitrateMbps,
+    exportAudioBitrateKbps,
+  ]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -504,6 +543,11 @@ const Home: NextPage = () => {
         effectDensities,
         glycoColorSet,
         spectrumOpacityPercent,
+        spectrumColorPreset,
+        spectrumCustomHex,
+        spectrumRainbowColorful,
+        recordVideoBitrateMbps,
+        exportAudioBitrateKbps,
         rendererType,
         rainWeather,
         snowWeather,
@@ -524,6 +568,11 @@ const Home: NextPage = () => {
       "common_effectDensities",
       "common_glycoColorSet",
       "common_spectrumOpacityPercent",
+      "common_spectrumColorPreset",
+      "common_spectrumCustomHex",
+      "common_spectrumRainbowColorful",
+      "common_recordVideoBitrateMbps",
+      "common_exportAudioBitrateKbps",
       "common_rainWeather",
       "common_snowWeather",
     ].forEach((k) => localStorage.removeItem(k));
@@ -573,6 +622,33 @@ const Home: NextPage = () => {
             localStorage.setItem("common_spectrumOpacityPercent", String(v));
             setSpectrumOpacityPercent(v);
           }
+        }
+        if (c.spectrumColorPreset && VALID_SPECTRUM_COLOR_PRESETS.includes(c.spectrumColorPreset)) {
+          localStorage.setItem("common_spectrumColorPreset", c.spectrumColorPreset);
+          setSpectrumColorPreset(c.spectrumColorPreset);
+        }
+        if (typeof c.spectrumCustomHex === "string" && /^#[0-9a-fA-F]{6}$/.test(c.spectrumCustomHex)) {
+          const hx = c.spectrumCustomHex.toUpperCase();
+          localStorage.setItem("common_spectrumCustomHex", hx);
+          setSpectrumCustomHex(hx);
+        }
+        if (c.spectrumRainbowColorful === true || c.spectrumRainbowColorful === false) {
+          localStorage.setItem(
+            "common_spectrumRainbowColorful",
+            c.spectrumRainbowColorful ? "1" : "0"
+          );
+          setSpectrumRainbowColorful(c.spectrumRainbowColorful);
+        }
+        if (c.recordVideoBitrateMbps !== undefined) {
+          const n = Number(c.recordVideoBitrateMbps);
+          if (!isNaN(n) && n >= 1 && n <= 40) {
+            localStorage.setItem("common_recordVideoBitrateMbps", String(n));
+            setRecordVideoBitrateMbps(n);
+          }
+        }
+        if (c.exportAudioBitrateKbps === 128 || c.exportAudioBitrateKbps === 192 || c.exportAudioBitrateKbps === 256) {
+          localStorage.setItem("common_exportAudioBitrateKbps", String(c.exportAudioBitrateKbps));
+          setExportAudioBitrateKbps(c.exportAudioBitrateKbps);
         }
         if (c.rendererType === "canvas2d" || c.rendererType === "webgl") {
           localStorage.setItem("common_rendererType", c.rendererType);
@@ -795,6 +871,28 @@ const Home: NextPage = () => {
       }
     }
 
+    const savedSpecPreset = localStorage.getItem("common_spectrumColorPreset");
+    if (savedSpecPreset && VALID_SPECTRUM_COLOR_PRESETS.includes(savedSpecPreset as SpectrumColorPresetKey)) {
+      setSpectrumColorPreset(savedSpecPreset as SpectrumColorPresetKey);
+    }
+    const savedSpecHex = localStorage.getItem("common_spectrumCustomHex");
+    if (savedSpecHex && /^#[0-9a-fA-F]{6}$/.test(savedSpecHex)) {
+      setSpectrumCustomHex(savedSpecHex.toUpperCase());
+    }
+    const savedRainbow = localStorage.getItem("common_spectrumRainbowColorful");
+    if (savedRainbow === "0") setSpectrumRainbowColorful(false);
+    else if (savedRainbow === "1") setSpectrumRainbowColorful(true);
+
+    const savedVidBr = localStorage.getItem("common_recordVideoBitrateMbps");
+    if (savedVidBr) {
+      const n = parseFloat(savedVidBr);
+      if (!isNaN(n) && n >= 1 && n <= 40) setRecordVideoBitrateMbps(n);
+    }
+    const savedAudBr = localStorage.getItem("common_exportAudioBitrateKbps");
+    if (savedAudBr === "128" || savedAudBr === "192" || savedAudBr === "256") {
+      setExportAudioBitrateKbps(Number(savedAudBr) as 128 | 192 | 256);
+    }
+
     // リロード時の初期値は YouTube 推奨（-14 LUFS）
     setTargetLufs(-14);
     setTargetLufsCustom("-14");
@@ -907,6 +1005,9 @@ const Home: NextPage = () => {
       lineWidthCircle,
       lineWidthSymWave,
       glycoColorSet,
+      spectrumColorPreset,
+      spectrumCustomHex,
+      spectrumRainbowColorful,
     };
 
     if (rendererType === 'webgl') {
@@ -952,6 +1053,9 @@ const Home: NextPage = () => {
     lineWidthWaveform,
     lineWidthCircle,
     lineWidthSymWave,
+    spectrumColorPreset,
+    spectrumCustomHex,
+    spectrumRainbowColorful,
   ]);
 
   // FPS表示更新（1秒ごとに更新）
@@ -1271,6 +1375,9 @@ const Home: NextPage = () => {
       lineWidthCircle,
       lineWidthSymWave,
       glycoColorSet,
+      spectrumColorPreset,
+      spectrumCustomHex,
+      spectrumRainbowColorful,
     };
     if (canvasRef.current && analyserRef.current) {
       if (rendererType === "webgl") {
@@ -1308,10 +1415,19 @@ const Home: NextPage = () => {
           outputStream.addTrack(track);
         });
       });
-      //ストリームからMediaRecorderを生成
-      const recorder = new MediaRecorder(outputStream, {
+      const videoBps = Math.round(recordVideoBitrateMbps * 1_000_000);
+      const recorderOptions: MediaRecorderOptions = {
         mimeType: "video/webm;codecs=h264",
-      });
+      };
+      if (videoBps >= 1_000_000 && videoBps <= 80_000_000) {
+        recorderOptions.videoBitsPerSecond = videoBps;
+      }
+      let recorder: MediaRecorder;
+      try {
+        recorder = new MediaRecorder(outputStream, recorderOptions);
+      } catch {
+        recorder = new MediaRecorder(outputStream, { mimeType: "video/webm;codecs=h264" });
+      }
       const recordedBlobs: Blob[] = [];
       recorder.addEventListener("dataavailable", (e) => {
         recordedBlobs.push(e.data);
@@ -1329,14 +1445,21 @@ const Home: NextPage = () => {
           setEncodeProgress(0);
           const webmBlob = new Blob(recordedBlobs, { type: "video/webm" });
           const binaryData = new Uint8Array(await webmBlob.arrayBuffer());
-          const video = await generateMp4Video(binaryData, webmName, mp4Name, {
-            onLoadStart: () => setEncodeStatus("loading"),
-            onLoadComplete: () => {
-              setEncodeStatus("converting");
-              setEncodeProgress(0);
+          const video = await generateMp4Video(
+            binaryData,
+            webmName,
+            mp4Name,
+            {
+              onLoadStart: () => setEncodeStatus("loading"),
+              onLoadComplete: () => {
+                setEncodeStatus("converting");
+                setEncodeProgress(0);
+              },
+              onProgress: (ratio) => setEncodeProgress(Math.round(ratio * 100)),
             },
-            onProgress: (ratio) => setEncodeProgress(Math.round(ratio * 100)),
-          }, targetLufs);
+            targetLufs,
+            exportAudioBitrateKbps
+          );
           setEncodeStatus("idle");
           const mp4Blob = new Blob([video], { type: "video/mp4" });
           const objectURL = URL.createObjectURL(mp4Blob);
@@ -1450,6 +1573,11 @@ const Home: NextPage = () => {
     setSnowWeather(DEFAULT_SNOW_WEATHER);
     setTargetLufs(-14);
     setTargetLufsCustom("-14");
+    setSpectrumColorPreset("white");
+    setSpectrumCustomHex("#FFFFFF");
+    setSpectrumRainbowColorful(true);
+    setRecordVideoBitrateMbps(8);
+    setExportAudioBitrateKbps(192);
     exitConfirmRef.current = false;
     openSnackBar(t("snackbar.cleared"));
   };
@@ -1671,6 +1799,54 @@ const Home: NextPage = () => {
                         onChange={(_, v) => setSpectrumOpacityPercent(v as number)}
                       />
                     </Box>
+                    <Divider sx={{ my: 2 }} />
+                    <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600 }}>
+                      {t("spectrumWave.title")}
+                    </Typography>
+                    <FormControl size="small" fullWidth sx={{ mb: 2 }}>
+                      <InputLabel>{t("spectrumWave.preset")}</InputLabel>
+                      <Select
+                        value={spectrumColorPreset}
+                        label={t("spectrumWave.preset")}
+                        onChange={(e) => setSpectrumColorPreset(e.target.value as SpectrumColorPresetKey)}
+                      >
+                        <MenuItem value="white">{t("spectrumWave.presetWhite")}</MenuItem>
+                        <MenuItem value="cyan">{t("spectrumWave.presetCyan")}</MenuItem>
+                        <MenuItem value="magenta">{t("spectrumWave.presetMagenta")}</MenuItem>
+                        <MenuItem value="green">{t("spectrumWave.presetGreen")}</MenuItem>
+                        <MenuItem value="gold">{t("spectrumWave.presetGold")}</MenuItem>
+                        <MenuItem value="custom">{t("spectrumWave.presetCustom")}</MenuItem>
+                      </Select>
+                    </FormControl>
+                    {spectrumColorPreset === "custom" && (
+                      <TextField
+                        size="small"
+                        fullWidth
+                        label={t("spectrumWave.customHex")}
+                        value={spectrumCustomHex}
+                        onChange={(e) => {
+                          let v = e.target.value.trim();
+                          if (v.length > 0 && !v.startsWith("#")) v = `#${v}`;
+                          if (v.length <= 7) setSpectrumCustomHex(v.toUpperCase());
+                        }}
+                        error={!/^#[0-9A-F]{6}$/.test(spectrumCustomHex)}
+                        helperText={
+                          !/^#[0-9A-F]{6}$/.test(spectrumCustomHex) ? t("spectrumWave.customInvalid") : undefined
+                        }
+                        sx={{ mb: 2 }}
+                      />
+                    )}
+                    <FormControlLabel
+                      control={
+                        <Switch
+                          checked={spectrumRainbowColorful}
+                          onChange={(_, c) => setSpectrumRainbowColorful(c)}
+                          size="small"
+                        />
+                      }
+                      label={t("spectrumWave.rainbowSymDot")}
+                      sx={{ mb: 2, display: "flex", alignItems: "center" }}
+                    />
                     <Box sx={{ mb: 2 }}>
                       <Typography gutterBottom>{t("displayVolume.fps", { value: spectrumFps })}</Typography>
                       <Slider
@@ -2235,6 +2411,43 @@ const Home: NextPage = () => {
                     {t("resolution.autoHint")}
                   </Typography>
                 )}
+                <Divider sx={{ my: 2 }} />
+                <Typography variant="subtitle2" color="primary" sx={{ mb: 1 }}>
+                  {t("videoQuality.title")}
+                </Typography>
+                <Typography variant="body2" sx={{ mb: 2 }}>
+                  {t("videoQuality.outputResolution", {
+                    width: getCanvasDimensions(activeCanvasLayout).width,
+                    height: getCanvasDimensions(activeCanvasLayout).height,
+                  })}
+                </Typography>
+                <Typography gutterBottom>
+                  {t("videoQuality.videoBitrate", { value: recordVideoBitrateMbps })}
+                </Typography>
+                <Slider
+                  value={recordVideoBitrateMbps}
+                  min={1}
+                  max={40}
+                  step={0.5}
+                  onChange={(_, v) => setRecordVideoBitrateMbps(v as number)}
+                />
+                <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 2 }}>
+                  {t("videoQuality.videoBitrateHint")}
+                </Typography>
+                <FormControl size="small" fullWidth sx={{ mb: 2, maxWidth: 360 }}>
+                  <InputLabel>{t("videoQuality.audioBitrate")}</InputLabel>
+                  <Select
+                    value={exportAudioBitrateKbps}
+                    label={t("videoQuality.audioBitrate")}
+                    onChange={(e) =>
+                      setExportAudioBitrateKbps(Number(e.target.value) as 128 | 192 | 256)
+                    }
+                  >
+                    <MenuItem value={128}>128 kbps</MenuItem>
+                    <MenuItem value={192}>192 kbps</MenuItem>
+                    <MenuItem value={256}>256 kbps</MenuItem>
+                  </Select>
+                </FormControl>
                 <Divider sx={{ my: 2 }} />
                 {isDeveloperMode && (
                   <Box sx={{ mb: 2, p: 1, bgcolor: "background.paper", borderRadius: 1 }}>

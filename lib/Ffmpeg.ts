@@ -22,7 +22,8 @@ export async function generateMp4Video(
   webmName: string,
   mp4Name: string,
   callbacks?: EncodeProgressCallbacks,
-  targetLufs?: number | null
+  targetLufs?: number | null,
+  audioBitrateKbps?: number | null
 ) {
   const { onLoadStart, onLoadComplete, onProgress } = callbacks || {};
   const ffmpeg = createFFmpeg({
@@ -39,6 +40,11 @@ export async function generateMp4Video(
   onLoadComplete?.();
   ffmpeg.FS("writeFile", webmName, binaryData);
 
+  const ab =
+    audioBitrateKbps != null && audioBitrateKbps >= 64 && audioBitrateKbps <= 320
+      ? `${Math.round(audioBitrateKbps)}k`
+      : "192k";
+
   const lufs = targetLufs != null && targetLufs > -60 && targetLufs < 0 ? targetLufs : null;
   if (lufs != null) {
     try {
@@ -47,7 +53,7 @@ export async function generateMp4Video(
         "-vcodec", "copy",
         "-af", `loudnorm=I=${lufs}:LRA=11:TP=-1.5`,
         "-c:a", "aac",
-        "-b:a", "192k",
+        "-b:a", ab,
         mp4Name
       );
     } catch (e) {

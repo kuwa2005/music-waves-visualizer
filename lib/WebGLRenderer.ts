@@ -4,7 +4,12 @@
  */
 
 import type { ModeAdjustments, SpectrumSettings } from './Canvas';
-import { GLYCO_COLOR_SETS, GLYCO_GRADIENT_SETS } from './Canvas';
+import {
+  GLYCO_COLOR_SETS,
+  GLYCO_GRADIENT_SETS,
+  getSpectrumPrimaryRgb,
+  getSpectrumSecondaryRgb,
+} from './Canvas';
 import {
   updateAndGetSpaceParticles,
   updateAndGetSparkleParticles,
@@ -1355,6 +1360,10 @@ function drawMode0(
   const barWidth = canvasWidth / barsLength;
   let barX = 0;
   const opacity = settings.opacity;
+  const [pr, pg, pb] = getSpectrumPrimaryRgb(settings);
+  const r = pr / 255;
+  const g = pg / 255;
+  const b = pb / 255;
 
   for (let i = 0; i < barsLength; i++) {
     const barHeight = bufferData[i];
@@ -1368,7 +1377,7 @@ function drawMode0(
     const transformedWidth = x2 - x1;
     const transformedHeight = y2 - y1;
 
-    drawRect(ctx, x1, y1, transformedWidth, transformedHeight, 1.0, 1.0, 1.0, opacity);
+    drawRect(ctx, x1, y1, transformedWidth, transformedHeight, r, g, b, opacity);
     barX += barWidth;
   }
 }
@@ -1387,6 +1396,10 @@ function drawMode1(
   const scale = (canvasHeight / 2) / 128;
   const opacity = settings.opacity;
   const lineWidth = BASE_LINE_WIDTH_WAVEFORM * settings.lineWidthWaveform;
+  const [pr, pg, pb] = getSpectrumPrimaryRgb(settings);
+  const r = pr / 255;
+  const g = pg / 255;
+  const b = pb / 255;
 
   for (let i = 0; i < bufferLength - 1; i++) {
     const x1 = (i / bufferLength) * canvasWidth;
@@ -1398,7 +1411,7 @@ function drawMode1(
     const [tx1, ty1] = applyTransform(x1, y1, canvasWidth, canvasHeight, adj);
     const [tx2, ty2] = applyTransform(x2, y2, canvasWidth, canvasHeight, adj);
 
-    drawLine(ctx, tx1, ty1, tx2, ty2, 1.0, 1.0, 1.0, opacity, lineWidth);
+    drawLine(ctx, tx1, ty1, tx2, ty2, r, g, b, opacity, lineWidth);
   }
 }
 
@@ -1420,6 +1433,10 @@ function drawMode2(
   const offsetXPixels = (canvasWidth * adj.offsetX) / 100;
   const offsetYPixels = (canvasHeight * adj.offsetY) / 100;
   const opacity = settings.opacity;
+  const [pr, pg, pb] = getSpectrumPrimaryRgb(settings);
+  const r = pr / 255;
+  const g = pg / 255;
+  const b = pb / 255;
 
   for (let i = 0; i < 256; i++) {
     const value = bufferData[i];
@@ -1441,7 +1458,7 @@ function drawMode2(
     const tx2 = localX2 * adj.scaleX * 0.5 + canvasWidth / 2 + adj.scaleX * offsetXPixels;
     const ty2 = localY2 * adj.scaleY * 0.5 + canvasHeight / 2 + adj.scaleY * offsetYPixels;
 
-    drawLine(ctx, tx1, ty1, tx2, ty2, 1.0, 1.0, 1.0, opacity, barWidth);
+    drawLine(ctx, tx1, ty1, tx2, ty2, r, g, b, opacity, barWidth);
   }
 }
 
@@ -1458,14 +1475,30 @@ function drawMode3(
   const barWidth = canvasWidth / barsLength;
   const centerY = canvasHeight / 2;
   const opacity = settings.opacity;
+  const useRainbow = settings.spectrumRainbowColorful !== false;
+  const [pr, pg, pb] = getSpectrumPrimaryRgb(settings);
+  const [sr, sg, sb] = getSpectrumSecondaryRgb(settings);
 
   for (let i = 0; i < barsLength; i++) {
     const barHeight = bufferData[i] * 2;
-    const hue = (i / barsLength) * 360;
-
-    // Canvas.tsと同じグラデーション: 上側と下側で色を変える
-    const [r1, g1, b1] = hslToRgb(hue, 1.0, 0.5);
-    const [r2, g2, b2] = hslToRgb(hue + 60, 1.0, 0.7);
+    let r1: number;
+    let g1: number;
+    let b1: number;
+    let r2: number;
+    let g2: number;
+    let b2: number;
+    if (useRainbow) {
+      const hue = (i / barsLength) * 360;
+      [r1, g1, b1] = hslToRgb(hue, 1.0, 0.5);
+      [r2, g2, b2] = hslToRgb(hue + 60, 1.0, 0.7);
+    } else {
+      r1 = pr / 255;
+      g1 = pg / 255;
+      b1 = pb / 255;
+      r2 = sr / 255;
+      g2 = sg / 255;
+      b2 = sb / 255;
+    }
 
     const x = i * barWidth;
     const y = centerY - barHeight / 2;
@@ -1497,16 +1530,29 @@ function drawMode4(
   const dotSizeY = canvasHeight / dotsPerCol;
   const dotRadius = Math.min(dotSizeX, dotSizeY) / 3;
   const baseOpacity = settings.opacity;
+  const useRainbow = settings.spectrumRainbowColorful !== false;
+  const [pr, pg, pb] = getSpectrumPrimaryRgb(settings);
+  const [sr, sg, sb] = getSpectrumSecondaryRgb(settings);
 
   for (let col = 0; col < dotsPerRow; col++) {
     const freqIndex = Math.floor((col / dotsPerRow) * bufferLength);
     const value = bufferData[freqIndex];
+    const tcol = col / dotsPerRow;
 
     for (let row = 0; row < dotsPerCol; row++) {
       const threshold = (255 / dotsPerCol) * (dotsPerCol - row);
       const opacity = (value > threshold ? 0.8 : 0.2) * baseOpacity;
-      const hue = (col / dotsPerRow) * 360;
-      const [r, g, b] = hslToRgb(hue, 1.0, 0.5);
+      let r: number;
+      let g: number;
+      let b: number;
+      if (useRainbow) {
+        const hue = tcol * 360;
+        [r, g, b] = hslToRgb(hue, 1.0, 0.5);
+      } else {
+        r = (pr + (sr - pr) * tcol) / 255;
+        g = (pg + (sg - pg) * tcol) / 255;
+        b = (pb + (sb - pb) * tcol) / 255;
+      }
 
       const x = col * dotSizeX + dotSizeX / 2;
       const y = row * dotSizeY + dotSizeY / 2;
@@ -1537,6 +1583,10 @@ function drawMode5(
   const opacity = settings.opacity;
   // Canvas.ts mode5 と同様に lineWidthSymWave を直接使用
   const lineWidth = settings.lineWidthSymWave;
+  const [pr, pg, pb] = getSpectrumPrimaryRgb(settings);
+  const r = pr / 255;
+  const g = pg / 255;
+  const b = pb / 255;
 
   for (let i = 0; i < bufferLength - 1; i++) {
     const x1 = (i / bufferLength) * canvasWidth;
@@ -1547,14 +1597,14 @@ function drawMode5(
     // 上側（通常）の変換
     const [tx1, ty1] = applyTransform(x1, y1, canvasWidth, canvasHeight, adj);
     const [tx2, ty2] = applyTransform(x2, y2, canvasWidth, canvasHeight, adj);
-    drawLine(ctx, tx1, ty1, tx2, ty2, 1.0, 1.0, 1.0, opacity, lineWidth);
+    drawLine(ctx, tx1, ty1, tx2, ty2, r, g, b, opacity, lineWidth);
 
     // 下側（反転）の変換
     const y1Mirror = canvasHeight - y1;
     const y2Mirror = canvasHeight - y2;
     const [tx1m, ty1m] = applyTransform(x1, y1Mirror, canvasWidth, canvasHeight, adj);
     const [tx2m, ty2m] = applyTransform(x2, y2Mirror, canvasWidth, canvasHeight, adj);
-    drawLine(ctx, tx1m, ty1m, tx2m, ty2m, 1.0, 1.0, 1.0, opacity, lineWidth);
+    drawLine(ctx, tx1m, ty1m, tx2m, ty2m, r, g, b, opacity, lineWidth);
   }
 }
 
