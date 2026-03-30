@@ -1921,15 +1921,11 @@ function drawMode8LoudnessPulse(
   adj: ModeAdjustments,
   settings: SpectrumSettings
 ): void {
-  let sum = 0;
-  for (let i = 0; i < bufferData.length; i++) sum += bufferData[i];
-  const volume = sum / (bufferData.length * 255);
-  const target = Math.min(1, Math.pow(volume, 0.82) * 1.35);
+  const lp = settings.loudnessParams ?? { gain: 1.35, gamma: 0.82, attack: 0.22, release: 0.08 };
+  const target = getLoudnessLevel(bufferData, lp.gamma, lp.gain);
 
   const pulseState = (drawMode8LoudnessPulse as any)._pulse ?? { level: 0 };
-  const attack = 0.22;
-  const release = 0.08;
-  pulseState.level += (target - pulseState.level) * (target > pulseState.level ? attack : release);
+  pulseState.level = smoothAR(pulseState.level, target, lp.attack, lp.release);
   (drawMode8LoudnessPulse as any)._pulse = pulseState;
   const level = pulseState.level;
 
@@ -1960,11 +1956,20 @@ function drawMode8LoudnessPulse(
   drawCircle(ctx, tcx, tcy, coreR * 1.03, sr / 255, sg / 255, sb / 255, Math.min(1, 0.75 * op));
 }
 
+function clamp01(x: number): number {
+  return Math.min(1, Math.max(0, x));
+}
+
 function getLoudnessLevel(bufferData: Uint8Array, gamma = 0.85, boost = 1.3): number {
   let sum = 0;
   for (let i = 0; i < bufferData.length; i++) sum += bufferData[i];
   const volume = sum / (bufferData.length * 255);
-  return Math.min(1, Math.pow(volume, gamma) * boost);
+  return clamp01(Math.pow(volume, gamma) * boost);
+}
+
+function smoothAR(prev: number, target: number, attack: number, release: number): number {
+  const a = target > prev ? attack : release;
+  return prev + (target - prev) * a;
 }
 
 function drawMode9Vu(
@@ -1975,19 +1980,22 @@ function drawMode9Vu(
   adj: ModeAdjustments,
   settings: SpectrumSettings
 ): void {
+  const lp = settings.loudnessParams ?? { gain: 1.25, gamma: 0.85, attack: 0.28, release: 0.12 };
   const half = Math.max(1, Math.floor(bufferData.length / 2));
   let leftSum = 0;
   let rightSum = 0;
   for (let i = 0; i < half; i++) leftSum += bufferData[i];
   for (let i = half; i < bufferData.length; i++) rightSum += bufferData[i];
-  const left = Math.min(1, Math.pow(leftSum / (half * 255), 0.85) * 1.25);
-  const right = Math.min(1, Math.pow(rightSum / (Math.max(1, bufferData.length - half) * 255), 0.85) * 1.25);
-  const s = (drawMode9Vu as any)._state ?? { peakL: 0, peakR: 0, lastMs: performance.now() };
+  const rawL = clamp01(Math.pow(leftSum / (half * 255), lp.gamma) * lp.gain);
+  const rawR = clamp01(Math.pow(rightSum / (Math.max(1, bufferData.length - half) * 255), lp.gamma) * lp.gain);
+  const s = (drawMode9Vu as any)._state ?? { levelL: 0, levelR: 0, peakL: 0, peakR: 0, lastMs: performance.now() };
   const now = performance.now();
   const dt = Math.min(60, now - s.lastMs);
   s.lastMs = now;
-  s.peakL = Math.max(left, s.peakL - dt * 0.00075);
-  s.peakR = Math.max(right, s.peakR - dt * 0.00075);
+  s.levelL = smoothAR(s.levelL, rawL, lp.attack, lp.release);
+  s.levelR = smoothAR(s.levelR, rawR, lp.attack, lp.release);
+  s.peakL = Math.max(s.levelL, s.peakL - dt * 0.00075);
+  s.peakR = Math.max(s.levelR, s.peakR - dt * 0.00075);
   (drawMode9Vu as any)._state = s;
   const barW = canvasWidth * 0.16;
   const gap = canvasWidth * 0.08;
@@ -2005,8 +2013,8 @@ function drawMode9Vu(
     const [px2, py2] = applyTransform(x + barW, py + 2, canvasWidth, canvasHeight, adj);
     drawRect(ctx, Math.min(px1, px2), Math.min(py1, py2), Math.abs(px2 - px1), Math.abs(py2 - py1), 1, 0.94, 0.47, 0.95 * op);
   };
-  drawOne(canvasWidth / 2 - gap / 2 - barW, left, s.peakL);
-  drawOne(canvasWidth / 2 + gap / 2, right, s.peakR);
+  drawOne(canvasWidth / 2 - gap / 2 - barW, s.levelL, s.peakL);
+  drawOne(canvasWidth / 2 + gap / 2, s.levelR, s.peakR);
 }
 
 function drawMode10Ring(
@@ -2017,7 +2025,12 @@ function drawMode10Ring(
   adj: ModeAdjustments,
   settings: SpectrumSettings
 ): void {
-  const level = getLoudnessLevel(bufferData, 0.82, 1.35);
+  const lp = settings.loudnessParams ?? { gain: 1.35, gamma: 0.82, attack: 0.22, release: 0.08 };
+  const target = getLoudnessLevel(bufferData, lp.gamma, lp.gain);
+  const st = (drawMode10Ring as any)._state ?? { level: 0 };
+  st.level = smoothAR(st.level, target, lp.attack, lp.release);
+  (drawMode10Ring as any)._state = st;
+  const level = st.level;
   const [pr, pg, pb] = getSpectrumPrimaryRgb(settings);
   const [sr, sg, sb] = getSpectrumSecondaryRgb(settings);
   const [cx, cy] = applyTransform(canvasWidth / 2, canvasHeight / 2, canvasWidth, canvasHeight, adj);
@@ -2040,7 +2053,12 @@ function drawMode11Orb(
   adj: ModeAdjustments,
   settings: SpectrumSettings
 ): void {
-  const level = getLoudnessLevel(bufferData, 0.8, 1.4);
+  const lp = settings.loudnessParams ?? { gain: 1.4, gamma: 0.8, attack: 0.22, release: 0.08 };
+  const target = getLoudnessLevel(bufferData, lp.gamma, lp.gain);
+  const st = (drawMode11Orb as any)._state ?? { level: 0 };
+  st.level = smoothAR(st.level, target, lp.attack, lp.release);
+  (drawMode11Orb as any)._state = st;
+  const level = st.level;
   const [pr, pg, pb] = getSpectrumPrimaryRgb(settings);
   const [sr, sg, sb] = getSpectrumSecondaryRgb(settings);
   const [cx, cy] = applyTransform(canvasWidth / 2, canvasHeight / 2, canvasWidth, canvasHeight, adj);
@@ -2062,7 +2080,12 @@ function drawMode12Breathing(
   adj: ModeAdjustments,
   settings: SpectrumSettings
 ): void {
-  const level = getLoudnessLevel(bufferData, 0.9, 1.15);
+  const lp = settings.loudnessParams ?? { gain: 1.15, gamma: 0.9, attack: 0.18, release: 0.08 };
+  const target = getLoudnessLevel(bufferData, lp.gamma, lp.gain);
+  const st = (drawMode12Breathing as any)._state ?? { level: 0 };
+  st.level = smoothAR(st.level, target, lp.attack, lp.release);
+  (drawMode12Breathing as any)._state = st;
+  const level = st.level;
   const [pr, pg, pb] = getSpectrumPrimaryRgb(settings);
   const [sr, sg, sb] = getSpectrumSecondaryRgb(settings);
   const breathe = 0.5 + 0.5 * Math.sin((performance.now() / 1000) * 1.7);
@@ -2080,7 +2103,12 @@ function drawMode13Particles(
   adj: ModeAdjustments,
   settings: SpectrumSettings
 ): void {
-  const level = getLoudnessLevel(bufferData, 0.85, 1.3);
+  const lp = settings.loudnessParams ?? { gain: 1.3, gamma: 0.85, attack: 0.22, release: 0.1 };
+  const target = getLoudnessLevel(bufferData, lp.gamma, lp.gain);
+  const st = (drawMode13Particles as any)._level ?? { level: 0 };
+  st.level = smoothAR(st.level, target, lp.attack, lp.release);
+  (drawMode13Particles as any)._level = st;
+  const level = st.level;
   const state = (drawMode13Particles as any)._state ?? { arr: [] as any[], lastMs: performance.now() };
   const now = performance.now();
   const dt = Math.min(40, now - state.lastMs);
@@ -2122,7 +2150,12 @@ function drawMode14Morph(
   adj: ModeAdjustments,
   settings: SpectrumSettings
 ): void {
-  const level = getLoudnessLevel(bufferData, 0.86, 1.25);
+  const lp = settings.loudnessParams ?? { gain: 1.25, gamma: 0.86, attack: 0.22, release: 0.1 };
+  const target = getLoudnessLevel(bufferData, lp.gamma, lp.gain);
+  const st = (drawMode14Morph as any)._state ?? { level: 0 };
+  st.level = smoothAR(st.level, target, lp.attack, lp.release);
+  (drawMode14Morph as any)._state = st;
+  const level = st.level;
   const [pr, pg, pb] = getSpectrumPrimaryRgb(settings);
   const [sr, sg, sb] = getSpectrumSecondaryRgb(settings);
   const cx = canvasWidth / 2;

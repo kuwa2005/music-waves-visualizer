@@ -375,6 +375,10 @@ const Home: NextPage = () => {
   const [lineWidthCircle, setLineWidthCircle] = useState<number>(3.2);      // mode2
   const [lineWidthSymWave, setLineWidthSymWave] = useState<number>(3.6);    // mode5
   const [circleRotationRpm, setCircleRotationRpm] = useState<number | null>(null); // mode2: null=OFF, 0=停止
+  type LoudnessParams = { gain: number; gamma: number; attack: number; release: number };
+  const DEFAULT_LOUDNESS_PARAMS: LoudnessParams = { gain: 1.35, gamma: 0.82, attack: 0.22, release: 0.08 };
+  const defaultLoudnessParamsRef = useRef<LoudnessParams>(DEFAULT_LOUDNESS_PARAMS);
+  const [loudnessParamsByMode, setLoudnessParamsByMode] = useState<Record<number, LoudnessParams>>({});
   const [glycoColorSet, setGlycoColorSet] = useState<string>("amber");
   const DEFAULT_SPECTRUM_HEX = "#FFFFFF";
   const DEFAULT_SPACE_PARTICLE = "#E0EEFF";
@@ -450,6 +454,7 @@ const Home: NextPage = () => {
       "common_circleRotationRpm",
       circleRotationRpm == null ? "off" : String(Math.max(-10, Math.min(10, Math.round(circleRotationRpm))))
     );
+    localStorage.setItem("common_loudnessParamsByMode", JSON.stringify(loudnessParamsByMode));
     localStorage.setItem("common_recordVideoBitrateMbps", String(recordVideoBitrateMbps));
     localStorage.setItem("common_exportAudioBitrateKbps", String(exportAudioBitrateKbps));
   }, [
@@ -464,6 +469,7 @@ const Home: NextPage = () => {
     dustParticleColor,
     spectrumRainbowColorful,
     circleRotationRpm,
+    loudnessParamsByMode,
     recordVideoBitrateMbps,
     exportAudioBitrateKbps,
   ]);
@@ -583,6 +589,7 @@ const Home: NextPage = () => {
         spectrumColorHex,
         spectrumRainbowColorful,
         circleRotationRpm,
+        loudnessParamsByMode,
         recordVideoBitrateMbps,
         exportAudioBitrateKbps,
         rendererType,
@@ -614,6 +621,7 @@ const Home: NextPage = () => {
       "common_spectrumColorHex",
       "common_spectrumRainbowColorful",
       "common_circleRotationRpm",
+      "common_loudnessParamsByMode",
       "common_galleryTransitionMode",
       "common_spaceParticleColor",
       "common_sparkleParticleColor",
@@ -723,6 +731,30 @@ const Home: NextPage = () => {
               setCircleRotationRpm(clamped);
             }
           }
+        }
+        if (c.loudnessParamsByMode && typeof c.loudnessParamsByMode === "object") {
+          const src = c.loudnessParamsByMode as Record<string, LoudnessParams>;
+          const next: Record<number, LoudnessParams> = {};
+          Object.keys(src).forEach((k) => {
+            const m = Number(k);
+            const v = src[k];
+            if (!isNaN(m) && v && typeof v === "object") {
+              const gain = Number((v as any).gain);
+              const gamma = Number((v as any).gamma);
+              const attack = Number((v as any).attack);
+              const release = Number((v as any).release);
+              if ([gain, gamma, attack, release].every((x) => !isNaN(x))) {
+                next[m] = {
+                  gain: Math.max(0.1, Math.min(5, gain)),
+                  gamma: Math.max(0.2, Math.min(3, gamma)),
+                  attack: Math.max(0.01, Math.min(0.9, attack)),
+                  release: Math.max(0.01, Math.min(0.9, release)),
+                };
+              }
+            }
+          });
+          localStorage.setItem("common_loudnessParamsByMode", JSON.stringify(next));
+          setLoudnessParamsByMode(next);
         }
         if (c.recordVideoBitrateMbps !== undefined) {
           const n = Number(c.recordVideoBitrateMbps);
@@ -1155,6 +1187,33 @@ const Home: NextPage = () => {
       }
     }
 
+    try {
+      const savedLp = localStorage.getItem("common_loudnessParamsByMode");
+      if (savedLp) {
+        const parsed = JSON.parse(savedLp) as Record<string, LoudnessParams>;
+        const next: Record<number, LoudnessParams> = {};
+        Object.keys(parsed).forEach((k) => {
+          const m = Number(k);
+          const v = parsed[k];
+          if (!isNaN(m) && v && typeof v === "object") {
+            const gain = Number(v.gain);
+            const gamma = Number(v.gamma);
+            const attack = Number(v.attack);
+            const release = Number(v.release);
+            if ([gain, gamma, attack, release].every((x) => !isNaN(x))) {
+              next[m] = {
+                gain: Math.max(0.1, Math.min(5, gain)),
+                gamma: Math.max(0.2, Math.min(3, gamma)),
+                attack: Math.max(0.01, Math.min(0.9, attack)),
+                release: Math.max(0.01, Math.min(0.9, release)),
+              };
+            }
+          }
+        });
+        setLoudnessParamsByMode(next);
+      }
+    } catch (_e) { /* ignore */ }
+
     const savedVidBr = localStorage.getItem("common_recordVideoBitrateMbps");
     if (savedVidBr) {
       const n = parseFloat(savedVidBr);
@@ -1284,6 +1343,7 @@ const Home: NextPage = () => {
       lineWidthCircle,
       lineWidthSymWave,
       circleRotationRpm,
+      loudnessParams: loudnessParamsByMode[mode] ?? defaultLoudnessParamsRef.current,
       glycoColorSet,
       spectrumColorHex,
       spectrumRainbowColorful,
@@ -1332,6 +1392,7 @@ const Home: NextPage = () => {
     lineWidthCircle,
     lineWidthSymWave,
     circleRotationRpm,
+    loudnessParamsByMode,
     spectrumColorHex,
     spectrumRainbowColorful,
   ]);
@@ -1711,6 +1772,7 @@ const Home: NextPage = () => {
       lineWidthCircle,
       lineWidthSymWave,
       circleRotationRpm,
+      loudnessParams: loudnessParamsByMode[mode] ?? defaultLoudnessParamsRef.current,
       glycoColorSet,
       spectrumColorHex,
       spectrumRainbowColorful,
@@ -2373,6 +2435,81 @@ const Home: NextPage = () => {
                           max={8}
                           step={0.1}
                           onChange={(_, v) => setLineWidthCircle(v as number)}
+                        />
+                      </Box>
+                    )}
+                    {mode >= 8 && mode <= 14 && (
+                      <Box sx={{ mb: 3 }}>
+                        <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600 }}>
+                          {t("displayVolume.loudnessTuning")}
+                        </Typography>
+                        <Typography gutterBottom>
+                          {t("displayVolume.loudnessGain", {
+                            value: (loudnessParamsByMode[mode]?.gain ?? DEFAULT_LOUDNESS_PARAMS.gain).toFixed(2),
+                          })}
+                        </Typography>
+                        <Slider
+                          value={loudnessParamsByMode[mode]?.gain ?? DEFAULT_LOUDNESS_PARAMS.gain}
+                          min={0.1}
+                          max={5}
+                          step={0.05}
+                          onChange={(_, v) =>
+                            setLoudnessParamsByMode((prev) => ({
+                              ...prev,
+                              [mode]: { ...(prev[mode] ?? DEFAULT_LOUDNESS_PARAMS), gain: v as number },
+                            }))
+                          }
+                        />
+                        <Typography gutterBottom sx={{ mt: 2 }}>
+                          {t("displayVolume.loudnessGamma", {
+                            value: (loudnessParamsByMode[mode]?.gamma ?? DEFAULT_LOUDNESS_PARAMS.gamma).toFixed(2),
+                          })}
+                        </Typography>
+                        <Slider
+                          value={loudnessParamsByMode[mode]?.gamma ?? DEFAULT_LOUDNESS_PARAMS.gamma}
+                          min={0.2}
+                          max={3}
+                          step={0.02}
+                          onChange={(_, v) =>
+                            setLoudnessParamsByMode((prev) => ({
+                              ...prev,
+                              [mode]: { ...(prev[mode] ?? DEFAULT_LOUDNESS_PARAMS), gamma: v as number },
+                            }))
+                          }
+                        />
+                        <Typography gutterBottom sx={{ mt: 2 }}>
+                          {t("displayVolume.loudnessAttack", {
+                            value: (loudnessParamsByMode[mode]?.attack ?? DEFAULT_LOUDNESS_PARAMS.attack).toFixed(2),
+                          })}
+                        </Typography>
+                        <Slider
+                          value={loudnessParamsByMode[mode]?.attack ?? DEFAULT_LOUDNESS_PARAMS.attack}
+                          min={0.01}
+                          max={0.9}
+                          step={0.01}
+                          onChange={(_, v) =>
+                            setLoudnessParamsByMode((prev) => ({
+                              ...prev,
+                              [mode]: { ...(prev[mode] ?? DEFAULT_LOUDNESS_PARAMS), attack: v as number },
+                            }))
+                          }
+                        />
+                        <Typography gutterBottom sx={{ mt: 2 }}>
+                          {t("displayVolume.loudnessRelease", {
+                            value: (loudnessParamsByMode[mode]?.release ?? DEFAULT_LOUDNESS_PARAMS.release).toFixed(2),
+                          })}
+                        </Typography>
+                        <Slider
+                          value={loudnessParamsByMode[mode]?.release ?? DEFAULT_LOUDNESS_PARAMS.release}
+                          min={0.01}
+                          max={0.9}
+                          step={0.01}
+                          onChange={(_, v) =>
+                            setLoudnessParamsByMode((prev) => ({
+                              ...prev,
+                              [mode]: { ...(prev[mode] ?? DEFAULT_LOUDNESS_PARAMS), release: v as number },
+                            }))
+                          }
                         />
                       </Box>
                     )}

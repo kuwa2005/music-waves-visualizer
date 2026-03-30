@@ -24,6 +24,13 @@ export type SpectrumSettings = {
   lineWidthSymWave: number;
   /** 円形スペアナ回転（rpm）。null=OFF、0=停止、負=左回転、正=右回転 */
   circleRotationRpm?: number | null;
+  /** 音圧系（8〜14）: ゲイン/ガンマ/アタック/リリース */
+  loudnessParams?: {
+    gain: number;
+    gamma: number;
+    attack: number;
+    release: number;
+  };
   glycoColorSet?: string;
   /** スペアナのベース色 #RRGGBB（優先。インポート互換で preset も参照） */
   spectrumColorHex?: string;
@@ -41,6 +48,22 @@ const SPECTRUM_PRESET_RGB: Record<Exclude<SpectrumColorPresetKey, "custom">, [nu
   green: [80, 255, 120],
   gold: [255, 200, 80],
 };
+
+function clamp01(x: number): number {
+  return Math.min(1, Math.max(0, x));
+}
+
+function computeLoudnessTarget(bufferData: Uint8Array, gamma: number, gain: number): number {
+  let sum = 0;
+  for (let i = 0; i < bufferData.length; i++) sum += bufferData[i];
+  const volume = sum / (Math.max(1, bufferData.length) * 255);
+  return clamp01(Math.pow(volume, gamma) * gain);
+}
+
+function smoothAR(prev: number, target: number, attack: number, release: number): number {
+  const a = target > prev ? attack : release;
+  return prev + (target - prev) * a;
+}
 
 /** 旧プリセット保存値から #RRGGBB へ（スペアナ色の移行用） */
 export function legacySpectrumPresetToHex(preset: string | undefined, customHex: string | undefined): string {
@@ -626,15 +649,11 @@ export const drawBars = (
   } else if (mode === 8) {
     // モード8: 音圧パルス（周波数分解なし、全帯域の音圧でリング/グローが脈動）
     analyser.getByteFrequencyData(bufferData);
-    let sum = 0;
-    for (let i = 0; i < bufferLength; i++) sum += bufferData[i];
-    const volume = sum / (bufferLength * 255); // 0..1
-    const target = Math.min(1, Math.pow(volume, 0.82) * 1.35);
+    const lp = settings.loudnessParams ?? { gain: 1.35, gamma: 0.82, attack: 0.22, release: 0.08 };
+    const target = computeLoudnessTarget(bufferData, lp.gamma, lp.gain);
 
     const pulseState = (drawBars as any)._mode8Pulse ?? { level: 0 };
-    const attack = 0.22;
-    const release = 0.08;
-    pulseState.level += (target - pulseState.level) * (target > pulseState.level ? attack : release);
+    pulseState.level = smoothAR(pulseState.level, target, lp.attack, lp.release);
     (drawBars as any)._mode8Pulse = pulseState;
     const level = pulseState.level;
 
@@ -666,6 +685,7 @@ export const drawBars = (
   } else if (mode === 9) {
     // モード9: VUメーター（2ch風）+ ピークホールド
     analyser.getByteFrequencyData(bufferData);
+    const lp = settings.loudnessParams ?? { gain: 1.25, gamma: 0.85, attack: 0.28, release: 0.12 };
     let leftSum = 0;
     let rightSum = 0;
     const half = Math.max(1, Math.floor(bufferLength / 2));
@@ -673,15 +693,17 @@ export const drawBars = (
     for (let i = half; i < bufferLength; i++) rightSum += bufferData[i];
     const left = leftSum / (half * 255);
     const right = rightSum / (Math.max(1, bufferLength - half) * 255);
-    const levelL = Math.min(1, Math.pow(left, 0.85) * 1.25);
-    const levelR = Math.min(1, Math.pow(right, 0.85) * 1.25);
+    const rawL = clamp01(Math.pow(left, lp.gamma) * lp.gain);
+    const rawR = clamp01(Math.pow(right, lp.gamma) * lp.gain);
 
-    const vuState = (drawBars as any)._mode9Vu ?? { peakL: 0, peakR: 0, lastMs: performance.now() };
+    const vuState = (drawBars as any)._mode9Vu ?? { levelL: 0, levelR: 0, peakL: 0, peakR: 0, lastMs: performance.now() };
     const now = performance.now();
     const dt = Math.min(60, now - vuState.lastMs);
     vuState.lastMs = now;
-    vuState.peakL = Math.max(levelL, vuState.peakL - dt * 0.00075);
-    vuState.peakR = Math.max(levelR, vuState.peakR - dt * 0.00075);
+    vuState.levelL = smoothAR(vuState.levelL, rawL, lp.attack, lp.release);
+    vuState.levelR = smoothAR(vuState.levelR, rawR, lp.attack, lp.release);
+    vuState.peakL = Math.max(vuState.levelL, vuState.peakL - dt * 0.00075);
+    vuState.peakR = Math.max(vuState.levelR, vuState.peakR - dt * 0.00075);
     (drawBars as any)._mode9Vu = vuState;
 
     const barW = canvasWidth * 0.16;
@@ -703,15 +725,17 @@ export const drawBars = (
       ctx.fillStyle = `rgba(255, 240, 120, ${0.95 * op})`;
       ctx.fillRect(x, peakY - 2, barW, 4);
     };
-    drawVu(xL, levelL, vuState.peakL);
-    drawVu(xR, levelR, vuState.peakR);
+    drawVu(xL, vuState.levelL, vuState.peakL);
+    drawVu(xR, vuState.levelR, vuState.peakR);
   } else if (mode === 10) {
     // モード10: 円リング脈動（半径/線幅/グロー）
     analyser.getByteFrequencyData(bufferData);
-    let sum = 0;
-    for (let i = 0; i < bufferLength; i++) sum += bufferData[i];
-    const volume = sum / (bufferLength * 255);
-    const level = Math.min(1, Math.pow(volume, 0.82) * 1.35);
+    const lp = settings.loudnessParams ?? { gain: 1.35, gamma: 0.82, attack: 0.22, release: 0.08 };
+    const target = computeLoudnessTarget(bufferData, lp.gamma, lp.gain);
+    const st = (drawBars as any)._mode10Ring ?? { level: 0 };
+    st.level = smoothAR(st.level, target, lp.attack, lp.release);
+    (drawBars as any)._mode10Ring = st;
+    const level = st.level;
     const cx = canvasWidth / 2;
     const cy = canvasHeight / 2;
     const baseR = Math.min(canvasWidth, canvasHeight) * 0.2;
@@ -733,10 +757,12 @@ export const drawBars = (
   } else if (mode === 11) {
     // モード11: 中央オーブ（発光球）
     analyser.getByteFrequencyData(bufferData);
-    let sum = 0;
-    for (let i = 0; i < bufferLength; i++) sum += bufferData[i];
-    const volume = sum / (bufferLength * 255);
-    const level = Math.min(1, Math.pow(volume, 0.8) * 1.4);
+    const lp = settings.loudnessParams ?? { gain: 1.4, gamma: 0.8, attack: 0.22, release: 0.08 };
+    const target = computeLoudnessTarget(bufferData, lp.gamma, lp.gain);
+    const st = (drawBars as any)._mode11Orb ?? { level: 0 };
+    st.level = smoothAR(st.level, target, lp.attack, lp.release);
+    (drawBars as any)._mode11Orb = st;
+    const level = st.level;
     const cx = canvasWidth / 2;
     const cy = canvasHeight / 2;
     const r = Math.min(canvasWidth, canvasHeight) * (0.1 + level * 0.24);
@@ -752,10 +778,12 @@ export const drawBars = (
   } else if (mode === 12) {
     // モード12: 背景ブリージング（明度/彩度）
     analyser.getByteFrequencyData(bufferData);
-    let sum = 0;
-    for (let i = 0; i < bufferLength; i++) sum += bufferData[i];
-    const volume = sum / (bufferLength * 255);
-    const level = Math.min(1, Math.pow(volume, 0.9) * 1.15);
+    const lp = settings.loudnessParams ?? { gain: 1.15, gamma: 0.9, attack: 0.18, release: 0.08 };
+    const target = computeLoudnessTarget(bufferData, lp.gamma, lp.gain);
+    const st = (drawBars as any)._mode12Bg ?? { level: 0 };
+    st.level = smoothAR(st.level, target, lp.attack, lp.release);
+    (drawBars as any)._mode12Bg = st;
+    const level = st.level;
     const op = settings.opacity;
     const t = performance.now() / 1000;
     const breathe = 0.5 + 0.5 * Math.sin(t * 1.7);
@@ -768,10 +796,12 @@ export const drawBars = (
   } else if (mode === 13) {
     // モード13: パーティクル密度制御
     analyser.getByteFrequencyData(bufferData);
-    let sum = 0;
-    for (let i = 0; i < bufferLength; i++) sum += bufferData[i];
-    const volume = sum / (bufferLength * 255);
-    const level = Math.min(1, Math.pow(volume, 0.85) * 1.3);
+    const lp = settings.loudnessParams ?? { gain: 1.3, gamma: 0.85, attack: 0.22, release: 0.1 };
+    const target = computeLoudnessTarget(bufferData, lp.gamma, lp.gain);
+    const stL = (drawBars as any)._mode13Level ?? { level: 0 };
+    stL.level = smoothAR(stL.level, target, lp.attack, lp.release);
+    (drawBars as any)._mode13Level = stL;
+    const level = stL.level;
     const op = settings.opacity;
     const now = performance.now();
     const state = (drawBars as any)._mode13Particles ?? { arr: [] as any[], lastMs: now };
@@ -809,10 +839,12 @@ export const drawBars = (
   } else if (mode === 14) {
     // モード14: ジオメトリ連続変形（単一形状）
     analyser.getByteFrequencyData(bufferData);
-    let sum = 0;
-    for (let i = 0; i < bufferLength; i++) sum += bufferData[i];
-    const volume = sum / (bufferLength * 255);
-    const level = Math.min(1, Math.pow(volume, 0.86) * 1.25);
+    const lp = settings.loudnessParams ?? { gain: 1.25, gamma: 0.86, attack: 0.22, release: 0.1 };
+    const target = computeLoudnessTarget(bufferData, lp.gamma, lp.gain);
+    const st = (drawBars as any)._mode14Morph ?? { level: 0 };
+    st.level = smoothAR(st.level, target, lp.attack, lp.release);
+    (drawBars as any)._mode14Morph = st;
+    const level = st.level;
     const cx = canvasWidth / 2;
     const cy = canvasHeight / 2;
     const baseR = Math.min(canvasWidth, canvasHeight) * 0.22;
