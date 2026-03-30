@@ -6,6 +6,9 @@
 - **`npm run build:html:lil-la`**: One-shot static build with `NEXT_PUBLIC_SITE_URL=https://lil.la` for [lil.la/visualizer](https://lil.la/visualizer/) (canonical / OG). Documented in [docs/BUILD.md](./docs/BUILD.md), [README](./README.md), and [`.env.production.example`](./.env.production.example).
 
 ### Changed
+- **Spectrum UX + loudness tuning**: Mode picker is grouped into **frequency** and **loudness** sections with shorter labels and tooltip descriptions. Loudness modes (8–14) now support per-mode **presets** (Natural / Strong / EDM) and exposed **gain/gamma/attack/release** controls.
+- **Mode 13 performance guard**: Added automatic particle cap/trail simplification based on device capability (`hardwareConcurrency` / `deviceMemory`) with low-spec fallback in Canvas 2D + WebGL.
+- **Visual consistency + effect interference**: Added shared opacity shaping to reduce highlight clipping and align slider feel; auto-ducking for `scanlines` / `rain` / `dust` when spectrum is active so visuals do not bury the main spectrum.
 - **Loudness-only visuals (modes 9–14)**: Added six non-FFT visuals under the spectrum category — **VU meter**, **pulse ring**, **center orb**, **breathing background**, **particle density**, and **geometry morph** — all implemented for Canvas 2D + WebGL with the same mode buttons and settings flow.
 - **Mode 8 (loudness pulse)**: Added a non-spectrum visual in the spectrum category that reacts to overall loudness only (center orb + glow pulse), available as a new mode button in Canvas 2D and WebGL.
 - **Mode 2 (circle)**: Added rotation option (`common_circleRotationRpm`) with **OFF / -10..10 rpm**. `1` equals ~1 rotation per 60 seconds (1rpm), negative is left (CCW), positive is right (CW). **OFF** and **0** both stop rotation (Canvas 2D + WebGL).

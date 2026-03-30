@@ -1218,6 +1218,10 @@ function renderFrame(): void {
 
   // エフェクトオーバーレイ（wantSpectrum 時のみ到達＝上で取得した音源メトリクス）
   if (latestEffect && latestEffect.type !== "none") {
+    const effectDucking =
+      mode !== -1 && (latestEffect.type === "scanlines" || latestEffect.type === "rain" || latestEffect.type === "dust")
+        ? 0.78
+        : 1.0;
     if (latestEffect.type === "space" || latestEffect.type === "spaceConstant" || latestEffect.type === "spaceAudio") {
       const now = performance.now();
       const deltaTime = Math.min(now - lastEffectTime, 50);
@@ -1312,7 +1316,7 @@ function renderFrame(): void {
             p.r / 255,
             p.g / 255,
             p.b / 255,
-            p.alpha
+            p.alpha * effectDucking
           );
         }
       }
@@ -1342,7 +1346,7 @@ function renderFrame(): void {
           s.r / 255,
           s.g / 255,
           s.b / 255,
-          s.a,
+          s.a * effectDucking,
           s.lw
         );
       }
@@ -1382,7 +1386,7 @@ function renderFrame(): void {
         0.78 +
         0.22 *
           Math.min(1, audioRForEffects.volume * 0.7 + audioRForEffects.bass * 0.35);
-      const alpha = Math.min(0.42, base * pulse);
+      const alpha = Math.min(0.42, base * pulse) * effectDucking;
       const lineH = latestEffect.density === 3 ? 2 : 1;
       for (let y = 0; y < canvasHeight; y += spacing) {
         drawRect(glContext, 0, y, canvasWidth, lineH, 0, 0, 0, alpha);
@@ -1881,7 +1885,7 @@ function drawMode7Area(
   const bufferLength = bufferData.length;
   const barsLength = 128;
   const barWidth = canvasWidth / barsLength;
-  const op = settings.opacity;
+  const op = getVisualOpacity(settings.opacity);
   const [pr, pg, pb] = getSpectrumPrimaryRgb(settings);
   const [sr, sg, sb] = getSpectrumSecondaryRgb(settings);
   for (let i = 0; i < barsLength; i++) {
@@ -1933,7 +1937,7 @@ function drawMode8LoudnessPulse(
   const cy = canvasHeight / 2;
   const baseR = Math.min(canvasWidth, canvasHeight) * 0.16;
   const pulseR = baseR * (1 + level * 1.15);
-  const op = settings.opacity;
+  const op = getVisualOpacity(settings.opacity);
   const [pr, pg, pb] = getSpectrumPrimaryRgb(settings);
   const [sr, sg, sb] = getSpectrumSecondaryRgb(settings);
   const coreOpacity = (0.28 + 0.25 * level) * op;
@@ -1972,6 +1976,19 @@ function smoothAR(prev: number, target: number, attack: number, release: number)
   return prev + (target - prev) * a;
 }
 
+function getVisualOpacity(opacity: number): number {
+  return Math.min(0.92, 0.12 + opacity * 0.8);
+}
+
+function getParticlePerfScale(): number {
+  if (typeof navigator === "undefined") return 0.7;
+  const hc = (navigator as any).hardwareConcurrency ?? 4;
+  const dm = (navigator as any).deviceMemory ?? 4;
+  if (hc <= 4 || dm <= 4) return 0.45;
+  if (hc <= 8 || dm <= 8) return 0.7;
+  return 1.0;
+}
+
 function drawMode9Vu(
   ctx: WebGLRendererContext,
   bufferData: Uint8Array,
@@ -2002,7 +2019,7 @@ function drawMode9Vu(
   const maxH = canvasHeight * 0.72;
   const baseY = canvasHeight * 0.9;
   const [pr, pg, pb] = getSpectrumPrimaryRgb(settings);
-  const op = settings.opacity;
+  const op = getVisualOpacity(settings.opacity);
   const drawOne = (x: number, level: number, peak: number) => {
     const h = maxH * level;
     const [x1, y1] = applyTransform(x, baseY - h, canvasWidth, canvasHeight, adj);
@@ -2036,7 +2053,7 @@ function drawMode10Ring(
   const [cx, cy] = applyTransform(canvasWidth / 2, canvasHeight / 2, canvasWidth, canvasHeight, adj);
   const scale = Math.max(0.1, Math.min(adj.scaleX, adj.scaleY));
   const r = Math.min(canvasWidth, canvasHeight) * 0.2 * (1 + level * 0.42) * scale;
-  const op = settings.opacity;
+  const op = getVisualOpacity(settings.opacity);
   for (let i = 10; i >= 1; i--) {
     const t = i / 10;
     drawCircle(ctx, cx, cy, r * (1 + (1 - t) * 0.9), sr / 255, sg / 255, sb / 255, (0.2 + 0.4 * level) * (1 - t) * 0.25 * op);
@@ -2064,7 +2081,7 @@ function drawMode11Orb(
   const [cx, cy] = applyTransform(canvasWidth / 2, canvasHeight / 2, canvasWidth, canvasHeight, adj);
   const scale = Math.max(0.1, Math.min(adj.scaleX, adj.scaleY));
   const r = Math.min(canvasWidth, canvasHeight) * (0.1 + level * 0.24) * scale;
-  const op = settings.opacity;
+  const op = getVisualOpacity(settings.opacity);
   for (let i = 12; i >= 1; i--) {
     const t = i / 12;
     drawCircle(ctx, cx, cy, r * (0.5 + t * 2.0), sr / 255, sg / 255, sb / 255, (1 - t) * 0.18 * op);
@@ -2089,7 +2106,7 @@ function drawMode12Breathing(
   const [pr, pg, pb] = getSpectrumPrimaryRgb(settings);
   const [sr, sg, sb] = getSpectrumSecondaryRgb(settings);
   const breathe = 0.5 + 0.5 * Math.sin((performance.now() / 1000) * 1.7);
-  const alpha = (0.1 + 0.35 * level) * (0.75 + 0.25 * breathe) * settings.opacity;
+  const alpha = (0.1 + 0.35 * level) * (0.75 + 0.25 * breathe) * getVisualOpacity(settings.opacity);
   const [x1, y1] = applyTransform(0, 0, canvasWidth, canvasHeight, adj);
   const [x2, y2] = applyTransform(canvasWidth, canvasHeight, canvasWidth, canvasHeight, adj);
   drawRectGradient(ctx, Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1), pr / 255, pg / 255, pb / 255, alpha, sr / 255, sg / 255, sb / 255, alpha * 0.65);
@@ -2113,7 +2130,9 @@ function drawMode13Particles(
   const now = performance.now();
   const dt = Math.min(40, now - state.lastMs);
   state.lastMs = now;
-  const targetCount = Math.floor(20 + level * 120);
+  const perfScale = getParticlePerfScale();
+  const targetCount = Math.floor((20 + level * 120) * perfScale);
+  const trailLen = perfScale <= 0.5 ? 35 : perfScale <= 0.75 ? 45 : 60;
   while (state.arr.length < targetCount) {
     state.arr.push({
       x: Math.random() * canvasWidth,
@@ -2134,10 +2153,10 @@ function drawMode13Particles(
       p.y = canvasHeight + Math.random() * 30;
       p.life = 1;
     }
-    const alpha = Math.max(0, p.life) * (0.25 + 0.65 * level) * settings.opacity;
+    const alpha = Math.max(0, p.life) * (0.25 + 0.65 * level) * getVisualOpacity(settings.opacity);
     const [x1, y1] = applyTransform(p.x, p.y, canvasWidth, canvasHeight, adj);
-    const [x2, y2] = applyTransform(p.x - p.vx * 60, p.y - p.vy * 60, canvasWidth, canvasHeight, adj);
-    drawLine(ctx, x1, y1, x2, y2, sr / 255, sg / 255, sb / 255, alpha, 1 + level * 2);
+    const [x2, y2] = applyTransform(p.x - p.vx * trailLen, p.y - p.vy * trailLen, canvasWidth, canvasHeight, adj);
+    drawLine(ctx, x1, y1, x2, y2, sr / 255, sg / 255, sb / 255, alpha, (1 + level * 2) * Math.max(0.7, perfScale));
   }
   (drawMode13Particles as any)._state = state;
 }
@@ -2163,7 +2182,7 @@ function drawMode14Morph(
   const baseR = Math.min(canvasWidth, canvasHeight) * 0.22;
   const points = 96;
   const spikes = 3 + Math.floor(level * 8);
-  const op = settings.opacity;
+  const op = getVisualOpacity(settings.opacity);
   let px = 0;
   let py = 0;
   for (let i = 0; i <= points; i++) {

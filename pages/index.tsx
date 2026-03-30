@@ -24,6 +24,7 @@ import {
   Switch,
   FormControlLabel,
   IconButton,
+  Tooltip,
 } from "@mui/material";
 import {
   FiberManualRecord,
@@ -379,6 +380,11 @@ const Home: NextPage = () => {
   const DEFAULT_LOUDNESS_PARAMS: LoudnessParams = { gain: 1.35, gamma: 0.82, attack: 0.22, release: 0.08 };
   const defaultLoudnessParamsRef = useRef<LoudnessParams>(DEFAULT_LOUDNESS_PARAMS);
   const [loudnessParamsByMode, setLoudnessParamsByMode] = useState<Record<number, LoudnessParams>>({});
+  const LOUDNESS_PRESETS: Record<"natural" | "strong" | "edm", LoudnessParams> = {
+    natural: { gain: 1.2, gamma: 0.9, attack: 0.18, release: 0.1 },
+    strong: { gain: 1.5, gamma: 0.8, attack: 0.26, release: 0.1 },
+    edm: { gain: 1.9, gamma: 0.7, attack: 0.34, release: 0.06 },
+  };
   const [glycoColorSet, setGlycoColorSet] = useState<string>("amber");
   const DEFAULT_SPECTRUM_HEX = "#FFFFFF";
   const DEFAULT_SPACE_PARTICLE = "#E0EEFF";
@@ -945,6 +951,27 @@ const Home: NextPage = () => {
     justifyContent: "center",
     mb: 1,
   } as const;
+
+  const isLoudnessMode = (m: number) => m >= 8 && m <= 14;
+  const getModeDescriptionKey = (m: number): string => {
+    const map: Record<number, string> = {
+      [-1]: "spectrum.descOff",
+      0: "spectrum.descFreqBar",
+      2: "spectrum.descCircle",
+      3: "spectrum.descSymBar",
+      4: "spectrum.descDot",
+      6: "spectrum.descGlyco",
+      7: "spectrum.descAreaFill",
+      8: "spectrum.descLoudnessPulse",
+      9: "spectrum.descVuMeter",
+      10: "spectrum.descPulseRing",
+      11: "spectrum.descCenterOrb",
+      12: "spectrum.descBreathingBg",
+      13: "spectrum.descParticleDensity",
+      14: "spectrum.descGeomMorph",
+    };
+    return map[m] ?? "spectrum.descOff";
+  };
 
   const onChangeMode = (event: SelectChangeEvent<string>) => {
     const newMode = Number(event.target.value);
@@ -2272,31 +2299,52 @@ const Home: NextPage = () => {
                 <Typography variant="body2" sx={{ mb: 1, textAlign: "center", fontWeight: 500 }}>
                   {t("spectrum.title")}
                 </Typography>
+                <Typography variant="caption" color="textSecondary" sx={{ display: "block", mb: 0.5, textAlign: "center" }}>
+                  {t("spectrum.groupFrequency")}
+                </Typography>
+                <Box sx={{ display: "flex", gap: 1, justifyContent: "center", flexWrap: "wrap", mb: 1.5 }}>
+                  {[
+                    { value: -1, label: t("spectrum.shortOff") },
+                    { value: 0, label: t("spectrum.shortFreqBar") },
+                    { value: 2, label: t("spectrum.shortCircle") },
+                    { value: 3, label: t("spectrum.shortSymBar") },
+                    { value: 4, label: t("spectrum.shortDot") },
+                    { value: 7, label: t("spectrum.shortAreaFill") },
+                    { value: 6, label: t("spectrum.shortGlyco") },
+                  ].map((item) => (
+                    <Tooltip key={item.value} title={t(getModeDescriptionKey(item.value))} arrow>
+                      <Button
+                        variant={mode === item.value ? "contained" : "outlined"}
+                        onClick={() => onChangeMode({ target: { value: item.value.toString() } } as SelectChangeEvent<string>)}
+                        size="small"
+                      >
+                        {item.label}
+                      </Button>
+                    </Tooltip>
+                  ))}
+                </Box>
+                <Typography variant="caption" color="textSecondary" sx={{ display: "block", mb: 0.5, textAlign: "center" }}>
+                  {t("spectrum.groupLoudness")}
+                </Typography>
                 <Box sx={{ display: "flex", gap: 1, justifyContent: "center", flexWrap: "wrap", mb: 2 }}>
                   {[
-                    { value: -1, label: t("spectrum.off") },
-                    { value: 0, label: t("spectrum.freqBar") },
-                    { value: 2, label: t("spectrum.circle") },
-                    { value: 8, label: t("spectrum.loudnessPulse") },
-                    { value: 9, label: t("spectrum.vuMeter") },
-                    { value: 10, label: t("spectrum.pulseRing") },
-                    { value: 11, label: t("spectrum.centerOrb") },
-                    { value: 12, label: t("spectrum.breathingBg") },
-                    { value: 13, label: t("spectrum.particleDensity") },
-                    { value: 14, label: t("spectrum.geomMorph") },
-                    { value: 3, label: t("spectrum.symBar") },
-                    { value: 4, label: t("spectrum.dot") },
-                    { value: 7, label: t("spectrum.areaFill") },
-                    { value: 6, label: t("spectrum.glyco") },
+                    { value: 8, label: t("spectrum.shortLoudnessPulse") },
+                    { value: 9, label: t("spectrum.shortVuMeter") },
+                    { value: 10, label: t("spectrum.shortPulseRing") },
+                    { value: 11, label: t("spectrum.shortCenterOrb") },
+                    { value: 12, label: t("spectrum.shortBreathingBg") },
+                    { value: 13, label: t("spectrum.shortParticleDensity") },
+                    { value: 14, label: t("spectrum.shortGeomMorph") },
                   ].map((item) => (
-                    <Button
-                      key={item.value}
-                      variant={mode === item.value ? "contained" : "outlined"}
-                      onClick={() => onChangeMode({ target: { value: item.value.toString() } } as SelectChangeEvent<string>)}
-                      size="small"
-                    >
-                      {item.label}
-                    </Button>
+                    <Tooltip key={item.value} title={t(getModeDescriptionKey(item.value))} arrow>
+                      <Button
+                        variant={mode === item.value ? "contained" : "outlined"}
+                        onClick={() => onChangeMode({ target: { value: item.value.toString() } } as SelectChangeEvent<string>)}
+                        size="small"
+                      >
+                        {item.label}
+                      </Button>
+                    </Tooltip>
                   ))}
                 </Box>
                 <Accordion sx={{ mt: 2 }}>
@@ -2438,11 +2486,25 @@ const Home: NextPage = () => {
                         />
                       </Box>
                     )}
-                    {mode >= 8 && mode <= 14 && (
+                    {isLoudnessMode(mode) && (
                       <Box sx={{ mb: 3 }}>
                         <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600 }}>
                           {t("displayVolume.loudnessTuning")}
                         </Typography>
+                        <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap", mb: 1 }}>
+                          {(["natural", "strong", "edm"] as const).map((k) => (
+                            <Button
+                              key={k}
+                              size="small"
+                              variant="outlined"
+                              onClick={() =>
+                                setLoudnessParamsByMode((prev) => ({ ...prev, [mode]: { ...LOUDNESS_PRESETS[k] } }))
+                              }
+                            >
+                              {t(`displayVolume.preset${k === "natural" ? "Natural" : k === "strong" ? "Strong" : "Edm"}`)}
+                            </Button>
+                          ))}
+                        </Box>
                         <Typography gutterBottom>
                           {t("displayVolume.loudnessGain", {
                             value: (loudnessParamsByMode[mode]?.gain ?? DEFAULT_LOUDNESS_PARAMS.gain).toFixed(2),

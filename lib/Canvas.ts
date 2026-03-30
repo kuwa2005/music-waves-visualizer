@@ -65,6 +65,20 @@ function smoothAR(prev: number, target: number, attack: number, release: number)
   return prev + (target - prev) * a;
 }
 
+function getVisualOpacity(opacity: number): number {
+  // 透過率スライダーの体感を均し、白飛びを抑える上限を設ける
+  return Math.min(0.92, 0.12 + opacity * 0.8);
+}
+
+function getParticlePerfScale(): number {
+  if (typeof navigator === "undefined") return 0.7;
+  const hc = (navigator as any).hardwareConcurrency ?? 4;
+  const dm = (navigator as any).deviceMemory ?? 4;
+  if (hc <= 4 || dm <= 4) return 0.45;
+  if (hc <= 8 || dm <= 8) return 0.7;
+  return 1.0;
+}
+
 /** 旧プリセット保存値から #RRGGBB へ（スペアナ色の移行用） */
 export function legacySpectrumPresetToHex(preset: string | undefined, customHex: string | undefined): string {
   if (preset === "custom" && customHex && /^#[0-9a-fA-F]{6}$/.test(customHex)) {
@@ -445,6 +459,7 @@ export const drawBars = (
   const [pr, pg, pb] = getSpectrumPrimaryRgb(settings);
   const [sr, sg, sb] = getSpectrumSecondaryRgb(settings);
   const useRainbow34 = settings.spectrumRainbowColorful !== false;
+  const visualOpacity = getVisualOpacity(settings.opacity);
 
   ctx.save();
   ctx.translate(canvasWidth / 2 + offsetXPixels, canvasHeight / 2 + offsetYPixels);
@@ -630,7 +645,7 @@ export const drawBars = (
     ctx.lineTo(canvasWidth, canvasHeight);
     ctx.closePath();
     const g = ctx.createLinearGradient(0, canvasHeight, 0, 0);
-    const op = settings.opacity;
+    const op = visualOpacity;
     g.addColorStop(0, `rgba(${pr}, ${pg}, ${pb}, ${0.78 * op})`);
     g.addColorStop(1, `rgba(${sr}, ${sg}, ${sb}, ${0.38 * op})`);
     ctx.fillStyle = g;
@@ -662,7 +677,7 @@ export const drawBars = (
     const baseR = Math.min(canvasWidth, canvasHeight) * 0.16;
     const pulseR = baseR * (1 + level * 1.15);
     const glowR = pulseR * (1.6 + level * 0.75);
-    const op = settings.opacity;
+    const op = visualOpacity;
 
     const glow = ctx.createRadialGradient(cx, cy, pulseR * 0.2, cx, cy, glowR);
     glow.addColorStop(0, `rgba(${sr}, ${sg}, ${sb}, ${0.65 * op})`);
@@ -712,7 +727,7 @@ export const drawBars = (
     const xR = canvasWidth / 2 + gap / 2;
     const maxH = canvasHeight * 0.72;
     const baseY = canvasHeight * 0.9;
-    const op = settings.opacity;
+    const op = visualOpacity;
     const drawVu = (x: number, level: number, peak: number) => {
       const h = maxH * level;
       const grad = ctx.createLinearGradient(x, baseY, x, baseY - maxH);
@@ -741,7 +756,7 @@ export const drawBars = (
     const baseR = Math.min(canvasWidth, canvasHeight) * 0.2;
     const r = baseR * (1 + level * 0.42);
     const lw = 2 + level * 10;
-    const op = settings.opacity;
+    const op = visualOpacity;
     const glow = ctx.createRadialGradient(cx, cy, r * 0.7, cx, cy, r * 1.9);
     glow.addColorStop(0, `rgba(${sr}, ${sg}, ${sb}, ${0.25 * op})`);
     glow.addColorStop(1, `rgba(${pr}, ${pg}, ${pb}, 0)`);
@@ -766,7 +781,7 @@ export const drawBars = (
     const cx = canvasWidth / 2;
     const cy = canvasHeight / 2;
     const r = Math.min(canvasWidth, canvasHeight) * (0.1 + level * 0.24);
-    const op = settings.opacity;
+    const op = visualOpacity;
     const orb = ctx.createRadialGradient(cx, cy, r * 0.08, cx, cy, r * 2.5);
     orb.addColorStop(0, `rgba(255, 255, 255, ${0.95 * op})`);
     orb.addColorStop(0.35, `rgba(${sr}, ${sg}, ${sb}, ${0.72 * op})`);
@@ -784,7 +799,7 @@ export const drawBars = (
     st.level = smoothAR(st.level, target, lp.attack, lp.release);
     (drawBars as any)._mode12Bg = st;
     const level = st.level;
-    const op = settings.opacity;
+    const op = visualOpacity;
     const t = performance.now() / 1000;
     const breathe = 0.5 + 0.5 * Math.sin(t * 1.7);
     const a = (0.1 + 0.35 * level) * (0.75 + 0.25 * breathe) * op;
@@ -802,12 +817,14 @@ export const drawBars = (
     stL.level = smoothAR(stL.level, target, lp.attack, lp.release);
     (drawBars as any)._mode13Level = stL;
     const level = stL.level;
-    const op = settings.opacity;
+    const op = visualOpacity;
     const now = performance.now();
     const state = (drawBars as any)._mode13Particles ?? { arr: [] as any[], lastMs: now };
     const dt = Math.min(40, now - state.lastMs);
     state.lastMs = now;
-    const targetCount = Math.floor(20 + level * 120);
+    const perfScale = getParticlePerfScale();
+    const targetCount = Math.floor((20 + level * 120) * perfScale);
+    const trailLen = perfScale <= 0.5 ? 35 : perfScale <= 0.75 ? 45 : 60;
     while (state.arr.length < targetCount) {
       state.arr.push({
         x: Math.random() * canvasWidth,
@@ -829,10 +846,10 @@ export const drawBars = (
       }
       const alpha = Math.max(0, p.life) * (0.25 + 0.65 * level) * op;
       ctx.strokeStyle = `rgba(${sr}, ${sg}, ${sb}, ${alpha})`;
-      ctx.lineWidth = 1 + level * 2;
+      ctx.lineWidth = (1 + level * 2) * Math.max(0.7, perfScale);
       ctx.beginPath();
       ctx.moveTo(p.x, p.y);
-      ctx.lineTo(p.x - p.vx * 60, p.y - p.vy * 60);
+      ctx.lineTo(p.x - p.vx * trailLen, p.y - p.vy * trailLen);
       ctx.stroke();
     }
     (drawBars as any)._mode13Particles = state;
@@ -848,7 +865,7 @@ export const drawBars = (
     const cx = canvasWidth / 2;
     const cy = canvasHeight / 2;
     const baseR = Math.min(canvasWidth, canvasHeight) * 0.22;
-    const op = settings.opacity;
+    const op = visualOpacity;
     const points = 96;
     const spikes = 3 + Math.floor(level * 8);
     ctx.beginPath();
@@ -976,7 +993,16 @@ export const drawBars = (
 
   // エフェクトオーバーレイ（このブロックは isEffectActive 時のみ到達＝音源連動）
   if (effect && effect.type !== "none") {
-    drawEffectOverlayCanvas(ctx, canvasWidth, canvasHeight, effect, getAudioReactive());
+    let effectForOverlay: EffectParams = effect;
+    // 主役埋もれ対策: 雨/ほこり/scanlines はスペアナ表示中に自動減衰
+    if ((effect.type === "rain" || effect.type === "dust" || effect.type === "scanlines") && mode !== -1) {
+      effectForOverlay = {
+        ...effect,
+        density: effect.density === 3 ? 2 : effect.density,
+        weatherAmount: effect.weatherAmount != null ? effect.weatherAmount * 0.78 : effect.weatherAmount,
+      };
+    }
+    drawEffectOverlayCanvas(ctx, canvasWidth, canvasHeight, effectForOverlay, getAudioReactive());
   }
 
   // FPS測定
