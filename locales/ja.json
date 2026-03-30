@@ -24,6 +24,12 @@
     "glyco": "グライコ風",
     "areaFill": "スペクトラム面",
     "loudnessPulse": "音圧パルス",
+    "vuMeter": "VUメーター",
+    "pulseRing": "脈動リング",
+    "centerOrb": "中央オーブ",
+    "breathingBg": "背景ブリージング",
+    "particleDensity": "音圧パーティクル",
+    "geomMorph": "ジオメトリ変形",
     "parameters": "パラメータ調整（折りたたみ）"
   },
   "resolution": {

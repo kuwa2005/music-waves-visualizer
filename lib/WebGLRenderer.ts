@@ -1189,6 +1189,30 @@ function renderFrame(): void {
         analyser.getByteFrequencyData(bufferData);
         drawMode8LoudnessPulse(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
         break;
+      case 9:
+        analyser.getByteFrequencyData(bufferData);
+        drawMode9Vu(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
+        break;
+      case 10:
+        analyser.getByteFrequencyData(bufferData);
+        drawMode10Ring(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
+        break;
+      case 11:
+        analyser.getByteFrequencyData(bufferData);
+        drawMode11Orb(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
+        break;
+      case 12:
+        analyser.getByteFrequencyData(bufferData);
+        drawMode12Breathing(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
+        break;
+      case 13:
+        analyser.getByteFrequencyData(bufferData);
+        drawMode13Particles(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
+        break;
+      case 14:
+        analyser.getByteFrequencyData(bufferData);
+        drawMode14Morph(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
+        break;
     }
   }
 
@@ -1934,6 +1958,198 @@ function drawMode8LoudnessPulse(
   }
   drawCircle(ctx, tcx, tcy, coreR, pr / 255, pg / 255, pb / 255, coreOpacity);
   drawCircle(ctx, tcx, tcy, coreR * 1.03, sr / 255, sg / 255, sb / 255, Math.min(1, 0.75 * op));
+}
+
+function getLoudnessLevel(bufferData: Uint8Array, gamma = 0.85, boost = 1.3): number {
+  let sum = 0;
+  for (let i = 0; i < bufferData.length; i++) sum += bufferData[i];
+  const volume = sum / (bufferData.length * 255);
+  return Math.min(1, Math.pow(volume, gamma) * boost);
+}
+
+function drawMode9Vu(
+  ctx: WebGLRendererContext,
+  bufferData: Uint8Array,
+  canvasWidth: number,
+  canvasHeight: number,
+  adj: ModeAdjustments,
+  settings: SpectrumSettings
+): void {
+  const half = Math.max(1, Math.floor(bufferData.length / 2));
+  let leftSum = 0;
+  let rightSum = 0;
+  for (let i = 0; i < half; i++) leftSum += bufferData[i];
+  for (let i = half; i < bufferData.length; i++) rightSum += bufferData[i];
+  const left = Math.min(1, Math.pow(leftSum / (half * 255), 0.85) * 1.25);
+  const right = Math.min(1, Math.pow(rightSum / (Math.max(1, bufferData.length - half) * 255), 0.85) * 1.25);
+  const s = (drawMode9Vu as any)._state ?? { peakL: 0, peakR: 0, lastMs: performance.now() };
+  const now = performance.now();
+  const dt = Math.min(60, now - s.lastMs);
+  s.lastMs = now;
+  s.peakL = Math.max(left, s.peakL - dt * 0.00075);
+  s.peakR = Math.max(right, s.peakR - dt * 0.00075);
+  (drawMode9Vu as any)._state = s;
+  const barW = canvasWidth * 0.16;
+  const gap = canvasWidth * 0.08;
+  const maxH = canvasHeight * 0.72;
+  const baseY = canvasHeight * 0.9;
+  const [pr, pg, pb] = getSpectrumPrimaryRgb(settings);
+  const op = settings.opacity;
+  const drawOne = (x: number, level: number, peak: number) => {
+    const h = maxH * level;
+    const [x1, y1] = applyTransform(x, baseY - h, canvasWidth, canvasHeight, adj);
+    const [x2, y2] = applyTransform(x + barW, baseY, canvasWidth, canvasHeight, adj);
+    drawRect(ctx, Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1), pr / 255, pg / 255, pb / 255, 0.82 * op);
+    const py = baseY - maxH * peak;
+    const [px1, py1] = applyTransform(x, py - 2, canvasWidth, canvasHeight, adj);
+    const [px2, py2] = applyTransform(x + barW, py + 2, canvasWidth, canvasHeight, adj);
+    drawRect(ctx, Math.min(px1, px2), Math.min(py1, py2), Math.abs(px2 - px1), Math.abs(py2 - py1), 1, 0.94, 0.47, 0.95 * op);
+  };
+  drawOne(canvasWidth / 2 - gap / 2 - barW, left, s.peakL);
+  drawOne(canvasWidth / 2 + gap / 2, right, s.peakR);
+}
+
+function drawMode10Ring(
+  ctx: WebGLRendererContext,
+  bufferData: Uint8Array,
+  canvasWidth: number,
+  canvasHeight: number,
+  adj: ModeAdjustments,
+  settings: SpectrumSettings
+): void {
+  const level = getLoudnessLevel(bufferData, 0.82, 1.35);
+  const [pr, pg, pb] = getSpectrumPrimaryRgb(settings);
+  const [sr, sg, sb] = getSpectrumSecondaryRgb(settings);
+  const [cx, cy] = applyTransform(canvasWidth / 2, canvasHeight / 2, canvasWidth, canvasHeight, adj);
+  const scale = Math.max(0.1, Math.min(adj.scaleX, adj.scaleY));
+  const r = Math.min(canvasWidth, canvasHeight) * 0.2 * (1 + level * 0.42) * scale;
+  const op = settings.opacity;
+  for (let i = 10; i >= 1; i--) {
+    const t = i / 10;
+    drawCircle(ctx, cx, cy, r * (1 + (1 - t) * 0.9), sr / 255, sg / 255, sb / 255, (0.2 + 0.4 * level) * (1 - t) * 0.25 * op);
+  }
+  drawCircle(ctx, cx, cy, r, pr / 255, pg / 255, pb / 255, 0.16 * op);
+  drawCircle(ctx, cx, cy, r * 1.02, sr / 255, sg / 255, sb / 255, 0.92 * op);
+}
+
+function drawMode11Orb(
+  ctx: WebGLRendererContext,
+  bufferData: Uint8Array,
+  canvasWidth: number,
+  canvasHeight: number,
+  adj: ModeAdjustments,
+  settings: SpectrumSettings
+): void {
+  const level = getLoudnessLevel(bufferData, 0.8, 1.4);
+  const [pr, pg, pb] = getSpectrumPrimaryRgb(settings);
+  const [sr, sg, sb] = getSpectrumSecondaryRgb(settings);
+  const [cx, cy] = applyTransform(canvasWidth / 2, canvasHeight / 2, canvasWidth, canvasHeight, adj);
+  const scale = Math.max(0.1, Math.min(adj.scaleX, adj.scaleY));
+  const r = Math.min(canvasWidth, canvasHeight) * (0.1 + level * 0.24) * scale;
+  const op = settings.opacity;
+  for (let i = 12; i >= 1; i--) {
+    const t = i / 12;
+    drawCircle(ctx, cx, cy, r * (0.5 + t * 2.0), sr / 255, sg / 255, sb / 255, (1 - t) * 0.18 * op);
+  }
+  drawCircle(ctx, cx, cy, r, pr / 255, pg / 255, pb / 255, (0.35 + 0.4 * level) * op);
+}
+
+function drawMode12Breathing(
+  ctx: WebGLRendererContext,
+  bufferData: Uint8Array,
+  canvasWidth: number,
+  canvasHeight: number,
+  adj: ModeAdjustments,
+  settings: SpectrumSettings
+): void {
+  const level = getLoudnessLevel(bufferData, 0.9, 1.15);
+  const [pr, pg, pb] = getSpectrumPrimaryRgb(settings);
+  const [sr, sg, sb] = getSpectrumSecondaryRgb(settings);
+  const breathe = 0.5 + 0.5 * Math.sin((performance.now() / 1000) * 1.7);
+  const alpha = (0.1 + 0.35 * level) * (0.75 + 0.25 * breathe) * settings.opacity;
+  const [x1, y1] = applyTransform(0, 0, canvasWidth, canvasHeight, adj);
+  const [x2, y2] = applyTransform(canvasWidth, canvasHeight, canvasWidth, canvasHeight, adj);
+  drawRectGradient(ctx, Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1), pr / 255, pg / 255, pb / 255, alpha, sr / 255, sg / 255, sb / 255, alpha * 0.65);
+}
+
+function drawMode13Particles(
+  ctx: WebGLRendererContext,
+  bufferData: Uint8Array,
+  canvasWidth: number,
+  canvasHeight: number,
+  adj: ModeAdjustments,
+  settings: SpectrumSettings
+): void {
+  const level = getLoudnessLevel(bufferData, 0.85, 1.3);
+  const state = (drawMode13Particles as any)._state ?? { arr: [] as any[], lastMs: performance.now() };
+  const now = performance.now();
+  const dt = Math.min(40, now - state.lastMs);
+  state.lastMs = now;
+  const targetCount = Math.floor(20 + level * 120);
+  while (state.arr.length < targetCount) {
+    state.arr.push({
+      x: Math.random() * canvasWidth,
+      y: canvasHeight + Math.random() * 40,
+      vx: (Math.random() - 0.5) * (0.04 + level * 0.25),
+      vy: -(0.08 + Math.random() * (0.18 + level * 0.55)),
+      life: 1,
+    });
+  }
+  if (state.arr.length > targetCount) state.arr.length = targetCount;
+  const [sr, sg, sb] = getSpectrumSecondaryRgb(settings);
+  for (const p of state.arr) {
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.life -= dt * (0.0006 + 0.0007 * (1 - level));
+    if (p.y < -30 || p.life <= 0) {
+      p.x = Math.random() * canvasWidth;
+      p.y = canvasHeight + Math.random() * 30;
+      p.life = 1;
+    }
+    const alpha = Math.max(0, p.life) * (0.25 + 0.65 * level) * settings.opacity;
+    const [x1, y1] = applyTransform(p.x, p.y, canvasWidth, canvasHeight, adj);
+    const [x2, y2] = applyTransform(p.x - p.vx * 60, p.y - p.vy * 60, canvasWidth, canvasHeight, adj);
+    drawLine(ctx, x1, y1, x2, y2, sr / 255, sg / 255, sb / 255, alpha, 1 + level * 2);
+  }
+  (drawMode13Particles as any)._state = state;
+}
+
+function drawMode14Morph(
+  ctx: WebGLRendererContext,
+  bufferData: Uint8Array,
+  canvasWidth: number,
+  canvasHeight: number,
+  adj: ModeAdjustments,
+  settings: SpectrumSettings
+): void {
+  const level = getLoudnessLevel(bufferData, 0.86, 1.25);
+  const [pr, pg, pb] = getSpectrumPrimaryRgb(settings);
+  const [sr, sg, sb] = getSpectrumSecondaryRgb(settings);
+  const cx = canvasWidth / 2;
+  const cy = canvasHeight / 2;
+  const baseR = Math.min(canvasWidth, canvasHeight) * 0.22;
+  const points = 96;
+  const spikes = 3 + Math.floor(level * 8);
+  const op = settings.opacity;
+  let px = 0;
+  let py = 0;
+  for (let i = 0; i <= points; i++) {
+    const t = i / points;
+    const a = t * Math.PI * 2;
+    const wave = Math.sin(a * spikes);
+    const morph = (0.15 + 0.55 * level) * wave;
+    const r = baseR * (1 + morph);
+    const x = cx + Math.cos(a) * r;
+    const y = cy + Math.sin(a) * r;
+    const [tx, ty] = applyTransform(x, y, canvasWidth, canvasHeight, adj);
+    if (i > 0) {
+      drawLine(ctx, px, py, tx, ty, sr / 255, sg / 255, sb / 255, 0.95 * op, 2 + level * 4);
+    }
+    px = tx;
+    py = ty;
+  }
+  const [tcx, tcy] = applyTransform(cx, cy, canvasWidth, canvasHeight, adj);
+  drawCircle(ctx, tcx, tcy, baseR * 0.7 * Math.max(0.1, Math.min(adj.scaleX, adj.scaleY)), pr / 255, pg / 255, pb / 255, 0.2 * op);
 }
 
 // HSLをRGBに変換

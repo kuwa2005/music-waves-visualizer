@@ -6,6 +6,7 @@
 - **`npm run build:html:lil-la`**: One-shot static build with `NEXT_PUBLIC_SITE_URL=https://lil.la` for [lil.la/visualizer](https://lil.la/visualizer/) (canonical / OG). Documented in [docs/BUILD.md](./docs/BUILD.md), [README](./README.md), and [`.env.production.example`](./.env.production.example).
 
 ### Changed
+- **Loudness-only visuals (modes 9–14)**: Added six non-FFT visuals under the spectrum category — **VU meter**, **pulse ring**, **center orb**, **breathing background**, **particle density**, and **geometry morph** — all implemented for Canvas 2D + WebGL with the same mode buttons and settings flow.
 - **Mode 8 (loudness pulse)**: Added a non-spectrum visual in the spectrum category that reacts to overall loudness only (center orb + glow pulse), available as a new mode button in Canvas 2D and WebGL.
 - **Mode 2 (circle)**: Added rotation option (`common_circleRotationRpm`) with **OFF / -10..10 rpm**. `1` equals ~1 rotation per 60 seconds (1rpm), negative is left (CCW), positive is right (CW). **OFF** and **0** both stop rotation (Canvas 2D + WebGL).
 - **Modes 3 & 4 (symmetric bars & dots)**: Horizontal axis now uses **log-spaced FFT bins** via `glycoBarToFftBin` / `glycoBarRawEnergy` (same family as mode 6), fixing mostly dead right columns from linear `i/bufferLength` mapping (Canvas 2D + WebGL).

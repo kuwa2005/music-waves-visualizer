@@ -663,6 +663,183 @@ export const drawBars = (
     ctx.beginPath();
     ctx.arc(cx, cy, pulseR * 1.02, 0, Math.PI * 2);
     ctx.stroke();
+  } else if (mode === 9) {
+    // モード9: VUメーター（2ch風）+ ピークホールド
+    analyser.getByteFrequencyData(bufferData);
+    let leftSum = 0;
+    let rightSum = 0;
+    const half = Math.max(1, Math.floor(bufferLength / 2));
+    for (let i = 0; i < half; i++) leftSum += bufferData[i];
+    for (let i = half; i < bufferLength; i++) rightSum += bufferData[i];
+    const left = leftSum / (half * 255);
+    const right = rightSum / (Math.max(1, bufferLength - half) * 255);
+    const levelL = Math.min(1, Math.pow(left, 0.85) * 1.25);
+    const levelR = Math.min(1, Math.pow(right, 0.85) * 1.25);
+
+    const vuState = (drawBars as any)._mode9Vu ?? { peakL: 0, peakR: 0, lastMs: performance.now() };
+    const now = performance.now();
+    const dt = Math.min(60, now - vuState.lastMs);
+    vuState.lastMs = now;
+    vuState.peakL = Math.max(levelL, vuState.peakL - dt * 0.00075);
+    vuState.peakR = Math.max(levelR, vuState.peakR - dt * 0.00075);
+    (drawBars as any)._mode9Vu = vuState;
+
+    const barW = canvasWidth * 0.16;
+    const gap = canvasWidth * 0.08;
+    const xL = canvasWidth / 2 - gap / 2 - barW;
+    const xR = canvasWidth / 2 + gap / 2;
+    const maxH = canvasHeight * 0.72;
+    const baseY = canvasHeight * 0.9;
+    const op = settings.opacity;
+    const drawVu = (x: number, level: number, peak: number) => {
+      const h = maxH * level;
+      const grad = ctx.createLinearGradient(x, baseY, x, baseY - maxH);
+      grad.addColorStop(0, `rgba(${pr}, ${pg}, ${pb}, ${0.8 * op})`);
+      grad.addColorStop(0.7, `rgba(${sr}, ${sg}, ${sb}, ${0.88 * op})`);
+      grad.addColorStop(1, `rgba(255, 90, 90, ${0.95 * op})`);
+      ctx.fillStyle = grad;
+      ctx.fillRect(x, baseY - h, barW, h);
+      const peakY = baseY - maxH * peak;
+      ctx.fillStyle = `rgba(255, 240, 120, ${0.95 * op})`;
+      ctx.fillRect(x, peakY - 2, barW, 4);
+    };
+    drawVu(xL, levelL, vuState.peakL);
+    drawVu(xR, levelR, vuState.peakR);
+  } else if (mode === 10) {
+    // モード10: 円リング脈動（半径/線幅/グロー）
+    analyser.getByteFrequencyData(bufferData);
+    let sum = 0;
+    for (let i = 0; i < bufferLength; i++) sum += bufferData[i];
+    const volume = sum / (bufferLength * 255);
+    const level = Math.min(1, Math.pow(volume, 0.82) * 1.35);
+    const cx = canvasWidth / 2;
+    const cy = canvasHeight / 2;
+    const baseR = Math.min(canvasWidth, canvasHeight) * 0.2;
+    const r = baseR * (1 + level * 0.42);
+    const lw = 2 + level * 10;
+    const op = settings.opacity;
+    const glow = ctx.createRadialGradient(cx, cy, r * 0.7, cx, cy, r * 1.9);
+    glow.addColorStop(0, `rgba(${sr}, ${sg}, ${sb}, ${0.25 * op})`);
+    glow.addColorStop(1, `rgba(${pr}, ${pg}, ${pb}, 0)`);
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r * 1.9, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = `rgba(${pr}, ${pg}, ${pb}, ${0.88 * op})`;
+    ctx.lineWidth = lw;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.stroke();
+  } else if (mode === 11) {
+    // モード11: 中央オーブ（発光球）
+    analyser.getByteFrequencyData(bufferData);
+    let sum = 0;
+    for (let i = 0; i < bufferLength; i++) sum += bufferData[i];
+    const volume = sum / (bufferLength * 255);
+    const level = Math.min(1, Math.pow(volume, 0.8) * 1.4);
+    const cx = canvasWidth / 2;
+    const cy = canvasHeight / 2;
+    const r = Math.min(canvasWidth, canvasHeight) * (0.1 + level * 0.24);
+    const op = settings.opacity;
+    const orb = ctx.createRadialGradient(cx, cy, r * 0.08, cx, cy, r * 2.5);
+    orb.addColorStop(0, `rgba(255, 255, 255, ${0.95 * op})`);
+    orb.addColorStop(0.35, `rgba(${sr}, ${sg}, ${sb}, ${0.72 * op})`);
+    orb.addColorStop(1, `rgba(${pr}, ${pg}, ${pb}, 0)`);
+    ctx.fillStyle = orb;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r * 2.5, 0, Math.PI * 2);
+    ctx.fill();
+  } else if (mode === 12) {
+    // モード12: 背景ブリージング（明度/彩度）
+    analyser.getByteFrequencyData(bufferData);
+    let sum = 0;
+    for (let i = 0; i < bufferLength; i++) sum += bufferData[i];
+    const volume = sum / (bufferLength * 255);
+    const level = Math.min(1, Math.pow(volume, 0.9) * 1.15);
+    const op = settings.opacity;
+    const t = performance.now() / 1000;
+    const breathe = 0.5 + 0.5 * Math.sin(t * 1.7);
+    const a = (0.1 + 0.35 * level) * (0.75 + 0.25 * breathe) * op;
+    const bg = ctx.createLinearGradient(0, 0, canvasWidth, canvasHeight);
+    bg.addColorStop(0, `rgba(${pr}, ${pg}, ${pb}, ${a})`);
+    bg.addColorStop(1, `rgba(${sr}, ${sg}, ${sb}, ${a * 0.65})`);
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+  } else if (mode === 13) {
+    // モード13: パーティクル密度制御
+    analyser.getByteFrequencyData(bufferData);
+    let sum = 0;
+    for (let i = 0; i < bufferLength; i++) sum += bufferData[i];
+    const volume = sum / (bufferLength * 255);
+    const level = Math.min(1, Math.pow(volume, 0.85) * 1.3);
+    const op = settings.opacity;
+    const now = performance.now();
+    const state = (drawBars as any)._mode13Particles ?? { arr: [] as any[], lastMs: now };
+    const dt = Math.min(40, now - state.lastMs);
+    state.lastMs = now;
+    const targetCount = Math.floor(20 + level * 120);
+    while (state.arr.length < targetCount) {
+      state.arr.push({
+        x: Math.random() * canvasWidth,
+        y: canvasHeight + Math.random() * 40,
+        vx: (Math.random() - 0.5) * (0.04 + level * 0.25),
+        vy: -(0.08 + Math.random() * (0.18 + level * 0.55)),
+        life: 1,
+      });
+    }
+    if (state.arr.length > targetCount) state.arr.length = targetCount;
+    for (const p of state.arr) {
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.life -= dt * (0.0006 + 0.0007 * (1 - level));
+      if (p.y < -30 || p.life <= 0) {
+        p.x = Math.random() * canvasWidth;
+        p.y = canvasHeight + Math.random() * 30;
+        p.life = 1;
+      }
+      const alpha = Math.max(0, p.life) * (0.25 + 0.65 * level) * op;
+      ctx.strokeStyle = `rgba(${sr}, ${sg}, ${sb}, ${alpha})`;
+      ctx.lineWidth = 1 + level * 2;
+      ctx.beginPath();
+      ctx.moveTo(p.x, p.y);
+      ctx.lineTo(p.x - p.vx * 60, p.y - p.vy * 60);
+      ctx.stroke();
+    }
+    (drawBars as any)._mode13Particles = state;
+  } else if (mode === 14) {
+    // モード14: ジオメトリ連続変形（単一形状）
+    analyser.getByteFrequencyData(bufferData);
+    let sum = 0;
+    for (let i = 0; i < bufferLength; i++) sum += bufferData[i];
+    const volume = sum / (bufferLength * 255);
+    const level = Math.min(1, Math.pow(volume, 0.86) * 1.25);
+    const cx = canvasWidth / 2;
+    const cy = canvasHeight / 2;
+    const baseR = Math.min(canvasWidth, canvasHeight) * 0.22;
+    const op = settings.opacity;
+    const points = 96;
+    const spikes = 3 + Math.floor(level * 8);
+    ctx.beginPath();
+    for (let i = 0; i <= points; i++) {
+      const t = i / points;
+      const a = t * Math.PI * 2;
+      const wave = Math.sin(a * spikes);
+      const morph = (0.15 + 0.55 * level) * wave;
+      const r = baseR * (1 + morph);
+      const x = cx + Math.cos(a) * r;
+      const y = cy + Math.sin(a) * r;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+    const g = ctx.createRadialGradient(cx, cy, baseR * 0.2, cx, cy, baseR * 1.6);
+    g.addColorStop(0, `rgba(${sr}, ${sg}, ${sb}, ${0.75 * op})`);
+    g.addColorStop(1, `rgba(${pr}, ${pg}, ${pb}, ${0.18 * op})`);
+    ctx.fillStyle = g;
+    ctx.fill();
+    ctx.strokeStyle = `rgba(${sr}, ${sg}, ${sb}, ${0.95 * op})`;
+    ctx.lineWidth = 2 + level * 4;
+    ctx.stroke();
   } else if (mode === 6) {
     // モード6: グライコ風（1980年代コンポ風ピークホールド）
     analyser.getByteFrequencyData(bufferData);

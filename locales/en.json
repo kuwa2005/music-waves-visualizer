@@ -24,6 +24,12 @@
     "glyco": "Glyco Style",
     "areaFill": "Spectrum fill",
     "loudnessPulse": "Loudness Pulse",
+    "vuMeter": "VU Meter",
+    "pulseRing": "Pulse Ring",
+    "centerOrb": "Center Orb",
+    "breathingBg": "Breathing Background",
+    "particleDensity": "Loudness Particles",
+    "geomMorph": "Geometry Morph",
     "parameters": "Parameter adjustments (collapsed)"
   },
   "resolution": {

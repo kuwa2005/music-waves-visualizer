@@ -567,7 +567,7 @@ const Home: NextPage = () => {
     const spectrumSettings: Record<string, Record<string, ModeAdjustments>> = {};
     LAYOUTS.forEach((layout) => {
       const layoutData: Record<string, ModeAdjustments> = {};
-      [0, 1, 2, 3, 4, 5, 6, 7, 8].forEach((m) => {
+      [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14].forEach((m) => {
         const loaded = loadSettings(layout, m);
         layoutData[String(m)] = loaded ?? DEFAULT_ADJUSTMENTS;
       });
@@ -601,7 +601,7 @@ const Home: NextPage = () => {
   // 全設定をクリア（インポート前の一括リセット用）
   const clearAllSettings = () => {
     LAYOUTS.forEach((layout) => {
-      [0, 1, 2, 3, 4, 5, 6, 7, 8].forEach((m) => localStorage.removeItem(getSettingsKey(layout, m)));
+      [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14].forEach((m) => localStorage.removeItem(getSettingsKey(layout, m)));
     });
     [
       "common_targetLufs",
@@ -776,7 +776,7 @@ const Home: NextPage = () => {
           if (layoutData && typeof layoutData === "object") {
             Object.keys(layoutData).forEach((mStr) => {
               const m = parseInt(mStr, 10);
-              if (!isNaN(m) && m >= 0 && m <= 8 && layoutData[mStr]) {
+              if (!isNaN(m) && m >= 0 && m <= 14 && layoutData[mStr]) {
                 const adj = layoutData[mStr];
                 if (adj && typeof adj.scaleX === "number" && typeof adj.scaleY === "number" && typeof adj.offsetX === "number" && typeof adj.offsetY === "number") {
                   saveSettings(layout, m, clampModeAdjustments(adj as ModeAdjustments));
@@ -2216,6 +2216,12 @@ const Home: NextPage = () => {
                     { value: 0, label: t("spectrum.freqBar") },
                     { value: 2, label: t("spectrum.circle") },
                     { value: 8, label: t("spectrum.loudnessPulse") },
+                    { value: 9, label: t("spectrum.vuMeter") },
+                    { value: 10, label: t("spectrum.pulseRing") },
+                    { value: 11, label: t("spectrum.centerOrb") },
+                    { value: 12, label: t("spectrum.breathingBg") },
+                    { value: 13, label: t("spectrum.particleDensity") },
+                    { value: 14, label: t("spectrum.geomMorph") },
                     { value: 3, label: t("spectrum.symBar") },
                     { value: 4, label: t("spectrum.dot") },
                     { value: 7, label: t("spectrum.areaFill") },
