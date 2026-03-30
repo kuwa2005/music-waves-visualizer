@@ -51,3 +51,7 @@ visualizer/
 
 # postinstall で @ffmpeg/core から生成
 public/ffmpeg-core/
+
+# local editor / scripts
+mining.code-workspace
+x.sh
