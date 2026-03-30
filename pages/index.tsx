@@ -374,6 +374,7 @@ const Home: NextPage = () => {
   const [lineWidthWaveform, setLineWidthWaveform] = useState<number>(3.2);  // mode1
   const [lineWidthCircle, setLineWidthCircle] = useState<number>(3.2);      // mode2
   const [lineWidthSymWave, setLineWidthSymWave] = useState<number>(3.6);    // mode5
+  const [circleRotationRpm, setCircleRotationRpm] = useState<number | null>(null); // mode2: null=OFF, 0=停止
   const [glycoColorSet, setGlycoColorSet] = useState<string>("amber");
   const DEFAULT_SPECTRUM_HEX = "#FFFFFF";
   const DEFAULT_SPACE_PARTICLE = "#E0EEFF";
@@ -445,6 +446,10 @@ const Home: NextPage = () => {
     localStorage.setItem("common_sparkleParticleColor", sparkleParticleColor);
     localStorage.setItem("common_dustParticleColor", dustParticleColor);
     localStorage.setItem("common_spectrumRainbowColorful", spectrumRainbowColorful ? "1" : "0");
+    localStorage.setItem(
+      "common_circleRotationRpm",
+      circleRotationRpm == null ? "off" : String(Math.max(-10, Math.min(10, Math.round(circleRotationRpm))))
+    );
     localStorage.setItem("common_recordVideoBitrateMbps", String(recordVideoBitrateMbps));
     localStorage.setItem("common_exportAudioBitrateKbps", String(exportAudioBitrateKbps));
   }, [
@@ -458,6 +463,7 @@ const Home: NextPage = () => {
     sparkleParticleColor,
     dustParticleColor,
     spectrumRainbowColorful,
+    circleRotationRpm,
     recordVideoBitrateMbps,
     exportAudioBitrateKbps,
   ]);
@@ -561,7 +567,7 @@ const Home: NextPage = () => {
     const spectrumSettings: Record<string, Record<string, ModeAdjustments>> = {};
     LAYOUTS.forEach((layout) => {
       const layoutData: Record<string, ModeAdjustments> = {};
-      [0, 1, 2, 3, 4, 5, 6, 7].forEach((m) => {
+      [0, 1, 2, 3, 4, 5, 6, 7, 8].forEach((m) => {
         const loaded = loadSettings(layout, m);
         layoutData[String(m)] = loaded ?? DEFAULT_ADJUSTMENTS;
       });
@@ -576,6 +582,7 @@ const Home: NextPage = () => {
         spectrumOpacityPercent,
         spectrumColorHex,
         spectrumRainbowColorful,
+        circleRotationRpm,
         recordVideoBitrateMbps,
         exportAudioBitrateKbps,
         rendererType,
@@ -594,7 +601,7 @@ const Home: NextPage = () => {
   // 全設定をクリア（インポート前の一括リセット用）
   const clearAllSettings = () => {
     LAYOUTS.forEach((layout) => {
-      [0, 1, 2, 3, 4, 5, 6, 7].forEach((m) => localStorage.removeItem(getSettingsKey(layout, m)));
+      [0, 1, 2, 3, 4, 5, 6, 7, 8].forEach((m) => localStorage.removeItem(getSettingsKey(layout, m)));
     });
     [
       "common_targetLufs",
@@ -606,6 +613,7 @@ const Home: NextPage = () => {
       "common_spectrumCustomHex",
       "common_spectrumColorHex",
       "common_spectrumRainbowColorful",
+      "common_circleRotationRpm",
       "common_galleryTransitionMode",
       "common_spaceParticleColor",
       "common_sparkleParticleColor",
@@ -703,6 +711,19 @@ const Home: NextPage = () => {
           );
           setSpectrumRainbowColorful(c.spectrumRainbowColorful);
         }
+        if (c.circleRotationRpm !== undefined) {
+          if (c.circleRotationRpm === null || c.circleRotationRpm === "off") {
+            localStorage.setItem("common_circleRotationRpm", "off");
+            setCircleRotationRpm(null);
+          } else {
+            const n = Number(c.circleRotationRpm);
+            if (!isNaN(n)) {
+              const clamped = Math.max(-10, Math.min(10, Math.round(n)));
+              localStorage.setItem("common_circleRotationRpm", String(clamped));
+              setCircleRotationRpm(clamped);
+            }
+          }
+        }
         if (c.recordVideoBitrateMbps !== undefined) {
           const n = Number(c.recordVideoBitrateMbps);
           if (!isNaN(n) && n >= 1 && n <= 40) {
@@ -755,7 +776,7 @@ const Home: NextPage = () => {
           if (layoutData && typeof layoutData === "object") {
             Object.keys(layoutData).forEach((mStr) => {
               const m = parseInt(mStr, 10);
-              if (!isNaN(m) && m >= 0 && m <= 7 && layoutData[mStr]) {
+              if (!isNaN(m) && m >= 0 && m <= 8 && layoutData[mStr]) {
                 const adj = layoutData[mStr];
                 if (adj && typeof adj.scaleX === "number" && typeof adj.scaleY === "number" && typeof adj.offsetX === "number" && typeof adj.offsetY === "number") {
                   saveSettings(layout, m, clampModeAdjustments(adj as ModeAdjustments));
@@ -1122,6 +1143,17 @@ const Home: NextPage = () => {
     const savedRainbow = localStorage.getItem("common_spectrumRainbowColorful");
     if (savedRainbow === "0") setSpectrumRainbowColorful(false);
     else if (savedRainbow === "1") setSpectrumRainbowColorful(true);
+    const savedCircleRotation = localStorage.getItem("common_circleRotationRpm");
+    if (savedCircleRotation != null) {
+      if (savedCircleRotation === "off") {
+        setCircleRotationRpm(null);
+      } else {
+        const n = Number(savedCircleRotation);
+        if (!isNaN(n)) {
+          setCircleRotationRpm(Math.max(-10, Math.min(10, Math.round(n))));
+        }
+      }
+    }
 
     const savedVidBr = localStorage.getItem("common_recordVideoBitrateMbps");
     if (savedVidBr) {
@@ -1251,6 +1283,7 @@ const Home: NextPage = () => {
       lineWidthWaveform,
       lineWidthCircle,
       lineWidthSymWave,
+      circleRotationRpm,
       glycoColorSet,
       spectrumColorHex,
       spectrumRainbowColorful,
@@ -1298,6 +1331,7 @@ const Home: NextPage = () => {
     lineWidthWaveform,
     lineWidthCircle,
     lineWidthSymWave,
+    circleRotationRpm,
     spectrumColorHex,
     spectrumRainbowColorful,
   ]);
@@ -1676,6 +1710,7 @@ const Home: NextPage = () => {
       lineWidthWaveform,
       lineWidthCircle,
       lineWidthSymWave,
+      circleRotationRpm,
       glycoColorSet,
       spectrumColorHex,
       spectrumRainbowColorful,
@@ -2180,6 +2215,7 @@ const Home: NextPage = () => {
                     { value: -1, label: t("spectrum.off") },
                     { value: 0, label: t("spectrum.freqBar") },
                     { value: 2, label: t("spectrum.circle") },
+                    { value: 8, label: t("spectrum.loudnessPulse") },
                     { value: 3, label: t("spectrum.symBar") },
                     { value: 4, label: t("spectrum.dot") },
                     { value: 7, label: t("spectrum.areaFill") },
@@ -2295,6 +2331,35 @@ const Home: NextPage = () => {
                     )}
                     {mode === 2 && (
                       <Box sx={{ mb: 3 }}>
+                        <Typography gutterBottom>
+                          {t("displayVolume.circleRotation", {
+                            value:
+                              circleRotationRpm == null
+                                ? t("spectrum.off")
+                                : `${circleRotationRpm} rpm`,
+                          })}
+                        </Typography>
+                        <FormControl size="small" fullWidth sx={{ mb: 2 }}>
+                          <Select
+                            value={circleRotationRpm == null ? "off" : String(circleRotationRpm)}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              if (v === "off") {
+                                setCircleRotationRpm(null);
+                              } else {
+                                const n = Number(v);
+                                setCircleRotationRpm(isNaN(n) ? 0 : Math.max(-10, Math.min(10, Math.round(n))));
+                              }
+                            }}
+                          >
+                            <MenuItem value="off">{t("spectrum.off")}</MenuItem>
+                            {Array.from({ length: 21 }, (_, idx) => idx - 10).map((rpm) => (
+                              <MenuItem key={rpm} value={String(rpm)}>
+                                {rpm}
+                              </MenuItem>
+                            ))}
+                          </Select>
+                        </FormControl>
                         <Typography gutterBottom>{t("displayVolume.lineWidthCircle", { value: lineWidthCircle.toFixed(1) })}</Typography>
                         <Slider
                           value={lineWidthCircle}

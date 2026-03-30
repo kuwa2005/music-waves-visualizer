@@ -23,6 +23,7 @@
     "symWave": "波形（上下対称）",
     "glyco": "グライコ風",
     "areaFill": "スペクトラム面",
+    "loudnessPulse": "音圧パルス",
     "parameters": "パラメータ調整（折りたたみ）"
   },
   "resolution": {
@@ -85,6 +86,7 @@
     "fps": "更新レート: {{value}} fps",
     "lineWidthWaveform": "折れ線の線幅: {{value}} px",
     "lineWidthCircle": "円形の線幅: {{value}} px",
+    "circleRotation": "円形回転: {{value}}",
     "lineWidthSymWave": "波形（上下対称）の線幅: {{value}} px",
     "glycoColor": "グライコ風の色",
     "colorSet": "色セット",

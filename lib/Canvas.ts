@@ -22,6 +22,8 @@ export type SpectrumSettings = {
   lineWidthWaveform: number;
   lineWidthCircle: number;
   lineWidthSymWave: number;
+  /** 円形スペアナ回転（rpm）。null=OFF、0=停止、負=左回転、正=右回転 */
+  circleRotationRpm?: number | null;
   glycoColorSet?: string;
   /** スペアナのベース色 #RRGGBB（優先。インポート互換で preset も参照） */
   spectrumColorHex?: string;
@@ -471,6 +473,11 @@ export const drawBars = (
 
     const threshold = 0;
     const barLengthFactor = 1;
+    const circleRotationRpm = settings.circleRotationRpm ?? 0;
+    const rotationOffsetRad = ((circleRotationRpm * 2 * Math.PI) / 60) * (performance.now() / 1000);
+    if (rotationOffsetRad !== 0) {
+      ctx.rotate(rotationOffsetRad);
+    }
     for (let i = 0; i < 256; i++) {
       let value = bufferData[i];
       if (value >= threshold) {
@@ -615,6 +622,46 @@ export const drawBars = (
     }
     ctx.strokeStyle = `rgba(${sr}, ${sg}, ${sb}, ${0.92 * op})`;
     ctx.lineWidth = Math.max(1, BASE_LINE_WIDTH_WAVEFORM * 0.55);
+    ctx.stroke();
+  } else if (mode === 8) {
+    // モード8: 音圧パルス（周波数分解なし、全帯域の音圧でリング/グローが脈動）
+    analyser.getByteFrequencyData(bufferData);
+    let sum = 0;
+    for (let i = 0; i < bufferLength; i++) sum += bufferData[i];
+    const volume = sum / (bufferLength * 255); // 0..1
+    const target = Math.min(1, Math.pow(volume, 0.82) * 1.35);
+
+    const pulseState = (drawBars as any)._mode8Pulse ?? { level: 0 };
+    const attack = 0.22;
+    const release = 0.08;
+    pulseState.level += (target - pulseState.level) * (target > pulseState.level ? attack : release);
+    (drawBars as any)._mode8Pulse = pulseState;
+    const level = pulseState.level;
+
+    const cx = canvasWidth / 2;
+    const cy = canvasHeight / 2;
+    const baseR = Math.min(canvasWidth, canvasHeight) * 0.16;
+    const pulseR = baseR * (1 + level * 1.15);
+    const glowR = pulseR * (1.6 + level * 0.75);
+    const op = settings.opacity;
+
+    const glow = ctx.createRadialGradient(cx, cy, pulseR * 0.2, cx, cy, glowR);
+    glow.addColorStop(0, `rgba(${sr}, ${sg}, ${sb}, ${0.65 * op})`);
+    glow.addColorStop(1, `rgba(${pr}, ${pg}, ${pb}, 0)`);
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(cx, cy, glowR, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = `rgba(${pr}, ${pg}, ${pb}, ${0.28 * op + 0.25 * level * op})`;
+    ctx.beginPath();
+    ctx.arc(cx, cy, pulseR, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.strokeStyle = `rgba(${sr}, ${sg}, ${sb}, ${0.75 * op})`;
+    ctx.lineWidth = Math.max(2, baseR * 0.08 + level * 3);
+    ctx.beginPath();
+    ctx.arc(cx, cy, pulseR * 1.02, 0, Math.PI * 2);
     ctx.stroke();
   } else if (mode === 6) {
     // モード6: グライコ風（1980年代コンポ風ピークホールド）

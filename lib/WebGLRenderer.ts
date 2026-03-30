@@ -1185,6 +1185,10 @@ function renderFrame(): void {
         analyser.getByteFrequencyData(bufferData);
         drawMode7Area(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
         break;
+      case 8:
+        analyser.getByteFrequencyData(bufferData);
+        drawMode8LoudnessPulse(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
+        break;
     }
   }
 
@@ -1525,10 +1529,12 @@ function drawMode2(
   const r = pr / 255;
   const g = pg / 255;
   const b = pb / 255;
+  const circleRotationRpm = settings.circleRotationRpm ?? 0;
+  const rotationOffsetRad = ((circleRotationRpm * 2 * Math.PI) / 60) * (performance.now() / 1000);
 
   for (let i = 0; i < 256; i++) {
     const value = bufferData[i];
-    const angle = i * ((180 / 128) * Math.PI / 180);
+    const angle = i * ((180 / 128) * Math.PI / 180) + rotationOffsetRad;
 
     // Canvas.ts draws bars at (0, radius) with rotation
     // After rotation by angle: point (0, radius) becomes (-radius*sin(angle), radius*cos(angle))
@@ -1880,6 +1886,54 @@ function drawMode7Area(
     const [tx1, ty1] = applyTransform(x1, y1, canvasWidth, canvasHeight, adj);
     drawLine(ctx, tx0, ty0, tx1, ty1, sr / 255, sg / 255, sb / 255, 0.92 * op, lineW);
   }
+}
+
+/** モード8: 音圧パルス（全帯域平均音圧で中心オーブ/リングを脈動） */
+function drawMode8LoudnessPulse(
+  ctx: WebGLRendererContext,
+  bufferData: Uint8Array,
+  canvasWidth: number,
+  canvasHeight: number,
+  adj: ModeAdjustments,
+  settings: SpectrumSettings
+): void {
+  let sum = 0;
+  for (let i = 0; i < bufferData.length; i++) sum += bufferData[i];
+  const volume = sum / (bufferData.length * 255);
+  const target = Math.min(1, Math.pow(volume, 0.82) * 1.35);
+
+  const pulseState = (drawMode8LoudnessPulse as any)._pulse ?? { level: 0 };
+  const attack = 0.22;
+  const release = 0.08;
+  pulseState.level += (target - pulseState.level) * (target > pulseState.level ? attack : release);
+  (drawMode8LoudnessPulse as any)._pulse = pulseState;
+  const level = pulseState.level;
+
+  const cx = canvasWidth / 2;
+  const cy = canvasHeight / 2;
+  const baseR = Math.min(canvasWidth, canvasHeight) * 0.16;
+  const pulseR = baseR * (1 + level * 1.15);
+  const op = settings.opacity;
+  const [pr, pg, pb] = getSpectrumPrimaryRgb(settings);
+  const [sr, sg, sb] = getSpectrumSecondaryRgb(settings);
+  const coreOpacity = (0.28 + 0.25 * level) * op;
+  const glowOpacity = (0.1 + 0.35 * level) * op;
+
+  const [tcx, tcy] = applyTransform(cx, cy, canvasWidth, canvasHeight, adj);
+  const radiusScale = Math.max(0.1, Math.min(adj.scaleX, adj.scaleY));
+  const coreR = pulseR * radiusScale;
+  const glowR = coreR * (1.6 + level * 0.75);
+
+  // 外側グロー: 同心円を重ねて疑似グラデーション化
+  const steps = 10;
+  for (let i = steps; i >= 1; i--) {
+    const t = i / steps;
+    const r = glowR * t;
+    const a = glowOpacity * (1 - t) * 0.55;
+    drawCircle(ctx, tcx, tcy, r, sr / 255, sg / 255, sb / 255, a);
+  }
+  drawCircle(ctx, tcx, tcy, coreR, pr / 255, pg / 255, pb / 255, coreOpacity);
+  drawCircle(ctx, tcx, tcy, coreR * 1.03, sr / 255, sg / 255, sb / 255, Math.min(1, 0.75 * op));
 }
 
 // HSLをRGBに変換

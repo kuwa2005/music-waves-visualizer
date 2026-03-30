@@ -23,6 +23,7 @@
     "symWave": "Waveform (Symmetric)",
     "glyco": "Glyco Style",
     "areaFill": "Spectrum fill",
+    "loudnessPulse": "Loudness Pulse",
     "parameters": "Parameter adjustments (collapsed)"
   },
   "resolution": {
@@ -85,6 +86,7 @@
     "fps": "Update rate: {{value}} fps",
     "lineWidthWaveform": "Line width: {{value}} px",
     "lineWidthCircle": "Circle line width: {{value}} px",
+    "circleRotation": "Circle rotation: {{value}}",
     "lineWidthSymWave": "Waveform line width: {{value}} px",
     "glycoColor": "Glyco color",
     "colorSet": "Color set",
