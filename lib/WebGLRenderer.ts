@@ -1213,6 +1213,14 @@ function renderFrame(): void {
         analyser.getByteFrequencyData(bufferData);
         drawMode14Morph(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
         break;
+      case 15:
+        analyser.getByteTimeDomainData(bufferData);
+        drawMode15Oscilloscope(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
+        break;
+      case 16:
+        analyser.getByteTimeDomainData(bufferData);
+        drawMode16Lissajous(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
+        break;
     }
   }
 
@@ -1989,6 +1997,11 @@ function getParticlePerfScale(): number {
   return 1.0;
 }
 
+function trailFade(age: number, trailDecay: number): number {
+  const exp = Math.max(0.5, 6.0 * (1 - trailDecay) + 0.6);
+  return Math.pow(age, exp);
+}
+
 function drawMode9Vu(
   ctx: WebGLRendererContext,
   bufferData: Uint8Array,
@@ -2202,6 +2215,143 @@ function drawMode14Morph(
   }
   const [tcx, tcy] = applyTransform(cx, cy, canvasWidth, canvasHeight, adj);
   drawCircle(ctx, tcx, tcy, baseR * 0.7 * Math.max(0.1, Math.min(adj.scaleX, adj.scaleY)), pr / 255, pg / 255, pb / 255, 0.2 * op);
+}
+
+function drawMode15Oscilloscope(
+  ctx: WebGLRendererContext,
+  bufferData: Uint8Array,
+  canvasWidth: number,
+  canvasHeight: number,
+  adj: ModeAdjustments,
+  settings: SpectrumSettings
+): void {
+  const lp = settings.loudnessParams ?? { gain: 1.6, gamma: 0.75, attack: 0.28, release: 0.12 };
+  // WebGL側は timeDomain しか渡されないので、timeDomain から擬似音圧（平均偏差）を作る
+  let sum = 0;
+  for (let i = 0; i < bufferData.length; i++) sum += Math.abs(bufferData[i] - 128);
+  const v = sum / (bufferData.length * 128);
+  const target = clamp01(Math.pow(v, lp.gamma) * lp.gain);
+  const st = (drawMode15Oscilloscope as any)._state ?? { level: 0 };
+  st.level = smoothAR(st.level, target, lp.attack, lp.release);
+  (drawMode15Oscilloscope as any)._state = st;
+  const level = st.level;
+
+  const op = getVisualOpacity(settings.opacity);
+  const [pr, pg, pb] = getSpectrumPrimaryRgb(settings);
+  const [sr, sg, sb] = getSpectrumSecondaryRgb(settings);
+  const centerY = canvasHeight / 2;
+  const amp = (canvasHeight * 0.18) * (0.55 + 1.35 * level);
+  const lineW = Math.max(1.5, (BASE_LINE_WIDTH_WAVEFORM * 0.9 + level * 3.2));
+  const wmp = settings.wmpTrailParams ?? { trailLength: 8, trailDecay: 0.86, additive: 1.0 };
+
+  const trail = (drawMode15Oscilloscope as any)._trail ?? { frames: [] as Uint8Array[] };
+  trail.frames.push(new Uint8Array(bufferData));
+  const maxTrail = Math.max(2, Math.floor(wmp.trailLength));
+  while (trail.frames.length > maxTrail) trail.frames.shift();
+  (drawMode15Oscilloscope as any)._trail = trail;
+
+  // glow + trail pass
+  for (let f = 0; f < trail.frames.length; f++) {
+    const frame = trail.frames[f];
+    const age = (f + 1) / trail.frames.length;
+    const fade = trailFade(age, wmp.trailDecay);
+    const add = Math.max(0.2, wmp.additive);
+    for (let pass = 0; pass < 2; pass++) {
+      const alpha = (pass === 0 ? 0.16 : 0.07) * op * fade * add;
+      const lw = lineW * (pass === 0 ? (2.2 + 1.1 * level) : (4 + 1.5 * level)) * fade;
+      for (let i = 0; i < frame.length - 1; i++) {
+        const x1 = (i / (frame.length - 1)) * canvasWidth;
+        const x2 = ((i + 1) / (frame.length - 1)) * canvasWidth;
+        const y1 = centerY + ((frame[i] - 128) / 128) * amp;
+        const y2 = centerY + ((frame[i + 1] - 128) / 128) * amp;
+        const [tx1, ty1] = applyTransform(x1, y1, canvasWidth, canvasHeight, adj);
+        const [tx2, ty2] = applyTransform(x2, y2, canvasWidth, canvasHeight, adj);
+        drawLine(ctx, tx1, ty1, tx2, ty2, sr / 255, sg / 255, sb / 255, alpha, lw);
+      }
+    }
+  }
+
+  // main line (simple gradient-ish by segment)
+  for (let i = 0; i < bufferData.length - 1; i++) {
+    const t = i / (bufferData.length - 1);
+    const r = (pr + (sr - pr) * t) / 255;
+    const g = (pg + (sg - pg) * t) / 255;
+    const b = (pb + (sb - pb) * t) / 255;
+      const x1 = (i / (bufferData.length - 1)) * canvasWidth;
+      const x2 = ((i + 1) / (bufferData.length - 1)) * canvasWidth;
+      const y1 = centerY + ((bufferData[i] - 128) / 128) * amp;
+      const y2 = centerY + ((bufferData[i + 1] - 128) / 128) * amp;
+      const [tx1, ty1] = applyTransform(x1, y1, canvasWidth, canvasHeight, adj);
+      const [tx2, ty2] = applyTransform(x2, y2, canvasWidth, canvasHeight, adj);
+    drawLine(ctx, tx1, ty1, tx2, ty2, r, g, b, 0.72 * op, lineW);
+  }
+}
+
+function drawMode16Lissajous(
+  ctx: WebGLRendererContext,
+  bufferData: Uint8Array,
+  canvasWidth: number,
+  canvasHeight: number,
+  adj: ModeAdjustments,
+  settings: SpectrumSettings
+): void {
+  const lp = settings.loudnessParams ?? { gain: 1.45, gamma: 0.78, attack: 0.26, release: 0.1 };
+  let sum = 0;
+  for (let i = 0; i < bufferData.length; i++) sum += Math.abs(bufferData[i] - 128);
+  const v = sum / (bufferData.length * 128);
+  const target = clamp01(Math.pow(v, lp.gamma) * lp.gain);
+  const st = (drawMode16Lissajous as any)._state ?? { level: 0 };
+  st.level = smoothAR(st.level, target, lp.attack, lp.release);
+  (drawMode16Lissajous as any)._state = st;
+  const level = st.level;
+
+  const op = getVisualOpacity(settings.opacity);
+  const [pr, pg, pb] = getSpectrumPrimaryRgb(settings);
+  const [sr, sg, sb] = getSpectrumSecondaryRgb(settings);
+  const cx = canvasWidth / 2;
+  const cy = canvasHeight / 2;
+  const scale = Math.max(0.1, Math.min(adj.scaleX, adj.scaleY));
+  const baseR = Math.min(canvasWidth, canvasHeight) * (0.22 + 0.18 * level) * scale;
+  const n = bufferData.length;
+  const offset = Math.max(1, Math.floor(n * (0.17 + 0.08 * Math.sin(performance.now() / 1200))));
+  const wmp = settings.wmpTrailParams ?? { trailLength: 8, trailDecay: 0.86, additive: 1.0 };
+
+  const trail = (drawMode16Lissajous as any)._trail ?? { frames: [] as { offset: number; level: number }[] };
+  trail.frames.push({ offset, level });
+  const maxTrail = Math.max(2, Math.floor(wmp.trailLength));
+  while (trail.frames.length > maxTrail) trail.frames.shift();
+  (drawMode16Lissajous as any)._trail = trail;
+
+  const [tcx, tcy] = applyTransform(cx, cy, canvasWidth, canvasHeight, adj);
+  const steps = 240;
+  for (let h = 0; h < trail.frames.length; h++) {
+    const fr = trail.frames[h];
+    const age = (h + 1) / trail.frames.length;
+    const fade = trailFade(age, wmp.trailDecay);
+    const add = Math.max(0.2, wmp.additive);
+    for (let i = 0; i < steps; i++) {
+      const t = i / steps;
+      const idx = Math.floor(t * (n - 1));
+      const x0 = (bufferData[idx] - 128) / 128;
+      const y0 = (bufferData[(idx + fr.offset) % n] - 128) / 128;
+      const x = tcx + x0 * baseR;
+      const y = tcy + y0 * baseR;
+      drawCircle(ctx, x, y, (1.4 + 2.0 * fr.level) * fade, sr / 255, sg / 255, sb / 255, 0.12 * op * fade * add);
+    }
+  }
+  // core dots (current frame)
+  for (let i = 0; i < steps; i++) {
+    const t = i / steps;
+    const idx = Math.floor(t * (n - 1));
+    const x0 = (bufferData[idx] - 128) / 128;
+    const y0 = (bufferData[(idx + offset) % n] - 128) / 128;
+    const x = tcx + x0 * baseR;
+    const y = tcy + y0 * baseR;
+    const rr = (pr + (sr - pr) * t) / 255;
+    const gg = (pg + (sg - pg) * t) / 255;
+    const bb = (pb + (sb - pb) * t) / 255;
+    drawCircle(ctx, x, y, 1.1 + 1.7 * level, rr, gg, bb, 0.55 * op);
+  }
 }
 
 // HSLをRGBに変換

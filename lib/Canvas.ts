@@ -1,4 +1,10 @@
 import { drawEffectOverlayCanvas, type EffectParams, type AudioReactiveData } from "./Effects";
+import {
+  renderSubtitleOverlayCanvas,
+  renderTitleOverlayCanvas,
+  type SubtitleOverlaySettings,
+  type TitleOverlaySettings,
+} from "./subtitles";
 import { drawGalleryBackground, peekGalleryImageTransitionFrame } from "./galleryImageTransition";
 
 const BASE_LINE_WIDTH_WAVEFORM = 2.0;
@@ -31,6 +37,12 @@ export type SpectrumSettings = {
     attack: number;
     release: number;
   };
+  /** WMP風追い込み（mode15/16） */
+  wmpTrailParams?: {
+    trailLength: number;
+    trailDecay: number;
+    additive: number;
+  };
   glycoColorSet?: string;
   /** スペアナのベース色 #RRGGBB（優先。インポート互換で preset も参照） */
   spectrumColorHex?: string;
@@ -39,6 +51,10 @@ export type SpectrumSettings = {
   spectrumCustomHex?: string;
   /** モード3・4で虹色グラデーションを使う（false でプリマリ色ベース） */
   spectrumRainbowColorful?: boolean;
+  /** SRT字幕オーバーレイ */
+  subtitleOverlay?: SubtitleOverlaySettings;
+  /** タイトルオーバーレイ（Canvas 2D） */
+  titleOverlay?: TitleOverlaySettings;
 };
 
 const SPECTRUM_PRESET_RGB: Record<Exclude<SpectrumColorPresetKey, "custom">, [number, number, number]> = {
@@ -77,6 +93,19 @@ function getParticlePerfScale(): number {
   if (hc <= 4 || dm <= 4) return 0.45;
   if (hc <= 8 || dm <= 8) return 0.7;
   return 1.0;
+}
+
+function trailFade(age: number, trailDecay: number): number {
+  // trailDecay が高いほど残像を長く残す（減衰が遅い）
+  const exp = Math.max(0.5, 6.0 * (1 - trailDecay) + 0.6);
+  return Math.pow(age, exp);
+}
+
+function oscColorAt(t: number, pr: number, pg: number, pb: number, sr: number, sg: number, sb: number): [number, number, number] {
+  const r = Math.round(pr + (sr - pr) * t);
+  const g = Math.round(pg + (sg - pg) * t);
+  const b = Math.round(pb + (sb - pb) * t);
+  return [r, g, b];
 }
 
 /** 旧プリセット保存値から #RRGGBB へ（スペアナ色の移行用） */
@@ -630,6 +659,148 @@ export const drawBars = (
     ctx.translate(0, -canvasHeight);
     ctx.stroke();
     ctx.restore();
+  } else if (mode === 15) {
+    // モード15: Oscilloscope（発光する波形線）
+    analyser.getByteTimeDomainData(bufferData);
+    const lp = settings.loudnessParams ?? { gain: 1.6, gamma: 0.75, attack: 0.28, release: 0.12 };
+    // freqForEffect は常に取っているので音圧はそちらから（見た目強め）
+    const target = computeLoudnessTarget(freqForEffect, lp.gamma, lp.gain);
+    const st = (drawBars as any)._mode15Scope ?? { level: 0 };
+    st.level = smoothAR(st.level, target, lp.attack, lp.release);
+    (drawBars as any)._mode15Scope = st;
+    const level = st.level;
+
+    const cx = canvasWidth / 2;
+    const cy = canvasHeight / 2;
+    const amp = (canvasHeight * 0.18) * (0.55 + 1.35 * level);
+    const lineW = Math.max(1.5, (BASE_LINE_WIDTH_WAVEFORM * 0.9 + level * 3.2));
+    const op = visualOpacity;
+    const t0 = performance.now() / 1000;
+    const wobble = Math.sin(t0 * 0.6) * (0.08 + 0.15 * level);
+    const wmp = settings.wmpTrailParams ?? { trailLength: 8, trailDecay: 0.86, additive: 1.0 };
+
+    const scopeTrail = (drawBars as any)._mode15ScopeTrail ?? { frames: [] as Uint8Array[] };
+    scopeTrail.frames.push(new Uint8Array(bufferData));
+    const maxTrail = Math.max(2, Math.floor(wmp.trailLength));
+    while (scopeTrail.frames.length > maxTrail) scopeTrail.frames.shift();
+    (drawBars as any)._mode15ScopeTrail = scopeTrail;
+
+    // グロー（下地）: 太め＆低α + 履歴
+    ctx.save();
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.globalCompositeOperation = "lighter";
+    for (let f = 0; f < scopeTrail.frames.length; f++) {
+      const frame = scopeTrail.frames[f];
+      const age = (f + 1) / scopeTrail.frames.length;
+      const fade = trailFade(age, wmp.trailDecay);
+      const add = Math.max(0.2, wmp.additive);
+      ctx.shadowColor = `rgba(${sr}, ${sg}, ${sb}, ${0.7 * op * fade * add})`;
+      ctx.shadowBlur = (10 + 36 * level) * fade;
+      ctx.beginPath();
+      for (let i = 0; i < bufferLength; i++) {
+        const x = (i / (bufferLength - 1)) * canvasWidth;
+        const v = (frame[i] - 128) / 128;
+        const y = cy + (v + wobble * Math.sin((i / bufferLength) * Math.PI * 2)) * amp;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.strokeStyle = `rgba(${sr}, ${sg}, ${sb}, ${0.18 * op * fade * add})`;
+      ctx.lineWidth = lineW * (1.8 + 1.2 * level) * fade;
+      ctx.stroke();
+    }
+
+    // 本線（グラデ）
+    ctx.shadowBlur = 0;
+    ctx.beginPath();
+    for (let i = 0; i < bufferLength; i++) {
+      const x = (i / (bufferLength - 1)) * canvasWidth;
+      const v = (bufferData[i] - 128) / 128;
+      const y = cy + v * amp;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    const grad = ctx.createLinearGradient(0, cy, canvasWidth, cy);
+    grad.addColorStop(0, `rgba(${pr}, ${pg}, ${pb}, ${0.65 * op})`);
+    grad.addColorStop(0.5, `rgba(${sr}, ${sg}, ${sb}, ${0.85 * op})`);
+    grad.addColorStop(1, `rgba(255, 255, 255, ${0.55 * op})`);
+    ctx.strokeStyle = grad;
+    ctx.lineWidth = lineW;
+    ctx.stroke();
+    ctx.restore();
+  } else if (mode === 16) {
+    // モード16: Lissajous / Spiro（幾何学曲線）
+    analyser.getByteTimeDomainData(bufferData);
+    const lp = settings.loudnessParams ?? { gain: 1.45, gamma: 0.78, attack: 0.26, release: 0.1 };
+    const target = computeLoudnessTarget(freqForEffect, lp.gamma, lp.gain);
+    const st = (drawBars as any)._mode16Lis ?? { level: 0 };
+    st.level = smoothAR(st.level, target, lp.attack, lp.release);
+    (drawBars as any)._mode16Lis = st;
+    const level = st.level;
+
+    const cx = canvasWidth / 2;
+    const cy = canvasHeight / 2;
+    const baseR = Math.min(canvasWidth, canvasHeight) * (0.22 + 0.18 * level);
+    const op = visualOpacity;
+    const n = bufferLength;
+    const offset = Math.max(1, Math.floor(n * (0.17 + 0.08 * Math.sin(performance.now() / 1200))));
+    const rot = (performance.now() / 1000) * (0.15 + 0.55 * level);
+    const wmp = settings.wmpTrailParams ?? { trailLength: 8, trailDecay: 0.86, additive: 1.0 };
+
+    const lisTrail = (drawBars as any)._mode16LisTrail ?? { frames: [] as { offset: number; rot: number; level: number }[] };
+    lisTrail.frames.push({ offset, rot, level });
+    const maxTrail = Math.max(2, Math.floor(wmp.trailLength));
+    while (lisTrail.frames.length > maxTrail) lisTrail.frames.shift();
+    (drawBars as any)._mode16LisTrail = lisTrail;
+
+    for (let h = 0; h < lisTrail.frames.length; h++) {
+      const fr = lisTrail.frames[h];
+      const age = (h + 1) / lisTrail.frames.length;
+      const fade = trailFade(age, wmp.trailDecay);
+      const add = Math.max(0.2, wmp.additive);
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(fr.rot);
+      ctx.globalCompositeOperation = "lighter";
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      // グロー（多重線）
+      for (let pass = 0; pass < 2; pass++) {
+        ctx.beginPath();
+        for (let i = 0; i <= n; i++) {
+          const idx = i % n;
+          const x0 = (bufferData[idx] - 128) / 128;
+          const y0 = (bufferData[(idx + fr.offset) % n] - 128) / 128;
+          const r = baseR * (0.6 + 0.55 * fr.level);
+          const x = x0 * r;
+          const y = y0 * r;
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        const a = (pass === 0 ? 0.16 : 0.06) * op * fade * add;
+        ctx.strokeStyle = `rgba(${sr}, ${sg}, ${sb}, ${a})`;
+        ctx.lineWidth = (pass === 0 ? 6 : 12) * (0.7 + fr.level) * fade;
+        ctx.stroke();
+      }
+
+      // 本線（色相グラデ風に点を散らす）
+      const steps = 220;
+      for (let i = 0; i < steps; i++) {
+        const t = i / steps;
+        const idx = Math.floor(t * (n - 1));
+        const x0 = (bufferData[idx] - 128) / 128;
+        const y0 = (bufferData[(idx + fr.offset) % n] - 128) / 128;
+        const r = baseR * (0.6 + 0.55 * fr.level);
+        const x = x0 * r;
+        const y = y0 * r;
+        const [rr, gg, bb] = oscColorAt(t, pr, pg, pb, sr, sg, sb);
+        ctx.fillStyle = `rgba(${rr}, ${gg}, ${bb}, ${0.42 * op * fade * add})`;
+        ctx.beginPath();
+        ctx.arc(x, y, (0.9 + 1.6 * fr.level) * fade, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
   } else if (mode === 7) {
     // モード7: 周波数スペクトラム面（下辺固定の塗りつぶし＋上縁ライン）
     analyser.getByteFrequencyData(bufferData);
@@ -1004,6 +1175,11 @@ export const drawBars = (
     }
     drawEffectOverlayCanvas(ctx, canvasWidth, canvasHeight, effectForOverlay, getAudioReactive());
   }
+
+  // 字幕オーバーレイ
+  renderSubtitleOverlayCanvas(ctx, canvasWidth, canvasHeight, settings.subtitleOverlay);
+  // タイトル（字幕より手前）
+  renderTitleOverlayCanvas(ctx, canvasWidth, canvasHeight, settings.titleOverlay);
 
   // FPS測定
   fpsCounter++;

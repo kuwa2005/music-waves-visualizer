@@ -59,7 +59,7 @@ import {
 } from "../lib/galleryImageTransition";
 import { drawBarsWebGL, getFPSWebGL, cleanupWebGL, stopWebGLAnimation, clearWebGLImageCache } from "../lib/WebGLRenderer";
 import type { EffectType, EffectDensity, EffectParams } from "../lib/Effects";
-import { getGpuInfo, getGpuDisplayName, benchmarkRenderers, type GpuInfo } from "../lib/GpuDetector";
+import { getGpuInfo, getGpuDisplayName, type GpuInfo } from "../lib/GpuDetector";
 import { isWebCodecsSupported, checkHardwareEncoderSupport, getBestEncodingMethod } from "../lib/WebCodecsEncoder";
 import { generateMp4Video } from "../lib/Ffmpeg";
 import {
@@ -75,10 +75,23 @@ import {
   type FileGate,
   isFileGateFailure,
 } from "../lib/fileValidation";
+import {
+  parseSrt,
+  DEFAULT_SUBTITLE_STYLE,
+  DEFAULT_TITLE_STYLE,
+  type SubtitleCue,
+  type SubtitleStyle,
+  type TitleStyle,
+} from "../lib/subtitles";
 
 type ShortOutputPreset = "all" | "tiktok" | "youtube" | "niconico";
 type ResolvedClip = { full: true } | { full: false; start: number; duration: number };
 const MODE_COOKIE_KEY = "mwv_mode";
+const JP_DEFAULT_FONT_FAMILY = "'Noto Sans JP', sans-serif";
+const isJapaneseLang = (lng: string | undefined | null): boolean => {
+  const s = (lng ?? "").toLowerCase();
+  return s === "ja" || s.startsWith("ja-");
+};
 function normalizeHexColorInput(input: string): string {
   const raw = input.trim();
   if (!raw) return "";
@@ -87,6 +100,10 @@ function normalizeHexColorInput(input: string): string {
 
 function isHexColorCode(value: string): boolean {
   return /^#[0-9A-F]{6}$/.test(value);
+}
+
+function isSrtFileByName(name: string): boolean {
+  return /\.srt$/i.test(name);
 }
 
 function getCookieValue(name: string): string | null {
@@ -139,6 +156,13 @@ const Home: NextPage = () => {
   const [playSoundDisabled, setPlaySoundDisabled] = useState<boolean>(true);
   const [recordMovieDisabled, setRecordMovieDisabled] = useState<boolean>(true);
   const [audioFileName, setAudioFileName] = useState<string>("");
+  const [subtitleFileName, setSubtitleFileName] = useState<string>("");
+  const [subtitleEnabled, setSubtitleEnabled] = useState<boolean>(true);
+  const [subtitleCues, setSubtitleCues] = useState<SubtitleCue[]>([]);
+  const [subtitleStyle, setSubtitleStyle] = useState<SubtitleStyle>(DEFAULT_SUBTITLE_STYLE);
+  const [titleText, setTitleText] = useState<string>("");
+  const [titleEnabled, setTitleEnabled] = useState<boolean>(true);
+  const [titleStyle, setTitleStyle] = useState<TitleStyle>(DEFAULT_TITLE_STYLE);
   const [fps, setFps] = useState<number>(0);
   const [isRecording, setIsRecording] = useState<boolean>(false);
 
@@ -232,12 +256,45 @@ const Home: NextPage = () => {
     const steamDest = audioCtxRef.current.createMediaStreamDestination();
     streamDestinationRef.current = steamDest;
   }, []);
+
+  // ブラウザ言語が日本語なら、日本語フォントをデフォルトに寄せる（保存済みは上書きしない）
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!isJapaneseLang(i18n.language)) return;
+    const hasSavedSubtitleStyle = localStorage.getItem("common_subtitleStyle") != null;
+    const hasSavedTitleStyle = localStorage.getItem("common_titleStyle") != null;
+    if (!hasSavedSubtitleStyle && subtitleStyle.fontFamily === DEFAULT_SUBTITLE_STYLE.fontFamily) {
+      const next = { ...subtitleStyle, fontFamily: JP_DEFAULT_FONT_FAMILY };
+      setSubtitleStyle(next);
+      localStorage.setItem("common_subtitleStyle", JSON.stringify(next));
+    }
+    if (!hasSavedTitleStyle && titleStyle.fontFamily === DEFAULT_TITLE_STYLE.fontFamily) {
+      const next = { ...titleStyle, fontFamily: JP_DEFAULT_FONT_FAMILY };
+      setTitleStyle(next);
+      localStorage.setItem("common_titleStyle", JSON.stringify(next));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const audioBufferSrcRef = useRef<AudioBufferSourceNode>(null);
   const decodedAudioBufferRef = useRef<AudioBuffer>(null);
+  const audioPlaybackStartCtxTimeRef = useRef<number | null>(null);
+  const audioPlaybackOffsetSecRef = useRef<number>(0);
   const videoElementRef = useRef<HTMLVideoElement>(null);
   const mediaElementSourceRef = useRef<MediaElementAudioSourceNode | null>(null);
   const playbackWindowTimerRef = useRef<number | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const getCurrentPlaybackTimeSec = useCallback((): number => {
+    if (!isPlaySound && !isRecording) return 0;
+    const v = videoElementRef.current;
+    if (v && !v.paused && Number.isFinite(v.currentTime)) {
+      return Math.max(0, v.currentTime);
+    }
+    if (audioPlaybackStartCtxTimeRef.current != null && audioCtxRef.current) {
+      const elapsed = audioCtxRef.current.currentTime - audioPlaybackStartCtxTimeRef.current;
+      return Math.max(0, audioPlaybackOffsetSecRef.current + elapsed);
+    }
+    return 0;
+  }, [isPlaySound, isRecording]);
 
   const loadVideoAsAudioSource = useCallback(
     (file: File) => {
@@ -377,9 +434,30 @@ const Home: NextPage = () => {
   const [lineWidthSymWave, setLineWidthSymWave] = useState<number>(3.6);    // mode5
   const [circleRotationRpm, setCircleRotationRpm] = useState<number | null>(null); // mode2: null=OFF, 0=停止
   type LoudnessParams = { gain: number; gamma: number; attack: number; release: number };
+  type WmpTrailParams = { trailLength: number; trailDecay: number; additive: number };
   const DEFAULT_LOUDNESS_PARAMS: LoudnessParams = { gain: 1.35, gamma: 0.82, attack: 0.22, release: 0.08 };
+  const DEFAULT_WMP_TRAIL_PARAMS: WmpTrailParams = { trailLength: 8, trailDecay: 0.86, additive: 1.0 };
   const defaultLoudnessParamsRef = useRef<LoudnessParams>(DEFAULT_LOUDNESS_PARAMS);
+  const WMP_TRAIL_DEFAULTS_BY_MODE: Record<15 | 16, WmpTrailParams> = {
+    // mode15: クラシックWMP風に長め残像
+    15: { trailLength: 12, trailDecay: 0.92, additive: 1.4 },
+    // mode16: 幾何学が潰れにくいよう少し抑えめ
+    16: { trailLength: 9, trailDecay: 0.88, additive: 1.2 },
+  };
+  const WMP_TRAIL_PRESETS: Record<"classic" | "modern", Record<15 | 16, WmpTrailParams>> = {
+    classic: {
+      15: { trailLength: 14, trailDecay: 0.94, additive: 1.65 },
+      16: { trailLength: 11, trailDecay: 0.90, additive: 1.35 },
+    },
+    modern: {
+      15: { trailLength: 8, trailDecay: 0.84, additive: 1.1 },
+      16: { trailLength: 6, trailDecay: 0.80, additive: 0.95 },
+    },
+  };
+  const defaultWmpTrailParamsForMode: WmpTrailParams =
+    mode === 15 || mode === 16 ? WMP_TRAIL_DEFAULTS_BY_MODE[mode] : DEFAULT_WMP_TRAIL_PARAMS;
   const [loudnessParamsByMode, setLoudnessParamsByMode] = useState<Record<number, LoudnessParams>>({});
+  const [wmpTrailParamsByMode, setWmpTrailParamsByMode] = useState<Record<number, WmpTrailParams>>({});
   const LOUDNESS_PRESETS: Record<"natural" | "strong" | "edm", LoudnessParams> = {
     natural: { gain: 1.2, gamma: 0.9, attack: 0.18, release: 0.1 },
     strong: { gain: 1.5, gamma: 0.8, attack: 0.26, release: 0.1 },
@@ -461,6 +539,12 @@ const Home: NextPage = () => {
       circleRotationRpm == null ? "off" : String(Math.max(-10, Math.min(10, Math.round(circleRotationRpm))))
     );
     localStorage.setItem("common_loudnessParamsByMode", JSON.stringify(loudnessParamsByMode));
+    localStorage.setItem("common_wmpTrailParamsByMode", JSON.stringify(wmpTrailParamsByMode));
+    localStorage.setItem("common_subtitleEnabled", subtitleEnabled ? "1" : "0");
+    localStorage.setItem("common_subtitleStyle", JSON.stringify(subtitleStyle));
+    localStorage.setItem("common_titleText", titleText);
+    localStorage.setItem("common_titleEnabled", titleEnabled ? "1" : "0");
+    localStorage.setItem("common_titleStyle", JSON.stringify(titleStyle));
     localStorage.setItem("common_recordVideoBitrateMbps", String(recordVideoBitrateMbps));
     localStorage.setItem("common_exportAudioBitrateKbps", String(exportAudioBitrateKbps));
   }, [
@@ -476,6 +560,12 @@ const Home: NextPage = () => {
     spectrumRainbowColorful,
     circleRotationRpm,
     loudnessParamsByMode,
+    wmpTrailParamsByMode,
+    subtitleEnabled,
+    subtitleStyle,
+    titleText,
+    titleEnabled,
+    titleStyle,
     recordVideoBitrateMbps,
     exportAudioBitrateKbps,
   ]);
@@ -579,7 +669,7 @@ const Home: NextPage = () => {
     const spectrumSettings: Record<string, Record<string, ModeAdjustments>> = {};
     LAYOUTS.forEach((layout) => {
       const layoutData: Record<string, ModeAdjustments> = {};
-      [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14].forEach((m) => {
+      [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16].forEach((m) => {
         const loaded = loadSettings(layout, m);
         layoutData[String(m)] = loaded ?? DEFAULT_ADJUSTMENTS;
       });
@@ -596,6 +686,12 @@ const Home: NextPage = () => {
         spectrumRainbowColorful,
         circleRotationRpm,
         loudnessParamsByMode,
+        wmpTrailParamsByMode,
+        subtitleEnabled,
+        subtitleStyle,
+        titleText,
+        titleEnabled,
+        titleStyle,
         recordVideoBitrateMbps,
         exportAudioBitrateKbps,
         rendererType,
@@ -614,7 +710,7 @@ const Home: NextPage = () => {
   // 全設定をクリア（インポート前の一括リセット用）
   const clearAllSettings = () => {
     LAYOUTS.forEach((layout) => {
-      [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14].forEach((m) => localStorage.removeItem(getSettingsKey(layout, m)));
+      [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16].forEach((m) => localStorage.removeItem(getSettingsKey(layout, m)));
     });
     [
       "common_targetLufs",
@@ -628,6 +724,12 @@ const Home: NextPage = () => {
       "common_spectrumRainbowColorful",
       "common_circleRotationRpm",
       "common_loudnessParamsByMode",
+      "common_wmpTrailParamsByMode",
+      "common_subtitleEnabled",
+      "common_subtitleStyle",
+      "common_titleText",
+      "common_titleEnabled",
+      "common_titleStyle",
       "common_galleryTransitionMode",
       "common_spaceParticleColor",
       "common_sparkleParticleColor",
@@ -762,6 +864,72 @@ const Home: NextPage = () => {
           localStorage.setItem("common_loudnessParamsByMode", JSON.stringify(next));
           setLoudnessParamsByMode(next);
         }
+        if (c.wmpTrailParamsByMode && typeof c.wmpTrailParamsByMode === "object") {
+          const src = c.wmpTrailParamsByMode as Record<string, WmpTrailParams>;
+          const next: Record<number, WmpTrailParams> = {};
+          Object.keys(src).forEach((k) => {
+            const m = Number(k);
+            const v = src[k];
+            if (!isNaN(m) && v && typeof v === "object") {
+              const trailLength = Number((v as any).trailLength);
+              const trailDecay = Number((v as any).trailDecay);
+              const additive = Number((v as any).additive);
+              if ([trailLength, trailDecay, additive].every((x) => !isNaN(x))) {
+                next[m] = {
+                  trailLength: Math.max(2, Math.min(24, Math.round(trailLength))),
+                  trailDecay: Math.max(0.5, Math.min(0.99, trailDecay)),
+                  additive: Math.max(0.2, Math.min(3, additive)),
+                };
+              }
+            }
+          });
+          localStorage.setItem("common_wmpTrailParamsByMode", JSON.stringify(next));
+          setWmpTrailParamsByMode(next);
+        }
+        if (c.subtitleEnabled === true || c.subtitleEnabled === false) {
+          localStorage.setItem("common_subtitleEnabled", c.subtitleEnabled ? "1" : "0");
+          setSubtitleEnabled(c.subtitleEnabled);
+        }
+        if (c.subtitleStyle && typeof c.subtitleStyle === "object") {
+          const s = c.subtitleStyle as Partial<SubtitleStyle>;
+          const next: SubtitleStyle = {
+            ...DEFAULT_SUBTITLE_STYLE,
+            ...s,
+            positionYPercent: Math.max(5, Math.min(98, Number(s.positionYPercent ?? DEFAULT_SUBTITLE_STYLE.positionYPercent))),
+            fontSize: Math.max(12, Math.min(96, Number(s.fontSize ?? DEFAULT_SUBTITLE_STYLE.fontSize))),
+            strokeWidth: Math.max(0, Math.min(12, Number(s.strokeWidth ?? DEFAULT_SUBTITLE_STYLE.strokeWidth))),
+            shadowBlur: Math.max(0, Math.min(30, Number(s.shadowBlur ?? DEFAULT_SUBTITLE_STYLE.shadowBlur))),
+            boxPadding: Math.max(0, Math.min(40, Number(s.boxPadding ?? DEFAULT_SUBTITLE_STYLE.boxPadding))),
+            animationDurationSec: Math.max(0, Math.min(1.5, Number(s.animationDurationSec ?? DEFAULT_SUBTITLE_STYLE.animationDurationSec))),
+          };
+          localStorage.setItem("common_subtitleStyle", JSON.stringify(next));
+          setSubtitleStyle(next);
+        }
+        if (typeof c.titleText === "string") {
+          const tt = c.titleText.slice(0, 500);
+          localStorage.setItem("common_titleText", tt);
+          setTitleText(tt);
+        }
+        if (c.titleEnabled === true || c.titleEnabled === false) {
+          localStorage.setItem("common_titleEnabled", c.titleEnabled ? "1" : "0");
+          setTitleEnabled(c.titleEnabled);
+        }
+        if (c.titleStyle && typeof c.titleStyle === "object") {
+          const s = c.titleStyle as Partial<TitleStyle>;
+          const next: TitleStyle = {
+            ...DEFAULT_TITLE_STYLE,
+            ...s,
+            positionYPercent: Math.max(5, Math.min(98, Number(s.positionYPercent ?? DEFAULT_TITLE_STYLE.positionYPercent))),
+            fontSize: Math.max(12, Math.min(120, Number(s.fontSize ?? DEFAULT_TITLE_STYLE.fontSize))),
+            strokeWidth: Math.max(0, Math.min(12, Number(s.strokeWidth ?? DEFAULT_TITLE_STYLE.strokeWidth))),
+            shadowBlur: Math.max(0, Math.min(40, Number(s.shadowBlur ?? DEFAULT_TITLE_STYLE.shadowBlur))),
+            boxPadding: Math.max(0, Math.min(40, Number(s.boxPadding ?? DEFAULT_TITLE_STYLE.boxPadding))),
+            animationDurationSec: Math.max(0, Math.min(1.5, Number(s.animationDurationSec ?? DEFAULT_TITLE_STYLE.animationDurationSec))),
+            letterSpacingPx: Math.max(0, Math.min(24, Number(s.letterSpacingPx ?? DEFAULT_TITLE_STYLE.letterSpacingPx))),
+          };
+          localStorage.setItem("common_titleStyle", JSON.stringify(next));
+          setTitleStyle(next);
+        }
         if (c.recordVideoBitrateMbps !== undefined) {
           const n = Number(c.recordVideoBitrateMbps);
           if (!isNaN(n) && n >= 1 && n <= 40) {
@@ -774,8 +942,9 @@ const Home: NextPage = () => {
           setExportAudioBitrateKbps(c.exportAudioBitrateKbps);
         }
         if (c.rendererType === "canvas2d" || c.rendererType === "webgl") {
-          localStorage.setItem("common_rendererType", c.rendererType);
-          setRendererType(c.rendererType);
+          // 今後は Canvas2D 固定運用
+          localStorage.setItem("common_rendererType", "canvas2d");
+          setRendererType("canvas2d");
         }
         if (c.rainWeather && typeof c.rainWeather === "object") {
           const rw = c.rainWeather as WeatherAdjust;
@@ -814,7 +983,7 @@ const Home: NextPage = () => {
           if (layoutData && typeof layoutData === "object") {
             Object.keys(layoutData).forEach((mStr) => {
               const m = parseInt(mStr, 10);
-              if (!isNaN(m) && m >= 0 && m <= 14 && layoutData[mStr]) {
+              if (!isNaN(m) && m >= 0 && m <= 16 && layoutData[mStr]) {
                 const adj = layoutData[mStr];
                 if (adj && typeof adj.scaleX === "number" && typeof adj.scaleY === "number" && typeof adj.offsetX === "number" && typeof adj.offsetY === "number") {
                   saveSettings(layout, m, clampModeAdjustments(adj as ModeAdjustments));
@@ -953,6 +1122,7 @@ const Home: NextPage = () => {
   } as const;
 
   const isLoudnessMode = (m: number) => m >= 8 && m <= 14;
+  const isReactiveVisualMode = (m: number) => (m >= 8 && m <= 14) || m === 15 || m === 16;
   const getModeDescriptionKey = (m: number): string => {
     const map: Record<number, string> = {
       [-1]: "spectrum.descOff",
@@ -969,6 +1139,8 @@ const Home: NextPage = () => {
       12: "spectrum.descBreathingBg",
       13: "spectrum.descParticleDensity",
       14: "spectrum.descGeomMorph",
+      15: "spectrum.descOscilloscope",
+      16: "spectrum.descLissajous",
     };
     return map[m] ?? "spectrum.descOff";
   };
@@ -1240,6 +1412,72 @@ const Home: NextPage = () => {
         setLoudnessParamsByMode(next);
       }
     } catch (_e) { /* ignore */ }
+    try {
+      const savedWmp = localStorage.getItem("common_wmpTrailParamsByMode");
+      if (savedWmp) {
+        const parsed = JSON.parse(savedWmp) as Record<string, WmpTrailParams>;
+        const next: Record<number, WmpTrailParams> = {};
+        Object.keys(parsed).forEach((k) => {
+          const m = Number(k);
+          const v = parsed[k];
+          if (!isNaN(m) && v && typeof v === "object") {
+            const trailLength = Number(v.trailLength);
+            const trailDecay = Number(v.trailDecay);
+            const additive = Number(v.additive);
+            if ([trailLength, trailDecay, additive].every((x) => !isNaN(x))) {
+              next[m] = {
+                trailLength: Math.max(2, Math.min(24, Math.round(trailLength))),
+                trailDecay: Math.max(0.5, Math.min(0.99, trailDecay)),
+                additive: Math.max(0.2, Math.min(3, additive)),
+              };
+            }
+          }
+        });
+        setWmpTrailParamsByMode(next);
+      }
+    } catch (_e) { /* ignore */ }
+    const savedSubEnabled = localStorage.getItem("common_subtitleEnabled");
+    if (savedSubEnabled === "0") setSubtitleEnabled(false);
+    else if (savedSubEnabled === "1") setSubtitleEnabled(true);
+    try {
+      const savedSubStyle = localStorage.getItem("common_subtitleStyle");
+      if (savedSubStyle) {
+        const s = JSON.parse(savedSubStyle) as Partial<SubtitleStyle>;
+        setSubtitleStyle({
+          ...DEFAULT_SUBTITLE_STYLE,
+          ...s,
+          positionYPercent: Math.max(5, Math.min(98, Number(s.positionYPercent ?? DEFAULT_SUBTITLE_STYLE.positionYPercent))),
+          fontSize: Math.max(12, Math.min(96, Number(s.fontSize ?? DEFAULT_SUBTITLE_STYLE.fontSize))),
+          strokeWidth: Math.max(0, Math.min(12, Number(s.strokeWidth ?? DEFAULT_SUBTITLE_STYLE.strokeWidth))),
+          shadowBlur: Math.max(0, Math.min(30, Number(s.shadowBlur ?? DEFAULT_SUBTITLE_STYLE.shadowBlur))),
+          boxPadding: Math.max(0, Math.min(40, Number(s.boxPadding ?? DEFAULT_SUBTITLE_STYLE.boxPadding))),
+          animationDurationSec: Math.max(0, Math.min(1.5, Number(s.animationDurationSec ?? DEFAULT_SUBTITLE_STYLE.animationDurationSec))),
+        });
+      }
+    } catch (_e) { /* ignore */ }
+
+    const savedTitleText = localStorage.getItem("common_titleText");
+    if (savedTitleText != null) setTitleText(savedTitleText.slice(0, 500));
+    const savedTitleEnabled = localStorage.getItem("common_titleEnabled");
+    if (savedTitleEnabled === "0") setTitleEnabled(false);
+    else if (savedTitleEnabled === "1") setTitleEnabled(true);
+    try {
+      const savedTitleStyle = localStorage.getItem("common_titleStyle");
+      if (savedTitleStyle) {
+        const s = JSON.parse(savedTitleStyle) as Partial<TitleStyle>;
+        setTitleStyle({
+          ...DEFAULT_TITLE_STYLE,
+          ...s,
+          positionYPercent: Math.max(5, Math.min(98, Number(s.positionYPercent ?? DEFAULT_TITLE_STYLE.positionYPercent))),
+          fontSize: Math.max(12, Math.min(120, Number(s.fontSize ?? DEFAULT_TITLE_STYLE.fontSize))),
+          strokeWidth: Math.max(0, Math.min(12, Number(s.strokeWidth ?? DEFAULT_TITLE_STYLE.strokeWidth))),
+          shadowBlur: Math.max(0, Math.min(40, Number(s.shadowBlur ?? DEFAULT_TITLE_STYLE.shadowBlur))),
+          boxPadding: Math.max(0, Math.min(40, Number(s.boxPadding ?? DEFAULT_TITLE_STYLE.boxPadding))),
+          animationDurationSec: Math.max(0, Math.min(1.5, Number(s.animationDurationSec ?? DEFAULT_TITLE_STYLE.animationDurationSec))),
+          letterSpacingPx: Math.max(0, Math.min(24, Number(s.letterSpacingPx ?? DEFAULT_TITLE_STYLE.letterSpacingPx))),
+        });
+      }
+    } catch (_e) { /* ignore */ }
 
     const savedVidBr = localStorage.getItem("common_recordVideoBitrateMbps");
     if (savedVidBr) {
@@ -1263,10 +1501,9 @@ const Home: NextPage = () => {
     setTargetLufs(-14);
     setTargetLufsCustom("-14");
 
-    const savedRenderer = localStorage.getItem("common_rendererType");
-    if (savedRenderer === "canvas2d" || savedRenderer === "webgl") {
-      setRendererType(savedRenderer);
-    }
+    // 今後は Canvas2D 固定運用
+    localStorage.setItem("common_rendererType", "canvas2d");
+    setRendererType("canvas2d");
 
     try {
       const rw = localStorage.getItem("common_rainWeather");
@@ -1315,12 +1552,8 @@ const Home: NextPage = () => {
       const info = getGpuInfo();
       setGpuInfo(info);
 
-      const savedRenderer = localStorage.getItem("common_rendererType");
-      if (!savedRenderer && info.isWebGLSupported) {
-        const faster = await benchmarkRenderers();
-        setRendererType(faster);
-        localStorage.setItem("common_rendererType", faster);
-      }
+      localStorage.setItem("common_rendererType", "canvas2d");
+      setRendererType("canvas2d");
 
       const webCodecsAvailable = isWebCodecsSupported();
       setWebCodecsSupported(webCodecsAvailable);
@@ -1333,6 +1566,17 @@ const Home: NextPage = () => {
 
     initGpu();
   }, []);
+
+  useEffect(() => {
+    if (
+      rendererType === "webgl" &&
+      ((subtitleEnabled && subtitleCues.length > 0) || (titleEnabled && titleText.trim().length > 0))
+    ) {
+      setRendererType("canvas2d");
+      localStorage.setItem("common_rendererType", "canvas2d");
+      openSnackBar(t("snackbar.subtitleCanvasFallback"));
+    }
+  }, [rendererType, subtitleEnabled, subtitleCues.length, titleEnabled, titleText, openSnackBar, t]);
 
   // Canvas サイズ設定（canvasSize または rendererType が変更されたときに実行）
   // useLayoutEffectを使用してDOM更新直後にサイズを設定
@@ -1371,9 +1615,23 @@ const Home: NextPage = () => {
       lineWidthSymWave,
       circleRotationRpm,
       loudnessParams: loudnessParamsByMode[mode] ?? defaultLoudnessParamsRef.current,
+      wmpTrailParams: wmpTrailParamsByMode[mode] ?? defaultWmpTrailParamsForMode,
       glycoColorSet,
       spectrumColorHex,
       spectrumRainbowColorful,
+      subtitleOverlay: {
+        enabled: subtitleEnabled,
+        cues: subtitleCues,
+        getCurrentTimeSec: getCurrentPlaybackTimeSec,
+        style: subtitleStyle,
+      },
+      titleOverlay: {
+        enabled: titleEnabled,
+        text: titleText,
+        style: titleStyle,
+        isPlaying: isPlaySound || isRecording,
+        playbackTimeSec: getCurrentPlaybackTimeSec(),
+      },
     };
 
     if (rendererType === 'webgl') {
@@ -1420,8 +1678,17 @@ const Home: NextPage = () => {
     lineWidthSymWave,
     circleRotationRpm,
     loudnessParamsByMode,
+    defaultWmpTrailParamsForMode,
+    wmpTrailParamsByMode,
     spectrumColorHex,
     spectrumRainbowColorful,
+    subtitleEnabled,
+    subtitleCues,
+    subtitleStyle,
+    titleEnabled,
+    titleText,
+    titleStyle,
+    getCurrentPlaybackTimeSec,
   ]);
 
   // FPS表示更新（1秒ごとに更新）
@@ -1574,6 +1841,28 @@ const Home: NextPage = () => {
     }
   };
 
+  const loadSubtitleFile = async (file: File) => {
+    try {
+      const text = await file.text();
+      const cues = parseSrt(text);
+      if (cues.length === 0) {
+        openSnackBar(t("snackbar.subtitleParseFailed"));
+        return;
+      }
+      setSubtitleCues(cues);
+      setSubtitleFileName(file.name);
+      setSubtitleEnabled(true);
+      openSnackBar(t("snackbar.subtitleLoaded", { count: cues.length }));
+      if (rendererType === "webgl") {
+        setRendererType("canvas2d");
+        localStorage.setItem("common_rendererType", "canvas2d");
+        openSnackBar(t("snackbar.subtitleCanvasFallback"));
+      }
+    } catch (_e) {
+      openSnackBar(t("snackbar.subtitleLoadFailed"));
+    }
+  };
+
   // 画像ボタンから読み込み（複数選択で一括登録・差し替え）
   const imageLoad = (event: { target: HTMLInputElement }) => {
     const raw = Array.from(event.target.files ?? []);
@@ -1606,6 +1895,20 @@ const Home: NextPage = () => {
     }
   };
 
+  const subtitleLoad = async (event: { target: HTMLInputElement }) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      if (!isSrtFileByName(file.name)) {
+        openSnackBar(t("snackbar.subtitleTypeNotSupported"));
+        return;
+      }
+      await loadSubtitleFile(file);
+    } finally {
+      event.target.value = "";
+    }
+  };
+
   // ドラッグ&ドロップ処理
   const handleDrop = async (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -1617,12 +1920,15 @@ const Home: NextPage = () => {
 
     const imageFiles: File[] = [];
     let audioFile: File | null = null;
+    let subtitleFile: File | null = null;
 
     for (const file of files) {
       if (isImageFileByName(file.name) && !isVideoFileByName(file.name)) {
         imageFiles.push(file);
       } else if (isAudioFileByName(file.name) && !audioFile) {
         audioFile = file;
+      } else if (isSrtFileByName(file.name) && !subtitleFile) {
+        subtitleFile = file;
       } else if (isVideoFileByName(file.name)) {
         if (!audioFile) {
           audioFile = file;
@@ -1640,6 +1946,9 @@ const Home: NextPage = () => {
       } else {
         await loadAudioFile(audioFile);
       }
+    }
+    if (subtitleFile) {
+      await loadSubtitleFile(subtitleFile);
     }
   };
 
@@ -1699,9 +2008,12 @@ const Home: NextPage = () => {
       }
       if (clip.full === false) {
         video.currentTime = clip.start;
+        audioPlaybackOffsetSecRef.current = clip.start;
       } else {
         video.currentTime = 0;
+        audioPlaybackOffsetSecRef.current = 0;
       }
+      audioPlaybackStartCtxTimeRef.current = null;
       return;
     }
     if (!decodedAudioBufferRef.current) {
@@ -1711,6 +2023,7 @@ const Home: NextPage = () => {
     audioBufferSourceNode.buffer = decodedAudioBufferRef.current;
     audioBufferSourceNode.loop = false;
     audioBufferSourceNode.onended = () => {
+      audioPlaybackStartCtxTimeRef.current = null;
       setIsPlaySound(false);
       stopCanvas2DAnimation();
       stopWebGLAnimation();
@@ -1719,6 +2032,7 @@ const Home: NextPage = () => {
     analyserRef.current.connect(audioCtxRef.current.destination);
     analyserRef.current.connect(streamDestinationRef.current);
     audioBufferSrcRef.current = audioBufferSourceNode;
+    audioPlaybackOffsetSecRef.current = clip.full === false ? clip.start : 0;
   };
 
   const finishVideoWindowPlayback = useCallback(() => {
@@ -1729,6 +2043,7 @@ const Home: NextPage = () => {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
       mediaRecorderRef.current.stop();
     }
+    audioPlaybackStartCtxTimeRef.current = null;
     setIsPlaySound(false);
     stopCanvas2DAnimation();
     stopWebGLAnimation();
@@ -1748,6 +2063,7 @@ const Home: NextPage = () => {
       if (videoElementRef.current) {
         videoElementRef.current.pause();
       }
+      audioPlaybackStartCtxTimeRef.current = null;
       stopCanvas2DAnimation();
       stopWebGLAnimation();
       setIsPlaySound(false);
@@ -1761,6 +2077,7 @@ const Home: NextPage = () => {
     setupAudioSourceForPlayback(clip);
 
     if (videoElementRef.current) {
+      audioPlaybackStartCtxTimeRef.current = null;
       videoElementRef.current.play().then(() => {
         if (clip.full === false && clip.duration > 0) {
           clearPlaybackWindowTimer();
@@ -1772,6 +2089,7 @@ const Home: NextPage = () => {
         }
       });
     } else if (audioBufferSrcRef.current) {
+      audioPlaybackStartCtxTimeRef.current = audioCtxRef.current.currentTime;
       if (clip.full === false) {
         audioBufferSrcRef.current.start(0, clip.start, clip.duration);
       } else {
@@ -1800,9 +2118,23 @@ const Home: NextPage = () => {
       lineWidthSymWave,
       circleRotationRpm,
       loudnessParams: loudnessParamsByMode[mode] ?? defaultLoudnessParamsRef.current,
+      wmpTrailParams: wmpTrailParamsByMode[mode] ?? defaultWmpTrailParamsForMode,
       glycoColorSet,
       spectrumColorHex,
       spectrumRainbowColorful,
+      subtitleOverlay: {
+        enabled: subtitleEnabled,
+        cues: subtitleCues,
+        getCurrentTimeSec: getCurrentPlaybackTimeSec,
+        style: subtitleStyle,
+      },
+      titleOverlay: {
+        enabled: titleEnabled,
+        text: titleText,
+        style: titleStyle,
+        isPlaying: true,
+        playbackTimeSec: getCurrentPlaybackTimeSec(),
+      },
     };
     if (canvasRef.current && analyserRef.current) {
       if (rendererType === "webgl") {
@@ -1974,6 +2306,13 @@ const Home: NextPage = () => {
     });
     setGalleryIndex(0);
     setAudioFileName("");
+    setSubtitleFileName("");
+    setSubtitleCues([]);
+    setSubtitleEnabled(true);
+    setSubtitleStyle(DEFAULT_SUBTITLE_STYLE);
+    setTitleText("");
+    setTitleEnabled(true);
+    setTitleStyle(DEFAULT_TITLE_STYLE);
     decodedAudioBufferRef.current = null;
     setIsPlaySound(false);
     setPlaySoundDisabled(true);
@@ -2288,6 +2627,8 @@ const Home: NextPage = () => {
             >
               <Tab label={t("tabs.spectrum")} />
               <Tab label={t("tabs.effects")} />
+              <Tab label={t("tabs.title")} />
+              <Tab label={t("tabs.subtitle")} />
               <Tab label={t("tabs.audio")} />
               <Tab label={t("tabs.clipLength")} />
               <Tab label={t("tabs.settings")} />
@@ -2486,7 +2827,7 @@ const Home: NextPage = () => {
                         />
                       </Box>
                     )}
-                    {isLoudnessMode(mode) && (
+                    {isReactiveVisualMode(mode) && (
                       <Box sx={{ mb: 3 }}>
                         <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600 }}>
                           {t("displayVolume.loudnessTuning")}
@@ -2570,6 +2911,90 @@ const Home: NextPage = () => {
                             setLoudnessParamsByMode((prev) => ({
                               ...prev,
                               [mode]: { ...(prev[mode] ?? DEFAULT_LOUDNESS_PARAMS), release: v as number },
+                            }))
+                          }
+                        />
+                      </Box>
+                    )}
+                    {(mode === 15 || mode === 16) && (
+                      <Box sx={{ mb: 3 }}>
+                        <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600 }}>
+                          {t("displayVolume.wmpTrailTuning")}
+                        </Typography>
+                        <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap", mb: 1 }}>
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            onClick={() =>
+                              setWmpTrailParamsByMode((prev) => ({
+                                ...prev,
+                                [mode]: { ...WMP_TRAIL_PRESETS.classic[mode as 15 | 16] },
+                              }))
+                            }
+                          >
+                            {t("displayVolume.presetWmpClassic")}
+                          </Button>
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            onClick={() =>
+                              setWmpTrailParamsByMode((prev) => ({
+                                ...prev,
+                                [mode]: { ...WMP_TRAIL_PRESETS.modern[mode as 15 | 16] },
+                              }))
+                            }
+                          >
+                            {t("displayVolume.presetWmpModern")}
+                          </Button>
+                        </Box>
+                        <Typography gutterBottom>
+                          {t("displayVolume.wmpTrailLength", {
+                            value: (wmpTrailParamsByMode[mode]?.trailLength ?? defaultWmpTrailParamsForMode.trailLength).toFixed(0),
+                          })}
+                        </Typography>
+                        <Slider
+                          value={wmpTrailParamsByMode[mode]?.trailLength ?? defaultWmpTrailParamsForMode.trailLength}
+                          min={2}
+                          max={24}
+                          step={1}
+                          onChange={(_, v) =>
+                            setWmpTrailParamsByMode((prev) => ({
+                              ...prev,
+                              [mode]: { ...(prev[mode] ?? defaultWmpTrailParamsForMode), trailLength: v as number },
+                            }))
+                          }
+                        />
+                        <Typography gutterBottom sx={{ mt: 2 }}>
+                          {t("displayVolume.wmpTrailDecay", {
+                            value: (wmpTrailParamsByMode[mode]?.trailDecay ?? defaultWmpTrailParamsForMode.trailDecay).toFixed(2),
+                          })}
+                        </Typography>
+                        <Slider
+                          value={wmpTrailParamsByMode[mode]?.trailDecay ?? defaultWmpTrailParamsForMode.trailDecay}
+                          min={0.5}
+                          max={0.99}
+                          step={0.01}
+                          onChange={(_, v) =>
+                            setWmpTrailParamsByMode((prev) => ({
+                              ...prev,
+                              [mode]: { ...(prev[mode] ?? defaultWmpTrailParamsForMode), trailDecay: v as number },
+                            }))
+                          }
+                        />
+                        <Typography gutterBottom sx={{ mt: 2 }}>
+                          {t("displayVolume.wmpAdditive", {
+                            value: (wmpTrailParamsByMode[mode]?.additive ?? defaultWmpTrailParamsForMode.additive).toFixed(2),
+                          })}
+                        </Typography>
+                        <Slider
+                          value={wmpTrailParamsByMode[mode]?.additive ?? defaultWmpTrailParamsForMode.additive}
+                          min={0.2}
+                          max={3}
+                          step={0.05}
+                          onChange={(_, v) =>
+                            setWmpTrailParamsByMode((prev) => ({
+                              ...prev,
+                              [mode]: { ...(prev[mode] ?? defaultWmpTrailParamsForMode), additive: v as number },
                             }))
                           }
                         />
@@ -3092,6 +3517,355 @@ const Home: NextPage = () => {
 
             {settingsTab === 2 && (
               <Box sx={{ width: "100%", maxWidth: 600, margin: "0 auto", py: 1 }}>
+                <Typography variant="body2" sx={{ mb: 2, textAlign: "center", fontWeight: 500 }}>
+                  {t("titleTab.title")}
+                </Typography>
+                <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 1 }}>
+                  {t("titleTab.caption")}
+                </Typography>
+                <TextField
+                  fullWidth
+                  multiline
+                  minRows={2}
+                  maxRows={6}
+                  size="small"
+                  label={t("titleTab.textLabel")}
+                  value={titleText}
+                  onChange={(e) => setTitleText(e.target.value.slice(0, 500))}
+                  placeholder={t("titleTab.placeholder")}
+                  sx={{ mb: 2 }}
+                />
+                <FormControlLabel
+                  control={<Switch checked={titleEnabled} onChange={(_, c) => setTitleEnabled(c)} size="small" />}
+                  label={t("titleTab.enabled")}
+                  sx={{ mb: 2, display: "flex", alignItems: "center" }}
+                />
+                <Typography gutterBottom>{t("titleTab.positionY", { value: titleStyle.positionYPercent.toFixed(0) })}</Typography>
+                <Slider
+                  value={titleStyle.positionYPercent}
+                  min={5}
+                  max={98}
+                  step={1}
+                  onChange={(_, v) => setTitleStyle((prev) => ({ ...prev, positionYPercent: v as number }))}
+                />
+                <FormControl size="small" fullWidth sx={{ mt: 1.5, mb: 1.5 }}>
+                  <InputLabel>{t("titleTab.align")}</InputLabel>
+                  <Select
+                    value={titleStyle.align}
+                    label={t("titleTab.align")}
+                    onChange={(e) => setTitleStyle((prev) => ({ ...prev, align: e.target.value as TitleStyle["align"] }))}
+                  >
+                    <MenuItem value="left">{t("subtitle.alignLeft")}</MenuItem>
+                    <MenuItem value="center">{t("subtitle.alignCenter")}</MenuItem>
+                    <MenuItem value="right">{t("subtitle.alignRight")}</MenuItem>
+                  </Select>
+                </FormControl>
+                <FormControl size="small" fullWidth sx={{ mb: 1.5 }}>
+                  <InputLabel>{t("titleTab.displayType")}</InputLabel>
+                  <Select
+                    value={titleStyle.displayType}
+                    label={t("titleTab.displayType")}
+                    onChange={(e) => setTitleStyle((prev) => ({ ...prev, displayType: e.target.value as TitleStyle["displayType"] }))}
+                  >
+                    <MenuItem value="plain">{t("subtitle.typePlain")}</MenuItem>
+                    <MenuItem value="outline">{t("subtitle.typeOutline")}</MenuItem>
+                    <MenuItem value="boxed">{t("subtitle.typeBoxed")}</MenuItem>
+                  </Select>
+                </FormControl>
+                <Typography gutterBottom>{t("titleTab.fontSize", { value: titleStyle.fontSize.toFixed(0) })}</Typography>
+                <Slider
+                  value={titleStyle.fontSize}
+                  min={12}
+                  max={120}
+                  step={1}
+                  onChange={(_, v) => setTitleStyle((prev) => ({ ...prev, fontSize: v as number }))}
+                />
+                <Typography gutterBottom sx={{ mt: 2 }}>{t("titleTab.letterSpacing", { value: titleStyle.letterSpacingPx.toFixed(0) })}</Typography>
+                <Slider
+                  value={titleStyle.letterSpacingPx}
+                  min={0}
+                  max={24}
+                  step={1}
+                  onChange={(_, v) => setTitleStyle((prev) => ({ ...prev, letterSpacingPx: v as number }))}
+                />
+                <FormControl size="small" fullWidth sx={{ mt: 1.5, mb: 1.5 }}>
+                  <InputLabel>{t("titleTab.fontFamily")}</InputLabel>
+                  <Select
+                    value={titleStyle.fontFamily}
+                    label={t("titleTab.fontFamily")}
+                    onChange={(e) => setTitleStyle((prev) => ({ ...prev, fontFamily: String(e.target.value) }))}
+                  >
+                    <MenuItem value="sans-serif">sans-serif</MenuItem>
+                    <MenuItem value="serif">serif</MenuItem>
+                    <MenuItem value="monospace">monospace</MenuItem>
+                    <MenuItem value="'Noto Sans JP', sans-serif">Noto Sans JP</MenuItem>
+                  </Select>
+                </FormControl>
+                <Box sx={{ display: "flex", gap: 2, mb: 1.5 }}>
+                  <FormControlLabel
+                    control={<Switch checked={titleStyle.bold} onChange={(_, c) => setTitleStyle((p) => ({ ...p, bold: c }))} size="small" />}
+                    label={t("subtitle.bold")}
+                  />
+                  <FormControlLabel
+                    control={<Switch checked={titleStyle.italic} onChange={(_, c) => setTitleStyle((p) => ({ ...p, italic: c }))} size="small" />}
+                    label={t("subtitle.italic")}
+                  />
+                </Box>
+                <TextField
+                  size="small"
+                  fullWidth
+                  label={t("titleTab.textColor")}
+                  value={titleStyle.color}
+                  onChange={(e) => setTitleStyle((p) => ({ ...p, color: normalizeHexColorInput(e.target.value) }))}
+                  sx={{ mb: 1.5 }}
+                />
+                <TextField
+                  size="small"
+                  fullWidth
+                  label={t("titleTab.strokeColor")}
+                  value={titleStyle.strokeColor}
+                  onChange={(e) => setTitleStyle((p) => ({ ...p, strokeColor: normalizeHexColorInput(e.target.value) }))}
+                  sx={{ mb: 1.5 }}
+                />
+                <Typography gutterBottom>{t("titleTab.strokeWidth", { value: titleStyle.strokeWidth.toFixed(1) })}</Typography>
+                <Slider
+                  value={titleStyle.strokeWidth}
+                  min={0}
+                  max={12}
+                  step={0.5}
+                  onChange={(_, v) => setTitleStyle((prev) => ({ ...prev, strokeWidth: v as number }))}
+                />
+                <TextField
+                  size="small"
+                  fullWidth
+                  label={t("titleTab.shadowColor")}
+                  value={titleStyle.shadowColor}
+                  onChange={(e) => setTitleStyle((p) => ({ ...p, shadowColor: e.target.value }))}
+                  sx={{ mb: 1.5, mt: 2 }}
+                />
+                <Typography gutterBottom>{t("titleTab.shadowBlur", { value: titleStyle.shadowBlur.toFixed(0) })}</Typography>
+                <Slider
+                  value={titleStyle.shadowBlur}
+                  min={0}
+                  max={40}
+                  step={1}
+                  onChange={(_, v) => setTitleStyle((prev) => ({ ...prev, shadowBlur: v as number }))}
+                />
+                <TextField
+                  size="small"
+                  fullWidth
+                  label={t("titleTab.boxColor")}
+                  value={titleStyle.boxColor}
+                  onChange={(e) => setTitleStyle((p) => ({ ...p, boxColor: e.target.value }))}
+                  sx={{ mb: 1.5 }}
+                />
+                <Typography gutterBottom>{t("titleTab.boxPadding", { value: titleStyle.boxPadding.toFixed(0) })}</Typography>
+                <Slider
+                  value={titleStyle.boxPadding}
+                  min={0}
+                  max={40}
+                  step={1}
+                  onChange={(_, v) => setTitleStyle((prev) => ({ ...prev, boxPadding: v as number }))}
+                />
+                <FormControl size="small" fullWidth sx={{ mt: 1.5, mb: 1.5 }}>
+                  <InputLabel>{t("titleTab.animationType")}</InputLabel>
+                  <Select
+                    value={titleStyle.animationType}
+                    label={t("titleTab.animationType")}
+                    onChange={(e) => setTitleStyle((prev) => ({ ...prev, animationType: e.target.value as TitleStyle["animationType"] }))}
+                  >
+                    <MenuItem value="none">{t("subtitle.animNone")}</MenuItem>
+                    <MenuItem value="fade">{t("subtitle.animFade")}</MenuItem>
+                    <MenuItem value="slideUp">{t("subtitle.animSlideUp")}</MenuItem>
+                    <MenuItem value="pop">{t("subtitle.animPop")}</MenuItem>
+                  </Select>
+                </FormControl>
+                <Typography gutterBottom>{t("titleTab.animationDuration", { value: titleStyle.animationDurationSec.toFixed(2) })}</Typography>
+                <Slider
+                  value={titleStyle.animationDurationSec}
+                  min={0}
+                  max={1.5}
+                  step={0.05}
+                  onChange={(_, v) => setTitleStyle((prev) => ({ ...prev, animationDurationSec: v as number }))}
+                />
+              </Box>
+            )}
+
+            {settingsTab === 3 && (
+              <Box sx={{ width: "100%", maxWidth: 600, margin: "0 auto", py: 1 }}>
+                <Typography variant="body2" sx={{ mb: 2, textAlign: "center", fontWeight: 500 }}>
+                  {t("subtitle.title")}
+                </Typography>
+                <Box sx={{ display: "flex", gap: 1, alignItems: "center", flexWrap: "wrap", mb: 1.5 }}>
+                  <Button variant="outlined" component="label" size="small">
+                    {t("subtitle.selectSrt")}
+                    <input type="file" accept=".srt,text/plain" onChange={subtitleLoad} hidden />
+                  </Button>
+                  <Typography variant="caption" color="textSecondary">
+                    {subtitleFileName || t("dropZone.unselected")}
+                  </Typography>
+                </Box>
+                <Box
+                  sx={{
+                    border: "1px dashed",
+                    borderColor: "divider",
+                    borderRadius: 1,
+                    p: 1.2,
+                    mb: 1.5,
+                    fontSize: 12,
+                    color: "text.secondary",
+                  }}
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={async (e) => {
+                    e.preventDefault();
+                    const f = Array.from(e.dataTransfer.files).find((x) => isSrtFileByName(x.name));
+                    if (!f) {
+                      openSnackBar(t("snackbar.subtitleTypeNotSupported"));
+                      return;
+                    }
+                    await loadSubtitleFile(f);
+                  }}
+                >
+                  {t("subtitle.dropSrt")}
+                </Box>
+                <FormControlLabel
+                  control={<Switch checked={subtitleEnabled} onChange={(_, c) => setSubtitleEnabled(c)} size="small" />}
+                  label={t("subtitle.enabled")}
+                  sx={{ mb: 1.5, display: "flex", alignItems: "center" }}
+                />
+                <Typography gutterBottom>{t("subtitle.positionY", { value: subtitleStyle.positionYPercent.toFixed(0) })}</Typography>
+                <Slider
+                  value={subtitleStyle.positionYPercent}
+                  min={5}
+                  max={98}
+                  step={1}
+                  onChange={(_, v) => setSubtitleStyle((prev) => ({ ...prev, positionYPercent: v as number }))}
+                />
+                <FormControl size="small" fullWidth sx={{ mt: 1.5, mb: 1.5 }}>
+                  <InputLabel>{t("subtitle.align")}</InputLabel>
+                  <Select
+                    value={subtitleStyle.align}
+                    label={t("subtitle.align")}
+                    onChange={(e) =>
+                      setSubtitleStyle((prev) => ({ ...prev, align: e.target.value as SubtitleStyle["align"] }))
+                    }
+                  >
+                    <MenuItem value="left">{t("subtitle.alignLeft")}</MenuItem>
+                    <MenuItem value="center">{t("subtitle.alignCenter")}</MenuItem>
+                    <MenuItem value="right">{t("subtitle.alignRight")}</MenuItem>
+                  </Select>
+                </FormControl>
+                <FormControl size="small" fullWidth sx={{ mb: 1.5 }}>
+                  <InputLabel>{t("subtitle.displayType")}</InputLabel>
+                  <Select
+                    value={subtitleStyle.displayType}
+                    label={t("subtitle.displayType")}
+                    onChange={(e) =>
+                      setSubtitleStyle((prev) => ({ ...prev, displayType: e.target.value as SubtitleStyle["displayType"] }))
+                    }
+                  >
+                    <MenuItem value="plain">{t("subtitle.typePlain")}</MenuItem>
+                    <MenuItem value="outline">{t("subtitle.typeOutline")}</MenuItem>
+                    <MenuItem value="boxed">{t("subtitle.typeBoxed")}</MenuItem>
+                  </Select>
+                </FormControl>
+                <Typography gutterBottom>{t("subtitle.fontSize", { value: subtitleStyle.fontSize.toFixed(0) })}</Typography>
+                <Slider
+                  value={subtitleStyle.fontSize}
+                  min={12}
+                  max={96}
+                  step={1}
+                  onChange={(_, v) => setSubtitleStyle((prev) => ({ ...prev, fontSize: v as number }))}
+                />
+                <FormControl size="small" fullWidth sx={{ mt: 1.5, mb: 1.5 }}>
+                  <InputLabel>{t("subtitle.fontFamily")}</InputLabel>
+                  <Select
+                    value={subtitleStyle.fontFamily}
+                    label={t("subtitle.fontFamily")}
+                    onChange={(e) => setSubtitleStyle((prev) => ({ ...prev, fontFamily: String(e.target.value) }))}
+                  >
+                    <MenuItem value="sans-serif">sans-serif</MenuItem>
+                    <MenuItem value="serif">serif</MenuItem>
+                    <MenuItem value="monospace">monospace</MenuItem>
+                    <MenuItem value="'Noto Sans JP', sans-serif">Noto Sans JP</MenuItem>
+                  </Select>
+                </FormControl>
+                <Box sx={{ display: "flex", gap: 2, mb: 1.5 }}>
+                  <FormControlLabel
+                    control={
+                      <Switch
+                        checked={subtitleStyle.bold}
+                        onChange={(_, c) => setSubtitleStyle((p) => ({ ...p, bold: c }))}
+                        size="small"
+                      />
+                    }
+                    label={t("subtitle.bold")}
+                  />
+                  <FormControlLabel
+                    control={
+                      <Switch
+                        checked={subtitleStyle.italic}
+                        onChange={(_, c) => setSubtitleStyle((p) => ({ ...p, italic: c }))}
+                        size="small"
+                      />
+                    }
+                    label={t("subtitle.italic")}
+                  />
+                </Box>
+                <TextField
+                  size="small"
+                  fullWidth
+                  label={t("subtitle.color")}
+                  value={subtitleStyle.color}
+                  onChange={(e) => setSubtitleStyle((p) => ({ ...p, color: normalizeHexColorInput(e.target.value) }))}
+                  sx={{ mb: 1.5 }}
+                />
+                <TextField
+                  size="small"
+                  fullWidth
+                  label={t("subtitle.strokeColor")}
+                  value={subtitleStyle.strokeColor}
+                  onChange={(e) => setSubtitleStyle((p) => ({ ...p, strokeColor: normalizeHexColorInput(e.target.value) }))}
+                  sx={{ mb: 1.5 }}
+                />
+                <Typography gutterBottom>{t("subtitle.strokeWidth", { value: subtitleStyle.strokeWidth.toFixed(1) })}</Typography>
+                <Slider
+                  value={subtitleStyle.strokeWidth}
+                  min={0}
+                  max={12}
+                  step={0.5}
+                  onChange={(_, v) => setSubtitleStyle((prev) => ({ ...prev, strokeWidth: v as number }))}
+                />
+                <FormControl size="small" fullWidth sx={{ mt: 1.5, mb: 1.5 }}>
+                  <InputLabel>{t("subtitle.animationType")}</InputLabel>
+                  <Select
+                    value={subtitleStyle.animationType}
+                    label={t("subtitle.animationType")}
+                    onChange={(e) =>
+                      setSubtitleStyle((prev) => ({ ...prev, animationType: e.target.value as SubtitleStyle["animationType"] }))
+                    }
+                  >
+                    <MenuItem value="none">{t("subtitle.animNone")}</MenuItem>
+                    <MenuItem value="fade">{t("subtitle.animFade")}</MenuItem>
+                    <MenuItem value="slideUp">{t("subtitle.animSlideUp")}</MenuItem>
+                    <MenuItem value="pop">{t("subtitle.animPop")}</MenuItem>
+                  </Select>
+                </FormControl>
+                <Typography gutterBottom>
+                  {t("subtitle.animationDuration", { value: subtitleStyle.animationDurationSec.toFixed(2) })}
+                </Typography>
+                <Slider
+                  value={subtitleStyle.animationDurationSec}
+                  min={0}
+                  max={1.5}
+                  step={0.05}
+                  onChange={(_, v) => setSubtitleStyle((prev) => ({ ...prev, animationDurationSec: v as number }))}
+                />
+              </Box>
+            )}
+
+            {settingsTab === 4 && (
+              <Box sx={{ width: "100%", maxWidth: 600, margin: "0 auto", py: 1 }}>
                 <Typography variant="subtitle2" sx={{ mb: 2, fontWeight: 600 }}>
                   {t("audioSettings.title")}
                 </Typography>
@@ -3155,7 +3929,7 @@ const Home: NextPage = () => {
               </Box>
             )}
 
-            {settingsTab === 3 && (
+            {settingsTab === 5 && (
               <div className={styles.effectButtons} style={{ paddingTop: 8 }}>
                 <Typography variant="body2" sx={{ mb: 1, textAlign: "center", fontWeight: 500 }}>
                   {t("shortOutput.title")}
@@ -3236,7 +4010,7 @@ const Home: NextPage = () => {
               </div>
             )}
 
-            {settingsTab === 4 && (
+            {settingsTab === 6 && (
               <Box sx={{ width: "100%", maxWidth: 800, margin: "0 auto", py: 1 }}>
                 <Typography variant="subtitle2" color="primary" sx={{ mb: 1 }}>
                   {t("resolution.title")}
@@ -3402,35 +4176,6 @@ const Home: NextPage = () => {
                       </Typography>
                     </Box>
                   )}
-                  <Typography variant="body1" gutterBottom fontWeight={500}>
-                    {t("gpu.renderEngine")}
-                  </Typography>
-                  <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 1 }}>
-                    {t("gpu.renderCaption")}
-                  </Typography>
-                  <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
-                    <Button
-                      variant={rendererType === "canvas2d" ? "contained" : "outlined"}
-                      onClick={() => {
-                        setRendererType("canvas2d");
-                        localStorage.setItem("common_rendererType", "canvas2d");
-                      }}
-                      size="small"
-                    >
-                      {t("buttons.canvas2d")}
-                    </Button>
-                    <Button
-                      variant={rendererType === "webgl" ? "contained" : "outlined"}
-                      onClick={() => {
-                        setRendererType("webgl");
-                        localStorage.setItem("common_rendererType", "webgl");
-                      }}
-                      size="small"
-                      disabled={!gpuInfo?.isWebGLSupported}
-                    >
-                      {t("buttons.webgl")}
-                    </Button>
-                  </Box>
                 </Box>
                 <Divider sx={{ my: 2 }} />
                 <Typography variant="subtitle2" color="primary" sx={{ mb: 1 }}>
