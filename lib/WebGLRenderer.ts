@@ -13,6 +13,7 @@ import {
   glycoAdjustedLevel,
   GLYCO_BAR_VERTICAL_SCALE,
   SPECTRUM_THROTTLE_TARGET_FPS,
+  spectrumLinearBarLowGain,
 } from './Canvas';
 import {
   updateAndGetSpaceParticles,
@@ -1494,7 +1495,8 @@ function drawMode0(
   const b = pb / 255;
 
   for (let i = 0; i < barsLength; i++) {
-    const barHeight = bufferData[i];
+    const g = spectrumLinearBarLowGain(i, barsLength);
+    const barHeight = Math.min(255, bufferData[i] * g);
     const y = canvasHeight - barHeight;
 
     // 4つの角の座標を変換

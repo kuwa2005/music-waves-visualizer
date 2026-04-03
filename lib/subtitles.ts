@@ -125,7 +125,7 @@ export const DEFAULT_TITLE_STYLE: TitleStyle = {
   positionYPercent: 12,
   fontSize: 52,
   displayType: "outline",
-  animationType: "fade",
+  animationType: "none",
   animationDurationSec: 0.35,
   letterSpacingPx: 0,
 };

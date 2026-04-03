@@ -154,6 +154,8 @@ export function getSpectrumSecondaryRgb(settings: SpectrumSettings): [number, nu
 
 /** 対数マップの上限ビン（ナイキストのこの割合まで）。それ以上は音楽では無音に近く右端が死にやすい */
 const GLYCO_LOG_BIN_MAX_FRAC = 0.66;
+/** 対数マップの下限 FFT ビン（DC～超低域はエネルギーが張り付きやすいので参照開始を少し上げる） */
+const GLYCO_LOG_MIN_BIN = 5;
 
 /**
  * グライコ風（モード6）: バー index を FFT ビンへ対数周波数で対応付け。
@@ -163,12 +165,34 @@ export function glycoBarToFftBin(i: number, barsLength: number, bufferLength: nu
   if (bufferLength < 2 || barsLength < 1) return 0;
   if (barsLength === 1) return Math.min(1, bufferLength - 1);
   const t = i / (barsLength - 1);
-  const minB = 1;
-  const maxB = Math.max(minB + 2, Math.floor((bufferLength - 1) * GLYCO_LOG_BIN_MAX_FRAC));
+  const maxB = Math.max(3, Math.floor((bufferLength - 1) * GLYCO_LOG_BIN_MAX_FRAC));
+  const minB = Math.max(1, Math.min(GLYCO_LOG_MIN_BIN, maxB - 2));
   const lnLo = Math.log(minB);
   const lnHi = Math.log(maxB);
   const b = Math.exp(lnLo + t * (lnHi - lnLo));
   return Math.min(maxB, Math.max(0, Math.floor(b)));
+}
+
+/**
+ * 左端（低音寄り）バーの張り付きを抑える感度 0..1（対数マップのモード3/4/6 等で glycoBarRawEnergy の後に掛ける想定）。
+ */
+export function glycoLowBandGain(barIndex: number, barsLength: number): number {
+  if (barsLength < 2) return 1;
+  const t = barIndex / (barsLength - 1);
+  const u = Math.max(0, Math.min(1, (t - 0.05) / 0.2));
+  const s = u * u * (3 - 2 * u);
+  return 0.5 + 0.5 * s;
+}
+
+/**
+ * モード0の線形ビン用。index が小さいほど超低域＝値が張り付きやすいので感度を下げる。
+ */
+export function spectrumLinearBarLowGain(i: number, barsLength: number): number {
+  if (barsLength < 2) return 1;
+  const t = i / (barsLength - 1);
+  const u = Math.max(0, Math.min(1, (t - 0.008) / 0.12));
+  const s = u * u * (3 - 2 * u);
+  return 0.45 + 0.55 * s;
 }
 
 /**
@@ -181,17 +205,20 @@ export function glycoBarRawEnergy(
   bufferData: Uint8Array
 ): number {
   const c = glycoBarToFftBin(i, barsLength, bufferLength);
+  let m: number;
   if (i < barsLength - 5) {
-    return bufferData[c];
-  }
-  let m = bufferData[c];
-  for (let d = -2; d <= 2; d++) {
-    const idx = c + d;
-    if (idx >= 0 && idx < bufferLength) {
-      m = Math.max(m, bufferData[idx]);
+    m = bufferData[c];
+  } else {
+    m = bufferData[c];
+    for (let d = -2; d <= 2; d++) {
+      const idx = c + d;
+      if (idx >= 0 && idx < bufferLength) {
+        m = Math.max(m, bufferData[idx]);
+      }
     }
   }
-  return m;
+  const g = glycoLowBandGain(i, barsLength);
+  return Math.min(255, m * g);
 }
 
 /**
@@ -504,7 +531,8 @@ export const drawBars = (
     const barWidth = canvasWidth / barsLength;
     let barX = 0;
     for (let i = 0; i < barsLength; i++) {
-      const barHeight = bufferData[i];
+      const g = spectrumLinearBarLowGain(i, barsLength);
+      const barHeight = Math.min(255, bufferData[i] * g);
       ctx.fillRect(barX, canvasHeight - barHeight, barWidth, barHeight);
       barX += canvasWidth / barsLength;
     }

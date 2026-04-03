@@ -109,8 +109,8 @@
     "niconico": "Niconico",
     "startSec": "Start (sec)",
     "durationSec": "Duration (sec)",
-    "durationPlaceholder": "Empty = max {{max}}s",
-    "hint": "Max {{max}}s for this preset. Preview and recording run from the start position for the set duration."
+    "durationPlaceholder": "Empty = from start to end of media",
+    "hint": "YouTube / TikTok / Niconico buttons only fill a suggested duration. Preview and recording follow Start and Duration (empty duration = to end of media)."
   },
   "subtitle": {
     "title": "Subtitles (SRT)",

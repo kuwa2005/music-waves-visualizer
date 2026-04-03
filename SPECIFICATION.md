@@ -11,7 +11,8 @@ Music Waves Visualizer is a web application that creates audio waveform videos b
 - **Real-time waveform**: Seven internal modes; **five plus OFF** are exposed in the UI (modes 1 and 5 hidden)
 - **Resolution**: Manual (1920×1080, 1080×1920, 1920×1920) + **Auto** (detect from loaded image aspect ratio and map to 16:9 / 9:16 / 1:1)
 - **Display adjustment**: Scale and position per mode (saved per resolved layout)
-- **Clip length limit (short platforms)**: Preview/recording can be limited to a time window with presets: **YouTube (60s)**, **TikTok (60s)**, **NicoNico (300s)**.
+- **Clip length limit (short platforms)**: When enabled, **Start (sec)** and **Duration (sec)** define the preview/recording window. Preset buttons only **fill suggested durations**; they do not hard-cap playback. **Empty duration** = play from start **to end of media**.
+- **Client persistence**: Most settings use **first-party cookies** (`SameSite=Lax`), with one-time migration from legacy **localStorage** keys. **Not persisted**: loaded media files, **title body text**, **SRT file content** (subtitle/title style toggles may be saved).
 - **Preview**: Real-time waveform while playing
 - **Video generation**: Record and output as MP4
 
@@ -56,9 +57,9 @@ Effects are shown during preview/recording only. Strength: weak / medium / stron
 
 ## 4. Settings UI
 
-- Tab order: **Spectrum Analyzer / Effects / Audio / Clip Length / Settings**
+- Tab order: **Spectrum Analyzer / Effects / Audio / Subtitles / Title / Clip Length / Settings** (labels depend on locale)
 - Spectrum and effect adjustment sections are collapsible (default collapsed)
-- Resolution controls are located in **Settings** tab
+- Resolution controls are located in **Settings** tab; the chosen preset (including **Auto** resolved to 16:9 / 9:16 / 1:1) is persisted
 
 ## 5. Settings Export/Import
 

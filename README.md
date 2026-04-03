@@ -22,9 +22,10 @@ Static build with SEO-friendly absolute URLs for that host: `npm run build:html:
 - **Auto image scaling**: Loaded images are scaled to recommended resolution (1920×1080, etc.) with aspect ratio preserved
 - **Spectrum analyzer**: OFF plus **5 selectable styles** in the UI (frequency bars, circle, symmetric bars, dots, glyco). *Line (mode 1) and symmetric waveform (mode 5) remain in the engine but are hidden from the toolbar; old saved sessions using those modes fall back to frequency bars.*
 - **Resolution mode**: Manual (1920×1080 / 1080×1920 / 1920×1920) and **Auto** (detect from loaded image aspect ratio as 16:9 / 9:16 / 1:1)
-- **Clip length limit (short platforms)**: For preview/recording you can limit playback to a window with presets: **YouTube (60s)**, **TikTok (60s)**, **NicoNico (300s)**. Playback starts at the specified start position and ends after the specified duration.
-- **Settings tabs**: Spectrum Analyzer / Effects / Audio / Clip Length / Settings
-- **Display & volume settings**: Scale/position adjustment (saved per layout), target LUFS (YouTube -14, NicoNico -15, custom)
+- **Clip length limit (short platforms)**: When enabled, preview/recording use **Start (sec)** and **Duration (sec)**. Preset buttons (YouTube / TikTok / NicoNico) only **suggest** a duration in the field; they do not cap playback. **Empty duration** = play from start **to end of media**.
+- **Settings tabs**: Spectrum Analyzer / Effects / Audio / Subtitles / Title / Clip Length / Settings (exact labels depend on locale)
+- **Display & volume settings**: Scale/position per **resolved layout × spectrum mode** (persisted), target LUFS (YouTube -14, NicoNico -15, custom, **off** stored explicitly)
+- **Client persistence**: Most settings are saved in **first-party browser cookies** (with migration from older `localStorage` keys on first visit). **Not persisted**: loaded image/music files, **title text**, **SRT file content** (styles and toggles for subtitles/title are saved).
 - **Effects**: Space (select type 1/2/3 in parameter panel), vignette, rainbow, curtain, sparkle (きらきら), dust (atmosphere), rain, snow. Shown during preview/recording only. Per-effect strength (weak/medium/strong). Sparkle/dust use compact rendering (no large radial glow halos)
 - **Preview**: Real-time waveform display while playing music
 - **Video generation**: MP4 output
@@ -67,7 +68,7 @@ See [README_DOCKER.md](./README_DOCKER.md) for details.
 npm run build:html
 ```
 
-- The generated `visualizer/` is a **static HTML build** (Next.js `next export` output).
+- The generated `visualizer/` is a **static HTML build** (Next.js `next export`; CLI may print deprecation / static-export notices — see [docs/BUILD.md](./docs/BUILD.md)).
 - Default config uses **`/visualizer` path**. Upload to the server's `visualizer` directory.
   - Example: Place `index.html`, `_next/`, `.htaccess` in `public_html/visualizer/`
 - For custom paths, see [HTML_HOSTING.md](./HTML_HOSTING.md).

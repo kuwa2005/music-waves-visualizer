@@ -83,10 +83,13 @@ import {
   type SubtitleStyle,
   type TitleStyle,
 } from "../lib/subtitles";
+import { mwvGetItem, mwvSetItem, mwvRemoveItem } from "../lib/mwvCookieStorage";
 
 type ShortOutputPreset = "all" | "tiktok" | "youtube" | "niconico";
 type ResolvedClip = { full: true } | { full: false; start: number; duration: number };
 const MODE_COOKIE_KEY = "mwv_mode";
+/** Cookie 上で targetLufs === null（正規化オフ）を表す */
+const TARGET_LUFS_NONE_COOKIE = "__none__";
 const JP_DEFAULT_FONT_FAMILY = "'Noto Sans JP', sans-serif";
 const isJapaneseLang = (lng: string | undefined | null): boolean => {
   const s = (lng ?? "").toLowerCase();
@@ -117,12 +120,6 @@ function getCookieValue(name: string): string | null {
 function setCookieValue(name: string, value: string, maxAgeSec: number): void {
   if (typeof document === "undefined") return;
   document.cookie = `${name}=${encodeURIComponent(value)}; path=/; max-age=${maxAgeSec}; samesite=lax`;
-}
-
-function getShortPlatformMaxSec(p: ShortOutputPreset): number {
-  if (p === "tiktok" || p === "youtube") return 60;
-  if (p === "niconico") return 300;
-  return Infinity;
 }
 
 const hasWindow = () => {
@@ -261,17 +258,17 @@ const Home: NextPage = () => {
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (!isJapaneseLang(i18n.language)) return;
-    const hasSavedSubtitleStyle = localStorage.getItem("common_subtitleStyle") != null;
-    const hasSavedTitleStyle = localStorage.getItem("common_titleStyle") != null;
+    const hasSavedSubtitleStyle = mwvGetItem("common_subtitleStyle") != null;
+    const hasSavedTitleStyle = mwvGetItem("common_titleStyle") != null;
     if (!hasSavedSubtitleStyle && subtitleStyle.fontFamily === DEFAULT_SUBTITLE_STYLE.fontFamily) {
       const next = { ...subtitleStyle, fontFamily: JP_DEFAULT_FONT_FAMILY };
       setSubtitleStyle(next);
-      localStorage.setItem("common_subtitleStyle", JSON.stringify(next));
+      mwvSetItem("common_subtitleStyle", JSON.stringify(next));
     }
     if (!hasSavedTitleStyle && titleStyle.fontFamily === DEFAULT_TITLE_STYLE.fontFamily) {
       const next = { ...titleStyle, fontFamily: JP_DEFAULT_FONT_FAMILY };
       setTitleStyle(next);
-      localStorage.setItem("common_titleStyle", JSON.stringify(next));
+      mwvSetItem("common_titleStyle", JSON.stringify(next));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -347,7 +344,7 @@ const Home: NextPage = () => {
     process.env.NEXT_PUBLIC_DEV_MODE === "true";
 
   // Mode（セッション用、エクスポート対象外）
-  // 初期値は固定でハイドレーション一致（localStorageはuseEffectで読み込み）
+  // 初期値は固定でハイドレーション一致（Cookie は useLayoutEffect で読み込み）
   const [mode, setMode] = useState<number>(0);
 
   // Canvas Size（セッション用、エクスポート対象外）
@@ -517,36 +514,35 @@ const Home: NextPage = () => {
   const [targetLufsCustom, setTargetLufsCustom] = useState<string>("-14");
   useEffect(() => {
     if (typeof window === "undefined") return;
-    if (targetLufs != null) localStorage.setItem("common_targetLufs", String(targetLufs));
-    else localStorage.removeItem("common_targetLufs");
+    if (targetLufs != null) mwvSetItem("common_targetLufs", String(targetLufs));
+    else mwvSetItem("common_targetLufs", TARGET_LUFS_NONE_COOKIE);
   }, [targetLufs]);
 
   // 共通設定の保存（音量・エフェクト種類・各エフェクト強度・グライコ色・透過率）
   useEffect(() => {
     if (typeof window === "undefined") return;
-    localStorage.setItem("common_effectType", effectType);
-    localStorage.setItem("common_effectDensities", JSON.stringify(effectDensities));
-    localStorage.setItem("common_glycoColorSet", glycoColorSet);
-    localStorage.setItem("common_spectrumOpacityPercent", String(spectrumOpacityPercent));
-    localStorage.setItem("common_spectrumColorHex", spectrumColorHex);
-    localStorage.setItem("common_galleryTransitionMode", galleryTransitionMode);
-    localStorage.setItem("common_spaceParticleColor", spaceParticleColor);
-    localStorage.setItem("common_sparkleParticleColor", sparkleParticleColor);
-    localStorage.setItem("common_dustParticleColor", dustParticleColor);
-    localStorage.setItem("common_spectrumRainbowColorful", spectrumRainbowColorful ? "1" : "0");
-    localStorage.setItem(
+    mwvSetItem("common_effectType", effectType);
+    mwvSetItem("common_effectDensities", JSON.stringify(effectDensities));
+    mwvSetItem("common_glycoColorSet", glycoColorSet);
+    mwvSetItem("common_spectrumOpacityPercent", String(spectrumOpacityPercent));
+    mwvSetItem("common_spectrumColorHex", spectrumColorHex);
+    mwvSetItem("common_galleryTransitionMode", galleryTransitionMode);
+    mwvSetItem("common_spaceParticleColor", spaceParticleColor);
+    mwvSetItem("common_sparkleParticleColor", sparkleParticleColor);
+    mwvSetItem("common_dustParticleColor", dustParticleColor);
+    mwvSetItem("common_spectrumRainbowColorful", spectrumRainbowColorful ? "1" : "0");
+    mwvSetItem(
       "common_circleRotationRpm",
       circleRotationRpm == null ? "off" : String(Math.max(-10, Math.min(10, Math.round(circleRotationRpm))))
     );
-    localStorage.setItem("common_loudnessParamsByMode", JSON.stringify(loudnessParamsByMode));
-    localStorage.setItem("common_wmpTrailParamsByMode", JSON.stringify(wmpTrailParamsByMode));
-    localStorage.setItem("common_subtitleEnabled", subtitleEnabled ? "1" : "0");
-    localStorage.setItem("common_subtitleStyle", JSON.stringify(subtitleStyle));
-    localStorage.setItem("common_titleText", titleText);
-    localStorage.setItem("common_titleEnabled", titleEnabled ? "1" : "0");
-    localStorage.setItem("common_titleStyle", JSON.stringify(titleStyle));
-    localStorage.setItem("common_recordVideoBitrateMbps", String(recordVideoBitrateMbps));
-    localStorage.setItem("common_exportAudioBitrateKbps", String(exportAudioBitrateKbps));
+    mwvSetItem("common_loudnessParamsByMode", JSON.stringify(loudnessParamsByMode));
+    mwvSetItem("common_wmpTrailParamsByMode", JSON.stringify(wmpTrailParamsByMode));
+    mwvSetItem("common_subtitleEnabled", subtitleEnabled ? "1" : "0");
+    mwvSetItem("common_subtitleStyle", JSON.stringify(subtitleStyle));
+    mwvSetItem("common_titleEnabled", titleEnabled ? "1" : "0");
+    mwvSetItem("common_titleStyle", JSON.stringify(titleStyle));
+    mwvSetItem("common_recordVideoBitrateMbps", String(recordVideoBitrateMbps));
+    mwvSetItem("common_exportAudioBitrateKbps", String(exportAudioBitrateKbps));
   }, [
     effectType,
     effectDensities,
@@ -563,7 +559,6 @@ const Home: NextPage = () => {
     wmpTrailParamsByMode,
     subtitleEnabled,
     subtitleStyle,
-    titleText,
     titleEnabled,
     titleStyle,
     recordVideoBitrateMbps,
@@ -572,13 +567,37 @@ const Home: NextPage = () => {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    localStorage.setItem("common_rainWeather", JSON.stringify(rainWeather));
+    mwvSetItem("common_rainWeather", JSON.stringify(rainWeather));
   }, [rainWeather]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    localStorage.setItem("common_snowWeather", JSON.stringify(snowWeather));
+    mwvSetItem("common_snowWeather", JSON.stringify(snowWeather));
   }, [snowWeather]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    mwvSetItem("common_canvasSize", canvasSize);
+  }, [canvasSize]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    mwvSetItem("common_settingsTab", String(settingsTab));
+  }, [settingsTab]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    mwvSetItem("common_lineWidthWaveform", String(lineWidthWaveform));
+    mwvSetItem("common_lineWidthCircle", String(lineWidthCircle));
+    mwvSetItem("common_lineWidthSymWave", String(lineWidthSymWave));
+  }, [lineWidthWaveform, lineWidthCircle, lineWidthSymWave]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    mwvSetItem("common_shortOutputPreset", shortOutputPreset);
+    mwvSetItem("common_shortStartSecStr", shortStartSecStr);
+    mwvSetItem("common_shortDurationSecStr", shortDurationSecStr);
+  }, [shortOutputPreset, shortStartSecStr, shortDurationSecStr]);
 
   const detectCanvasLayoutFromImage = useCallback((image: HTMLImageElement | null): CanvasLayout => {
     if (!image || !(image.naturalWidth > 0) || !(image.naturalHeight > 0)) return "1920x1080";
@@ -625,7 +644,7 @@ const Home: NextPage = () => {
   const saveSettings = (layout: CanvasLayout, m: number, adjustments: ModeAdjustments) => {
     try {
       const key = getSettingsKey(layout, m);
-      localStorage.setItem(key, JSON.stringify(adjustments));
+      mwvSetItem(key, JSON.stringify(adjustments));
     } catch (error) {
       console.error("設定の保存に失敗しました:", error);
     }
@@ -642,18 +661,18 @@ const Home: NextPage = () => {
   const loadSettings = (layout: CanvasLayout, m: number): ModeAdjustments | null => {
     try {
       const key = getSettingsKey(layout, m);
-      const saved = localStorage.getItem(key);
+      const saved = mwvGetItem(key);
       if (saved) {
         return clampModeAdjustments(JSON.parse(saved) as ModeAdjustments);
       }
       // 旧形式のキー（mode_size）にも対応
       const legacyKey = `spectrumSettings_${m}_${layout}`;
-      const legacy = localStorage.getItem(legacyKey);
+      const legacy = mwvGetItem(legacyKey);
       if (legacy) {
         const parsed = JSON.parse(legacy) as ModeAdjustments;
         const clamped = clampModeAdjustments(parsed);
-        localStorage.setItem(key, JSON.stringify(clamped));
-        localStorage.removeItem(legacyKey);
+        mwvSetItem(key, JSON.stringify(clamped));
+        mwvRemoveItem(legacyKey);
         return clamped;
       }
     } catch (error) {
@@ -689,7 +708,6 @@ const Home: NextPage = () => {
         wmpTrailParamsByMode,
         subtitleEnabled,
         subtitleStyle,
-        titleText,
         titleEnabled,
         titleStyle,
         recordVideoBitrateMbps,
@@ -701,6 +719,16 @@ const Home: NextPage = () => {
         spaceParticleColor,
         sparkleParticleColor,
         dustParticleColor,
+        canvasSize,
+        settingsTab,
+        lineWidthWaveform,
+        lineWidthCircle,
+        lineWidthSymWave,
+        shortOutputPreset,
+        shortStartSecStr,
+        shortDurationSecStr,
+        galleryAutoEnabled,
+        galleryAutoSec,
       },
       spectrumSettings,
     };
@@ -710,7 +738,7 @@ const Home: NextPage = () => {
   // 全設定をクリア（インポート前の一括リセット用）
   const clearAllSettings = () => {
     LAYOUTS.forEach((layout) => {
-      [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16].forEach((m) => localStorage.removeItem(getSettingsKey(layout, m)));
+      [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16].forEach((m) => mwvRemoveItem(getSettingsKey(layout, m)));
     });
     [
       "common_targetLufs",
@@ -727,7 +755,6 @@ const Home: NextPage = () => {
       "common_wmpTrailParamsByMode",
       "common_subtitleEnabled",
       "common_subtitleStyle",
-      "common_titleText",
       "common_titleEnabled",
       "common_titleStyle",
       "common_galleryTransitionMode",
@@ -740,31 +767,42 @@ const Home: NextPage = () => {
       "common_snowWeather",
       "common_galleryAutoEnabled",
       "common_galleryAutoSec",
-    ].forEach((k) => localStorage.removeItem(k));
+      "common_canvasSize",
+      "common_settingsTab",
+      "common_lineWidthWaveform",
+      "common_lineWidthCircle",
+      "common_lineWidthSymWave",
+      "common_shortOutputPreset",
+      "common_shortStartSecStr",
+      "common_shortDurationSecStr",
+      "common_rendererType",
+    ].forEach((k) => mwvRemoveItem(k));
   };
 
   // 存在する項目のみ上書きインポート
   const importAllSettings = (jsonString: string): boolean => {
     try {
       const data = JSON.parse(jsonString);
+      /** common の canvasSize 反映後と同じ基準でスペアナ調整を読む（setState は非同期のため activeCanvasLayout は古いまま） */
+      let effectiveCanvasSizeForAdj: CanvasSize = canvasSize;
 
       // 新形式: common（存在する項目のみ上書き）
       if (data.common) {
         const c = data.common;
         if (c.targetLufs !== undefined) {
           if (c.targetLufs === null) {
-            localStorage.removeItem("common_targetLufs");
+            mwvSetItem("common_targetLufs", TARGET_LUFS_NONE_COOKIE);
             setTargetLufs(null);
             setTargetLufsCustom("");
           } else {
             const v = Number(c.targetLufs);
-            localStorage.setItem("common_targetLufs", String(v));
+            mwvSetItem("common_targetLufs", String(v));
             setTargetLufs(v);
             setTargetLufsCustom(v === -14 || v === -15 ? "" : String(v));
           }
         }
         if (c.effectType && VALID_SAVED_EFFECT_TYPES.includes(c.effectType)) {
-          localStorage.setItem("common_effectType", c.effectType);
+          mwvSetItem("common_effectType", c.effectType);
           setEffectType(c.effectType);
         }
         if (c.effectDensities && typeof c.effectDensities === "object") {
@@ -774,23 +812,23 @@ const Home: NextPage = () => {
               merged[t] = c.effectDensities[t];
             }
           });
-          localStorage.setItem("common_effectDensities", JSON.stringify(merged));
+          mwvSetItem("common_effectDensities", JSON.stringify(merged));
           setEffectDensities(merged);
         }
         if (c.glycoColorSet && (GLYCO_COLOR_SETS[c.glycoColorSet] || GLYCO_GRADIENT_SETS[c.glycoColorSet] || c.glycoColorSet === "verticalEQ" || c.glycoColorSet === "verticalEQFixed")) {
-          localStorage.setItem("common_glycoColorSet", c.glycoColorSet);
+          mwvSetItem("common_glycoColorSet", c.glycoColorSet);
           setGlycoColorSet(c.glycoColorSet);
         }
         if (c.spectrumOpacityPercent !== undefined) {
           const v = Number(c.spectrumOpacityPercent);
           if (!isNaN(v) && v >= 0 && v <= 100) {
-            localStorage.setItem("common_spectrumOpacityPercent", String(v));
+            mwvSetItem("common_spectrumOpacityPercent", String(v));
             setSpectrumOpacityPercent(v);
           }
         }
         if (typeof c.spectrumColorHex === "string" && /^#[0-9a-fA-F]{6}$/.test(c.spectrumColorHex)) {
           const hx = c.spectrumColorHex.toUpperCase();
-          localStorage.setItem("common_spectrumColorHex", hx);
+          mwvSetItem("common_spectrumColorHex", hx);
           setSpectrumColorHex(hx);
           setSpectrumColorInput(hx);
         } else if (c.spectrumColorPreset != null || typeof c.spectrumCustomHex === "string") {
@@ -798,7 +836,7 @@ const Home: NextPage = () => {
             c.spectrumColorPreset != null ? String(c.spectrumColorPreset) : "white",
             typeof c.spectrumCustomHex === "string" ? c.spectrumCustomHex : undefined
           );
-          localStorage.setItem("common_spectrumColorHex", migrated);
+          mwvSetItem("common_spectrumColorHex", migrated);
           setSpectrumColorHex(migrated);
           setSpectrumColorInput(migrated);
         }
@@ -807,13 +845,13 @@ const Home: NextPage = () => {
           isValidGalleryTransitionUserMode(String(c.galleryTransitionMode))
         ) {
           const gm = c.galleryTransitionMode as GalleryTransitionUserMode;
-          localStorage.setItem("common_galleryTransitionMode", gm);
+          mwvSetItem("common_galleryTransitionMode", gm);
           setGalleryTransitionMode(gm);
         }
         const applyParticle = (hex: unknown, storageKey: string, setter: (v: string) => void) => {
           if (typeof hex === "string" && /^#[0-9a-fA-F]{6}$/.test(hex)) {
             const u = hex.toUpperCase();
-            localStorage.setItem(storageKey, u);
+            mwvSetItem(storageKey, u);
             setter(u);
           }
         };
@@ -821,7 +859,7 @@ const Home: NextPage = () => {
         applyParticle(c.sparkleParticleColor, "common_sparkleParticleColor", setSparkleParticleColor);
         applyParticle(c.dustParticleColor, "common_dustParticleColor", setDustParticleColor);
         if (c.spectrumRainbowColorful === true || c.spectrumRainbowColorful === false) {
-          localStorage.setItem(
+          mwvSetItem(
             "common_spectrumRainbowColorful",
             c.spectrumRainbowColorful ? "1" : "0"
           );
@@ -829,13 +867,13 @@ const Home: NextPage = () => {
         }
         if (c.circleRotationRpm !== undefined) {
           if (c.circleRotationRpm === null || c.circleRotationRpm === "off") {
-            localStorage.setItem("common_circleRotationRpm", "off");
+            mwvSetItem("common_circleRotationRpm", "off");
             setCircleRotationRpm(null);
           } else {
             const n = Number(c.circleRotationRpm);
             if (!isNaN(n)) {
               const clamped = Math.max(-10, Math.min(10, Math.round(n)));
-              localStorage.setItem("common_circleRotationRpm", String(clamped));
+              mwvSetItem("common_circleRotationRpm", String(clamped));
               setCircleRotationRpm(clamped);
             }
           }
@@ -861,7 +899,7 @@ const Home: NextPage = () => {
               }
             }
           });
-          localStorage.setItem("common_loudnessParamsByMode", JSON.stringify(next));
+          mwvSetItem("common_loudnessParamsByMode", JSON.stringify(next));
           setLoudnessParamsByMode(next);
         }
         if (c.wmpTrailParamsByMode && typeof c.wmpTrailParamsByMode === "object") {
@@ -883,11 +921,11 @@ const Home: NextPage = () => {
               }
             }
           });
-          localStorage.setItem("common_wmpTrailParamsByMode", JSON.stringify(next));
+          mwvSetItem("common_wmpTrailParamsByMode", JSON.stringify(next));
           setWmpTrailParamsByMode(next);
         }
         if (c.subtitleEnabled === true || c.subtitleEnabled === false) {
-          localStorage.setItem("common_subtitleEnabled", c.subtitleEnabled ? "1" : "0");
+          mwvSetItem("common_subtitleEnabled", c.subtitleEnabled ? "1" : "0");
           setSubtitleEnabled(c.subtitleEnabled);
         }
         if (c.subtitleStyle && typeof c.subtitleStyle === "object") {
@@ -902,16 +940,14 @@ const Home: NextPage = () => {
             boxPadding: Math.max(0, Math.min(40, Number(s.boxPadding ?? DEFAULT_SUBTITLE_STYLE.boxPadding))),
             animationDurationSec: Math.max(0, Math.min(1.5, Number(s.animationDurationSec ?? DEFAULT_SUBTITLE_STYLE.animationDurationSec))),
           };
-          localStorage.setItem("common_subtitleStyle", JSON.stringify(next));
+          mwvSetItem("common_subtitleStyle", JSON.stringify(next));
           setSubtitleStyle(next);
         }
         if (typeof c.titleText === "string") {
-          const tt = c.titleText.slice(0, 500);
-          localStorage.setItem("common_titleText", tt);
-          setTitleText(tt);
+          setTitleText(c.titleText.slice(0, 500));
         }
         if (c.titleEnabled === true || c.titleEnabled === false) {
-          localStorage.setItem("common_titleEnabled", c.titleEnabled ? "1" : "0");
+          mwvSetItem("common_titleEnabled", c.titleEnabled ? "1" : "0");
           setTitleEnabled(c.titleEnabled);
         }
         if (c.titleStyle && typeof c.titleStyle === "object") {
@@ -920,30 +956,30 @@ const Home: NextPage = () => {
             ...DEFAULT_TITLE_STYLE,
             ...s,
             positionYPercent: Math.max(5, Math.min(98, Number(s.positionYPercent ?? DEFAULT_TITLE_STYLE.positionYPercent))),
-            fontSize: Math.max(12, Math.min(120, Number(s.fontSize ?? DEFAULT_TITLE_STYLE.fontSize))),
+            fontSize: Math.max(12, Math.min(200, Number(s.fontSize ?? DEFAULT_TITLE_STYLE.fontSize))),
             strokeWidth: Math.max(0, Math.min(12, Number(s.strokeWidth ?? DEFAULT_TITLE_STYLE.strokeWidth))),
             shadowBlur: Math.max(0, Math.min(40, Number(s.shadowBlur ?? DEFAULT_TITLE_STYLE.shadowBlur))),
             boxPadding: Math.max(0, Math.min(40, Number(s.boxPadding ?? DEFAULT_TITLE_STYLE.boxPadding))),
             animationDurationSec: Math.max(0, Math.min(1.5, Number(s.animationDurationSec ?? DEFAULT_TITLE_STYLE.animationDurationSec))),
             letterSpacingPx: Math.max(0, Math.min(24, Number(s.letterSpacingPx ?? DEFAULT_TITLE_STYLE.letterSpacingPx))),
           };
-          localStorage.setItem("common_titleStyle", JSON.stringify(next));
+          mwvSetItem("common_titleStyle", JSON.stringify(next));
           setTitleStyle(next);
         }
         if (c.recordVideoBitrateMbps !== undefined) {
           const n = Number(c.recordVideoBitrateMbps);
           if (!isNaN(n) && n >= 1 && n <= 40) {
-            localStorage.setItem("common_recordVideoBitrateMbps", String(n));
+            mwvSetItem("common_recordVideoBitrateMbps", String(n));
             setRecordVideoBitrateMbps(n);
           }
         }
         if (c.exportAudioBitrateKbps === 128 || c.exportAudioBitrateKbps === 192 || c.exportAudioBitrateKbps === 256) {
-          localStorage.setItem("common_exportAudioBitrateKbps", String(c.exportAudioBitrateKbps));
+          mwvSetItem("common_exportAudioBitrateKbps", String(c.exportAudioBitrateKbps));
           setExportAudioBitrateKbps(c.exportAudioBitrateKbps);
         }
         if (c.rendererType === "canvas2d" || c.rendererType === "webgl") {
           // 今後は Canvas2D 固定運用
-          localStorage.setItem("common_rendererType", "canvas2d");
+          mwvSetItem("common_rendererType", "canvas2d");
           setRendererType("canvas2d");
         }
         if (c.rainWeather && typeof c.rainWeather === "object") {
@@ -974,6 +1010,67 @@ const Home: NextPage = () => {
             });
           }
         }
+        if (
+          c.canvasSize === "auto" ||
+          c.canvasSize === "1920x1080" ||
+          c.canvasSize === "1080x1920" ||
+          c.canvasSize === "1920x1920"
+        ) {
+          mwvSetItem("common_canvasSize", c.canvasSize);
+          setCanvasSize(c.canvasSize);
+          effectiveCanvasSizeForAdj = c.canvasSize;
+        }
+        if (typeof c.settingsTab === "number" && c.settingsTab >= 0 && c.settingsTab <= 6) {
+          mwvSetItem("common_settingsTab", String(c.settingsTab));
+          setSettingsTab(c.settingsTab);
+        }
+        if (typeof c.lineWidthWaveform === "number") {
+          const n = c.lineWidthWaveform;
+          if (!isNaN(n)) {
+            const v = Math.max(1, Math.min(8, n));
+            mwvSetItem("common_lineWidthWaveform", String(v));
+            setLineWidthWaveform(v);
+          }
+        }
+        if (typeof c.lineWidthCircle === "number") {
+          const n = c.lineWidthCircle;
+          if (!isNaN(n)) {
+            const v = Math.max(1, Math.min(8, n));
+            mwvSetItem("common_lineWidthCircle", String(v));
+            setLineWidthCircle(v);
+          }
+        }
+        if (typeof c.lineWidthSymWave === "number") {
+          const n = c.lineWidthSymWave;
+          if (!isNaN(n)) {
+            const v = Math.max(1, Math.min(8, n));
+            mwvSetItem("common_lineWidthSymWave", String(v));
+            setLineWidthSymWave(v);
+          }
+        }
+        if (c.shortOutputPreset === "all" || c.shortOutputPreset === "tiktok" || c.shortOutputPreset === "youtube" || c.shortOutputPreset === "niconico") {
+          mwvSetItem("common_shortOutputPreset", c.shortOutputPreset);
+          setShortOutputPreset(c.shortOutputPreset);
+        }
+        if (typeof c.shortStartSecStr === "string") {
+          mwvSetItem("common_shortStartSecStr", c.shortStartSecStr);
+          setShortStartSecStr(c.shortStartSecStr);
+        }
+        if (typeof c.shortDurationSecStr === "string") {
+          mwvSetItem("common_shortDurationSecStr", c.shortDurationSecStr);
+          setShortDurationSecStr(c.shortDurationSecStr);
+        }
+        if (c.galleryAutoEnabled === true || c.galleryAutoEnabled === false) {
+          mwvSetItem("common_galleryAutoEnabled", c.galleryAutoEnabled ? "1" : "0");
+          setGalleryAutoEnabled(c.galleryAutoEnabled);
+        }
+        if (typeof c.galleryAutoSec === "number") {
+          const n = c.galleryAutoSec;
+          if (!isNaN(n) && n >= 2 && n <= 60) {
+            mwvSetItem("common_galleryAutoSec", String(n));
+            setGalleryAutoSec(n);
+          }
+        }
       }
 
       // レイアウト別スペアナ設定
@@ -999,10 +1096,12 @@ const Home: NextPage = () => {
         const as = data.appSettings;
         if (as.targetLufs !== undefined) {
           if (as.targetLufs === null) {
+            mwvSetItem("common_targetLufs", TARGET_LUFS_NONE_COOKIE);
             setTargetLufs(null);
             setTargetLufsCustom("");
           } else {
             const v = Number(as.targetLufs);
+            mwvSetItem("common_targetLufs", String(v));
             setTargetLufs(v);
             setTargetLufsCustom(v === -14 || v === -15 ? "" : String(v));
           }
@@ -1048,7 +1147,8 @@ const Home: NextPage = () => {
         }
       });
 
-      const loaded = loadSettings(activeCanvasLayout, mode);
+      const layoutForImportAdj = resolveCanvasLayout(effectiveCanvasSizeForAdj, imageCtx);
+      const loaded = loadSettings(layoutForImportAdj, mode);
       setModeAdjustments(loaded ?? DEFAULT_ADJUSTMENTS);
       return true;
     } catch (error) {
@@ -1162,7 +1262,7 @@ const Home: NextPage = () => {
     setModeAdjustments(loaded ?? DEFAULT_ADJUSTMENTS);
   };
 
-  const getCanvasDimensions = (size: CanvasLayout): { width: number; height: number } => {
+  const getCanvasDimensions = useCallback((size: CanvasLayout): { width: number; height: number } => {
     switch (size) {
       case "1920x1080":
         return { width: 1920, height: 1080 };
@@ -1173,7 +1273,7 @@ const Home: NextPage = () => {
       default:
         return { width: 1920, height: 1080 };
     }
-  };
+  }, []);
 
   // Canvas
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -1181,6 +1281,12 @@ const Home: NextPage = () => {
   const [galleryIndex, setGalleryIndex] = useState(0);
   const [galleryAutoEnabled, setGalleryAutoEnabled] = useState(false);
   const [galleryAutoSec, setGalleryAutoSec] = useState(5);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    mwvSetItem("common_galleryAutoEnabled", galleryAutoEnabled ? "1" : "0");
+  }, [galleryAutoEnabled]);
+
   const galleryAutoTimerRef = useRef<number | null>(null);
   const galleryAutoPrevLenRef = useRef(0);
   const imageGalleryLenRef = useRef(0);
@@ -1248,7 +1354,7 @@ const Home: NextPage = () => {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    localStorage.setItem("common_galleryAutoSec", String(galleryAutoSec));
+    mwvSetItem("common_galleryAutoSec", String(galleryAutoSec));
   }, [galleryAutoSec]);
 
   useEffect(() => {
@@ -1290,8 +1396,8 @@ const Home: NextPage = () => {
     [canvasSize, imageCtx, resolveCanvasLayout]
   );
 
-  // マウント後にlocalStorageから設定を読み込み（ハイドレーション一致のためクライアントのみ）
-  useEffect(() => {
+  // マウント直後に Cookie から設定を読み込み（useLayoutEffect: 永続化用 useEffect より先に state を確定）
+  useLayoutEffect(() => {
     const savedModeCookie = getCookieValue(MODE_COOKIE_KEY);
     let modeVal = savedModeCookie ? parseInt(savedModeCookie, 10) : 0;
     // UI 非表示のモード（折れ線=1・波形上下対称=5）は周波数バーへ
@@ -1300,16 +1406,59 @@ const Home: NextPage = () => {
       setCookieValue(MODE_COOKIE_KEY, "0", 60 * 60 * 24 * 365);
     }
     setMode(modeVal);
-    // リロード時の初期値は常に自動判定ON
-    setCanvasSize("auto");
 
-    const savedEffectType = localStorage.getItem("common_effectType");
+    const savedCanvas = mwvGetItem("common_canvasSize");
+    if (
+      savedCanvas === "auto" ||
+      savedCanvas === "1920x1080" ||
+      savedCanvas === "1080x1920" ||
+      savedCanvas === "1920x1920"
+    ) {
+      setCanvasSize(savedCanvas as CanvasSize);
+    }
+
+    const savedSettingsTab = mwvGetItem("common_settingsTab");
+    if (savedSettingsTab != null) {
+      const n = parseInt(savedSettingsTab, 10);
+      if (!isNaN(n) && n >= 0 && n <= 6) setSettingsTab(n);
+    }
+
+    const lwW = mwvGetItem("common_lineWidthWaveform");
+    if (lwW != null) {
+      const n = parseFloat(lwW);
+      if (!isNaN(n)) setLineWidthWaveform(Math.max(1, Math.min(8, n)));
+    }
+    const lwC = mwvGetItem("common_lineWidthCircle");
+    if (lwC != null) {
+      const n = parseFloat(lwC);
+      if (!isNaN(n)) setLineWidthCircle(Math.max(1, Math.min(8, n)));
+    }
+    const lwS = mwvGetItem("common_lineWidthSymWave");
+    if (lwS != null) {
+      const n = parseFloat(lwS);
+      if (!isNaN(n)) setLineWidthSymWave(Math.max(1, Math.min(8, n)));
+    }
+
+    const sop = mwvGetItem("common_shortOutputPreset");
+    if (sop === "all" || sop === "tiktok" || sop === "youtube" || sop === "niconico") {
+      setShortOutputPreset(sop as ShortOutputPreset);
+    }
+    const ssStart = mwvGetItem("common_shortStartSecStr");
+    if (ssStart != null) setShortStartSecStr(ssStart);
+    const sds = mwvGetItem("common_shortDurationSecStr");
+    if (sds != null) setShortDurationSecStr(sds);
+
+    const gae = mwvGetItem("common_galleryAutoEnabled");
+    if (gae === "0") setGalleryAutoEnabled(false);
+    else if (gae === "1") setGalleryAutoEnabled(true);
+
+    const savedEffectType = mwvGetItem("common_effectType");
     if (savedEffectType && VALID_SAVED_EFFECT_TYPES.includes(savedEffectType as EffectType)) {
       setEffectType(savedEffectType as EffectType);
     }
 
     try {
-      const savedDensities = localStorage.getItem("common_effectDensities");
+      const savedDensities = mwvGetItem("common_effectDensities");
       if (savedDensities) {
         const parsed = JSON.parse(savedDensities) as Partial<Record<EffectType, EffectDensity>>;
         const result = defaultEffectDensities();
@@ -1320,61 +1469,61 @@ const Home: NextPage = () => {
       }
     } catch (_e) { /* ignore */ }
 
-    const savedGlyco = localStorage.getItem("common_glycoColorSet");
+    const savedGlyco = mwvGetItem("common_glycoColorSet");
     if (savedGlyco && (GLYCO_COLOR_SETS[savedGlyco] || GLYCO_GRADIENT_SETS[savedGlyco] || savedGlyco === "verticalEQ" || savedGlyco === "verticalEQFixed")) {
       setGlycoColorSet(savedGlyco);
     }
 
-    const savedOpacity = localStorage.getItem("common_spectrumOpacityPercent");
+    const savedOpacity = mwvGetItem("common_spectrumOpacityPercent");
     if (savedOpacity) {
       const n = parseInt(savedOpacity, 10);
       if (!isNaN(n) && n >= 0 && n <= 100) setSpectrumOpacityPercent(n);
     } else {
-      const oldOpacity = localStorage.getItem("common_spectrumOpacity");
+      const oldOpacity = mwvGetItem("common_spectrumOpacity");
       if (oldOpacity) {
         const o = parseFloat(oldOpacity);
         if (!isNaN(o) && o >= 0.1 && o <= 1) setSpectrumOpacityPercent(Math.round((1 - o) * 100));
       }
     }
 
-    const savedSpectrumHex = localStorage.getItem("common_spectrumColorHex");
+    const savedSpectrumHex = mwvGetItem("common_spectrumColorHex");
     if (savedSpectrumHex && /^#[0-9a-fA-F]{6}$/.test(savedSpectrumHex)) {
       const u = savedSpectrumHex.toUpperCase();
       setSpectrumColorHex(u);
       setSpectrumColorInput(u);
     } else {
-      const legacyPreset = localStorage.getItem("common_spectrumColorPreset");
-      const legacyCustom = localStorage.getItem("common_spectrumCustomHex");
+      const legacyPreset = mwvGetItem("common_spectrumColorPreset");
+      const legacyCustom = mwvGetItem("common_spectrumCustomHex");
       const migrated = legacySpectrumPresetToHex(legacyPreset ?? undefined, legacyCustom ?? undefined);
       setSpectrumColorHex(migrated);
       setSpectrumColorInput(migrated);
     }
-    const savedGalTransition = localStorage.getItem("common_galleryTransitionMode");
+    const savedGalTransition = mwvGetItem("common_galleryTransitionMode");
     if (savedGalTransition && isValidGalleryTransitionUserMode(savedGalTransition)) {
       setGalleryTransitionMode(savedGalTransition as GalleryTransitionUserMode);
     }
-    const savedSpaceC = localStorage.getItem("common_spaceParticleColor");
+    const savedSpaceC = mwvGetItem("common_spaceParticleColor");
     if (savedSpaceC && /^#[0-9a-fA-F]{6}$/.test(savedSpaceC)) {
       const u = savedSpaceC.toUpperCase();
       setSpaceParticleColor(u);
       setSpaceColorInput(u);
     }
-    const savedSparkleC = localStorage.getItem("common_sparkleParticleColor");
+    const savedSparkleC = mwvGetItem("common_sparkleParticleColor");
     if (savedSparkleC && /^#[0-9a-fA-F]{6}$/.test(savedSparkleC)) {
       const u = savedSparkleC.toUpperCase();
       setSparkleParticleColor(u);
       setSparkleColorInput(u);
     }
-    const savedDustC = localStorage.getItem("common_dustParticleColor");
+    const savedDustC = mwvGetItem("common_dustParticleColor");
     if (savedDustC && /^#[0-9a-fA-F]{6}$/.test(savedDustC)) {
       const u = savedDustC.toUpperCase();
       setDustParticleColor(u);
       setDustColorInput(u);
     }
-    const savedRainbow = localStorage.getItem("common_spectrumRainbowColorful");
+    const savedRainbow = mwvGetItem("common_spectrumRainbowColorful");
     if (savedRainbow === "0") setSpectrumRainbowColorful(false);
     else if (savedRainbow === "1") setSpectrumRainbowColorful(true);
-    const savedCircleRotation = localStorage.getItem("common_circleRotationRpm");
+    const savedCircleRotation = mwvGetItem("common_circleRotationRpm");
     if (savedCircleRotation != null) {
       if (savedCircleRotation === "off") {
         setCircleRotationRpm(null);
@@ -1387,7 +1536,7 @@ const Home: NextPage = () => {
     }
 
     try {
-      const savedLp = localStorage.getItem("common_loudnessParamsByMode");
+      const savedLp = mwvGetItem("common_loudnessParamsByMode");
       if (savedLp) {
         const parsed = JSON.parse(savedLp) as Record<string, LoudnessParams>;
         const next: Record<number, LoudnessParams> = {};
@@ -1413,7 +1562,7 @@ const Home: NextPage = () => {
       }
     } catch (_e) { /* ignore */ }
     try {
-      const savedWmp = localStorage.getItem("common_wmpTrailParamsByMode");
+      const savedWmp = mwvGetItem("common_wmpTrailParamsByMode");
       if (savedWmp) {
         const parsed = JSON.parse(savedWmp) as Record<string, WmpTrailParams>;
         const next: Record<number, WmpTrailParams> = {};
@@ -1436,11 +1585,11 @@ const Home: NextPage = () => {
         setWmpTrailParamsByMode(next);
       }
     } catch (_e) { /* ignore */ }
-    const savedSubEnabled = localStorage.getItem("common_subtitleEnabled");
+    const savedSubEnabled = mwvGetItem("common_subtitleEnabled");
     if (savedSubEnabled === "0") setSubtitleEnabled(false);
     else if (savedSubEnabled === "1") setSubtitleEnabled(true);
     try {
-      const savedSubStyle = localStorage.getItem("common_subtitleStyle");
+      const savedSubStyle = mwvGetItem("common_subtitleStyle");
       if (savedSubStyle) {
         const s = JSON.parse(savedSubStyle) as Partial<SubtitleStyle>;
         setSubtitleStyle({
@@ -1456,20 +1605,18 @@ const Home: NextPage = () => {
       }
     } catch (_e) { /* ignore */ }
 
-    const savedTitleText = localStorage.getItem("common_titleText");
-    if (savedTitleText != null) setTitleText(savedTitleText.slice(0, 500));
-    const savedTitleEnabled = localStorage.getItem("common_titleEnabled");
+    const savedTitleEnabled = mwvGetItem("common_titleEnabled");
     if (savedTitleEnabled === "0") setTitleEnabled(false);
     else if (savedTitleEnabled === "1") setTitleEnabled(true);
     try {
-      const savedTitleStyle = localStorage.getItem("common_titleStyle");
+      const savedTitleStyle = mwvGetItem("common_titleStyle");
       if (savedTitleStyle) {
         const s = JSON.parse(savedTitleStyle) as Partial<TitleStyle>;
         setTitleStyle({
           ...DEFAULT_TITLE_STYLE,
           ...s,
           positionYPercent: Math.max(5, Math.min(98, Number(s.positionYPercent ?? DEFAULT_TITLE_STYLE.positionYPercent))),
-          fontSize: Math.max(12, Math.min(120, Number(s.fontSize ?? DEFAULT_TITLE_STYLE.fontSize))),
+          fontSize: Math.max(12, Math.min(200, Number(s.fontSize ?? DEFAULT_TITLE_STYLE.fontSize))),
           strokeWidth: Math.max(0, Math.min(12, Number(s.strokeWidth ?? DEFAULT_TITLE_STYLE.strokeWidth))),
           shadowBlur: Math.max(0, Math.min(40, Number(s.shadowBlur ?? DEFAULT_TITLE_STYLE.shadowBlur))),
           boxPadding: Math.max(0, Math.min(40, Number(s.boxPadding ?? DEFAULT_TITLE_STYLE.boxPadding))),
@@ -1479,34 +1626,43 @@ const Home: NextPage = () => {
       }
     } catch (_e) { /* ignore */ }
 
-    const savedVidBr = localStorage.getItem("common_recordVideoBitrateMbps");
+    const savedVidBr = mwvGetItem("common_recordVideoBitrateMbps");
     if (savedVidBr) {
       const n = parseFloat(savedVidBr);
       if (!isNaN(n) && n >= 1 && n <= 40) setRecordVideoBitrateMbps(n);
     }
-    const savedAudBr = localStorage.getItem("common_exportAudioBitrateKbps");
+    const savedAudBr = mwvGetItem("common_exportAudioBitrateKbps");
     if (savedAudBr === "128" || savedAudBr === "192" || savedAudBr === "256") {
       setExportAudioBitrateKbps(Number(savedAudBr) as 128 | 192 | 256);
     }
 
-    localStorage.removeItem("common_galleryAutoEnabled");
+    const rawTl = mwvGetItem("common_targetLufs");
+    if (rawTl === TARGET_LUFS_NONE_COOKIE) {
+      setTargetLufs(null);
+      setTargetLufsCustom("");
+    } else if (rawTl != null && rawTl !== "") {
+      const v = Number(rawTl);
+      if (!isNaN(v)) {
+        setTargetLufs(v);
+        setTargetLufsCustom(v === -14 || v === -15 ? "" : String(v));
+      }
+    } else {
+      setTargetLufs(-14);
+      setTargetLufsCustom("-14");
+    }
 
-    const savedGalSec = localStorage.getItem("common_galleryAutoSec");
+    const savedGalSec = mwvGetItem("common_galleryAutoSec");
     if (savedGalSec) {
       const n = parseFloat(savedGalSec);
       if (!isNaN(n) && n >= 2 && n <= 60) setGalleryAutoSec(n);
     }
 
-    // リロード時の初期値は YouTube 推奨（-14 LUFS）
-    setTargetLufs(-14);
-    setTargetLufsCustom("-14");
-
     // 今後は Canvas2D 固定運用
-    localStorage.setItem("common_rendererType", "canvas2d");
+    mwvSetItem("common_rendererType", "canvas2d");
     setRendererType("canvas2d");
 
     try {
-      const rw = localStorage.getItem("common_rainWeather");
+      const rw = mwvGetItem("common_rainWeather");
       if (rw) {
         const p = JSON.parse(rw) as WeatherAdjust;
         if (
@@ -1524,7 +1680,7 @@ const Home: NextPage = () => {
     } catch (_e) { /* ignore */ }
 
     try {
-      const sw = localStorage.getItem("common_snowWeather");
+      const sw = mwvGetItem("common_snowWeather");
       if (sw) {
         const p = JSON.parse(sw) as WeatherAdjust;
         if (
@@ -1541,8 +1697,19 @@ const Home: NextPage = () => {
       }
     } catch (_e) { /* ignore */ }
 
-    const adj = loadSettings("1920x1080", modeVal);
+    // スペアナ表示調整はレイアウト×モード別に Cookie 保存。復元は保存済み canvasSize に合わせたレイアウトで行う（1920x1080 固定だと縦/正方形で常にズレる）
+    const canvasForAdj: CanvasSize =
+      savedCanvas === "auto" ||
+      savedCanvas === "1920x1080" ||
+      savedCanvas === "1080x1920" ||
+      savedCanvas === "1920x1920"
+        ? (savedCanvas as CanvasSize)
+        : "auto";
+    const layoutForAdj = resolveCanvasLayout(canvasForAdj, null);
+    const adj = loadSettings(layoutForAdj, modeVal);
     if (adj) setModeAdjustments(adj);
+
+    mwvRemoveItem("common_titleText");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1552,7 +1719,7 @@ const Home: NextPage = () => {
       const info = getGpuInfo();
       setGpuInfo(info);
 
-      localStorage.setItem("common_rendererType", "canvas2d");
+      mwvSetItem("common_rendererType", "canvas2d");
       setRendererType("canvas2d");
 
       const webCodecsAvailable = isWebCodecsSupported();
@@ -1573,7 +1740,7 @@ const Home: NextPage = () => {
       ((subtitleEnabled && subtitleCues.length > 0) || (titleEnabled && titleText.trim().length > 0))
     ) {
       setRendererType("canvas2d");
-      localStorage.setItem("common_rendererType", "canvas2d");
+      mwvSetItem("common_rendererType", "canvas2d");
       openSnackBar(t("snackbar.subtitleCanvasFallback"));
     }
   }, [rendererType, subtitleEnabled, subtitleCues.length, titleEnabled, titleText, openSnackBar, t]);
@@ -1592,7 +1759,7 @@ const Home: NextPage = () => {
     // キャンバスサイズ変更時に画像キャッシュをクリア（両方のレンダラー）
     clearImageCache();
     clearWebGLImageCache();
-  }, [activeCanvasLayout, rendererType]);
+  }, [activeCanvasLayout, rendererType, getCanvasDimensions]);
 
   // Canvas Animation
   useEffect(() => {
@@ -1855,7 +2022,7 @@ const Home: NextPage = () => {
       openSnackBar(t("snackbar.subtitleLoaded", { count: cues.length }));
       if (rendererType === "webgl") {
         setRendererType("canvas2d");
-        localStorage.setItem("common_rendererType", "canvas2d");
+        mwvSetItem("common_rendererType", "canvas2d");
         openSnackBar(t("snackbar.subtitleCanvasFallback"));
       }
     } catch (_e) {
@@ -1976,7 +2143,6 @@ const Home: NextPage = () => {
     if (!(mediaDur > 0)) {
       return { full: true };
     }
-    const maxPlat = getShortPlatformMaxSec(shortOutputPreset);
     let start = parseFloat(shortStartSecStr.replace(",", "."));
     if (!Number.isFinite(start)) {
       start = 0;
@@ -1984,12 +2150,12 @@ const Home: NextPage = () => {
     const durationParsed = parseFloat(shortDurationSecStr.replace(",", "."));
     let duration: number;
     if (!shortDurationSecStr.trim() || !Number.isFinite(durationParsed)) {
-      duration = Math.min(maxPlat, Math.max(0, mediaDur - start));
+      duration = Math.max(0, mediaDur - start);
     } else {
       duration = durationParsed;
     }
     start = Math.max(0, Math.min(start, mediaDur));
-    duration = Math.max(0, Math.min(duration, maxPlat, mediaDur - start));
+    duration = Math.max(0, Math.min(duration, mediaDur - start));
     return { full: false, start, duration };
   }, [shortOutputPreset, shortStartSecStr, shortDurationSecStr, getMediaDurationSec]);
 
@@ -3576,7 +3742,7 @@ const Home: NextPage = () => {
                 <Slider
                   value={titleStyle.fontSize}
                   min={12}
-                  max={120}
+                  max={200}
                   step={1}
                   onChange={(_, v) => setTitleStyle((prev) => ({ ...prev, fontSize: v as number }))}
                 />
@@ -3947,7 +4113,7 @@ const Home: NextPage = () => {
                     variant={shortOutputPreset === "youtube" ? "contained" : "outlined"}
                     onClick={() => {
                       setShortOutputPreset("youtube");
-                      setShortDurationSecStr("60");
+                      setShortDurationSecStr("180");
                     }}
                     size="small"
                     sx={{ height: 36 }}
@@ -3991,20 +4157,14 @@ const Home: NextPage = () => {
                     value={shortDurationSecStr}
                     onChange={(e) => setShortDurationSecStr(e.target.value)}
                     disabled={shortOutputPreset === "all"}
-                    placeholder={
-                      shortOutputPreset === "all"
-                        ? ""
-                        : t("shortOutput.durationPlaceholder", {
-                            max: getShortPlatformMaxSec(shortOutputPreset),
-                          })
-                    }
+                    placeholder={shortOutputPreset === "all" ? "" : t("shortOutput.durationPlaceholder")}
                     sx={{ width: 140, "& .MuiInputBase-root": { height: 36 } }}
                     inputProps={{ inputMode: "decimal" }}
                   />
                 </Box>
                 {shortOutputPreset !== "all" && (
                   <Typography variant="caption" color="textSecondary" display="block" sx={{ mt: 0.5, textAlign: "center" }}>
-                    {t("shortOutput.hint", { max: getShortPlatformMaxSec(shortOutputPreset) })}
+                    {t("shortOutput.hint")}
                   </Typography>
                 )}
               </div>
@@ -4232,8 +4392,6 @@ const Home: NextPage = () => {
                           reader.onload = () => {
                             const text = reader.result as string;
                             if (importAllSettings(text)) {
-                              const loaded = loadSettings(activeCanvasLayout, mode);
-                              setModeAdjustments(loaded ?? DEFAULT_ADJUSTMENTS);
                               openSnackBar(t("snackbar.importSuccess"));
                             } else {
                               openSnackBar(t("snackbar.importFailed"));

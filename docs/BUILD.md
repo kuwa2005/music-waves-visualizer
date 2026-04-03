@@ -35,6 +35,8 @@ node scripts/copy-ffmpeg-core.cjs
 | `npm run dev` | Next.js dev server (localhost) |
 | `npm run build` | Production build (standalone layout for Docker) |
 | `npm run build:html` | Static export → `visualizer/` for Apache/nginx hosting |
+
+`next export` may print **deprecation / “Static Export”** notices depending on Next.js version; the script remains the supported path for this repo. If the build warns about **Browserslist** being outdated, run `npx update-browserslist-db@latest` (optional; see [browserslist.dev](https://github.com/browserslist/update-db#readme)).
 | `npm run build:html:lil-la` | Same as `build:html` + `NEXT_PUBLIC_SITE_URL=https://lil.la`（[lil.la/visualizer](https://lil.la/visualizer/) 向け SEO メタ用） |
 | `npm run start` | Run production server after `npm run build` |
 | `npm run lint` | ESLint |

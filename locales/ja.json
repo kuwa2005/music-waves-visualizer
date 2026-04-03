@@ -109,8 +109,8 @@
     "niconico": "ニコニコ動画",
     "startSec": "開始位置（秒）",
     "durationSec": "秒数",
-    "durationPlaceholder": "空欄＝最大{{max}}秒",
-    "hint": "このプリセットでは最大{{max}}秒まで。プレビュー・録画とも開始位置から指定秒数で終了します。"
+    "durationPlaceholder": "空欄＝開始位置から末尾まで",
+    "hint": "YouTube / TikTok / ニコニコは秒数欄に目安を入れるだけです。プレビュー・録画の長さは開始位置と秒数が正（秒数が空のときは末尾まで）。"
   },
   "subtitle": {
     "title": "字幕（SRT）",
