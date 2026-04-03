@@ -89,4 +89,5 @@ Effects are shown during preview/recording only. Strength: weak / medium / stron
 
 - スペクトラムは内部で7モードあるが、**UI では OFF＋5種**（折れ線・波形上下対称のボタンは非表示。描画は残す）。
 - **きらきら**はラジアルグロウなし（星形のみ）。**空気感（ほこり）**は単色の小さな円で表現（Canvas/WebGL で方針を揃えた記述は上記）。
+- **設定の保存**は第一党 Cookie が主。クリップは開始＋長さで区間指定（長さ空欄＝末尾まで）。
 - 詳細は [仕様書.md](./仕様書.md) を参照。
