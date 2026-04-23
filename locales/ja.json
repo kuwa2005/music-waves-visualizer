@@ -285,6 +285,7 @@
     "recording": "動画を録画しています...",
     "convertComplete": "動画の変換が完了しました！",
     "convertFailed": "動画の変換に失敗しました: {{error}}",
+    "encodeCancelledWebm": "変換を中断し、録画済みの WebM をダウンロードしました（MP4 は未出力です）。",
     "imagesLoadedCount": "{{count}} 枚の画像を読み込みました",
     "cleared": "クリアしました",
     "exportSuccess": "設定をJSONファイルにエクスポートしました",

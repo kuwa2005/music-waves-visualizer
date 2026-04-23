@@ -447,17 +447,20 @@ export const drawBars = (
   const bgVideo = settings.backgroundVideo;
   if (galleryTransition) {
     drawGalleryBackground(ctx, canvasWidth, canvasHeight, imageCtx, galleryTransition);
-  } else if (bgVideo && bgVideo.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+  } else if (bgVideo) {
     settings.syncBackgroundVideo?.();
     const vw = bgVideo.videoWidth || 0;
     const vh = bgVideo.videoHeight || 0;
-    if (vw > 0 && vh > 0) {
+    const canDrawFrame =
+      bgVideo.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && vw > 0 && vh > 0;
+    if (canDrawFrame) {
       ctx.fillStyle = "rgba(34, 34, 34, 1.0)";
       ctx.fillRect(0, 0, canvasWidth, canvasHeight);
       drawVideoCover(ctx, bgVideo, canvasWidth, canvasHeight);
     } else if (settings.clearBackgroundTransparent) {
       ctx.clearRect(0, 0, canvasWidth, canvasHeight);
     } else {
+      // デコード準備中は静止画分岐に落ちないよう単色を維持（ちらつき防止）
       ctx.fillStyle = "rgba(34, 34, 34, 1.0)";
       ctx.fillRect(0, 0, canvasWidth, canvasHeight);
     }

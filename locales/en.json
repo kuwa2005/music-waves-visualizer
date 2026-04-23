@@ -285,6 +285,7 @@
     "recording": "Recording video...",
     "convertComplete": "Video conversion complete!",
     "convertFailed": "Video conversion failed: {{error}}",
+    "encodeCancelledWebm": "Conversion cancelled; downloaded recorded WebM (MP4 not produced).",
     "imagesLoadedCount": "Loaded {{count}} images",
     "cleared": "Cleared",
     "exportSuccess": "Settings exported to JSON",

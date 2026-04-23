@@ -13,7 +13,7 @@ For drag & drop rules in the UI, see [locales](../locales/) copy under `dropZone
 
 | Action | Behaviour |
 |--------|-----------|
-| **Choose image(s)** (replace) | Still images only, **or** **one** MP4 alone — not both in the same file dialog selection. |
+| **Choose image(s)** (replace) | Still images only, **or** **one** MP4 alone — not both in the same file dialog selection. The file input uses `accept` including `video/mp4` and common extensions so OS pickers offer MP4 (behaviour varies by browser). |
 | **Choose image(s)** + already **2+ gallery stills** + user picks **one** MP4 | Confirmation dialog: gallery is cleared, then that MP4 loads as background video. |
 | **Add image** | **Still images only.** Blocked while **video background** mode is active (clear or switch first). |
 | **Drag & drop** | Mixing stills and MP4 in one drop shows an error (neither is applied from that conflict). Multiple MP4s in one drop without stills: error for “video as music” side; see app logic. |

@@ -254,6 +254,10 @@ const Home: NextPage = () => {
   // エンコード進捗
   const [encodeStatus, setEncodeStatus] = useState<"idle" | "loading" | "converting">("idle");
   const [encodeProgress, setEncodeProgress] = useState<number>(0);
+  const encodeStatusRef = useRef<"idle" | "loading" | "converting">("idle");
+  /** MP4 変換中にユーザーが停止したとき、即ダウンロード用に保持 */
+  const pendingEncodeWebmRef = useRef<{ blob: Blob; fileName: string } | null>(null);
+  const encodeCancelRequestedRef = useRef(false);
 
   // GPU関連State
   const [gpuInfo, setGpuInfo] = useState<GpuInfo | null>(null);
@@ -370,6 +374,11 @@ const Home: NextPage = () => {
   const mediaElementSourceRef = useRef<MediaElementAudioSourceNode | null>(null);
   const playbackWindowTimerRef = useRef<number | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+
+  useEffect(() => {
+    encodeStatusRef.current = encodeStatus;
+  }, [encodeStatus]);
+
   const getCurrentPlaybackTimeSec = useCallback((): number => {
     if (!isPlaySound && !isRecording) return 0;
     const v = videoElementRef.current;
@@ -389,7 +398,9 @@ const Home: NextPage = () => {
     const t = getCurrentPlaybackTimeSec();
     const end = Math.max(0, v.duration - 0.04);
     const clamped = Math.min(Math.max(0, t), end);
-    if (Math.abs(v.currentTime - clamped) > 0.04) {
+    const drift = Math.abs(v.currentTime - clamped);
+    // シークを詰めすぎるとフレームがちらつくため、ある程度のズレまで許容
+    if (drift > 0.12) {
       try {
         v.currentTime = clamped;
       } catch {
@@ -2886,6 +2897,32 @@ const Home: NextPage = () => {
   const onPlaySound = () => {
     if (isPlaySound) {
       clearPlaybackWindowTimer();
+      // MediaRecorder を先に止めて partial WebM の stop イベントを発火させる
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
+        try {
+          mediaRecorderRef.current.stop();
+        } catch {
+          /* ignore */
+        }
+      }
+      // FFmpeg 変換中に停止した場合: 警告バーを下ろし、録画済み WebM を即ダウンロード
+      if (encodeStatusRef.current !== "idle") {
+        const pending = pendingEncodeWebmRef.current;
+        if (pending) {
+          encodeCancelRequestedRef.current = true;
+          const url = URL.createObjectURL(pending.blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = pending.fileName;
+          a.click();
+          a.remove();
+          window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+          pendingEncodeWebmRef.current = null;
+          openSnackBar(t("snackbar.encodeCancelledWebm"));
+        }
+        setEncodeStatus("idle");
+        setEncodeProgress(0);
+      }
       if (audioBufferSrcRef.current) {
         try {
           audioBufferSrcRef.current.stop(0);
@@ -2938,7 +2975,9 @@ const Home: NextPage = () => {
       openSnackBar(t("snackbar.canvasNotReady"));
       return;
     }
-    
+    encodeCancelRequestedRef.current = false;
+    pendingEncodeWebmRef.current = null;
+
     // 録画開始フラグを先に設定
     setIsRecording(true);
     
@@ -3034,11 +3073,34 @@ const Home: NextPage = () => {
         const webmName = movieName + ".webm";
         const mp4Name = movieName + ".mp4";
 
+        const webmBlob = new Blob(recordedBlobs, { type: recordedMimeType });
+        pendingEncodeWebmRef.current = { blob: webmBlob, fileName: webmName };
+
+        const clearPendingWebm = () => {
+          pendingEncodeWebmRef.current = null;
+        };
+
         try {
+          if (encodeCancelRequestedRef.current) {
+            setEncodeStatus("idle");
+            setEncodeProgress(0);
+            encodeCancelRequestedRef.current = false;
+            clearPendingWebm();
+            return;
+          }
+
           setEncodeStatus("loading");
           setEncodeProgress(0);
-          const webmBlob = new Blob(recordedBlobs, { type: recordedMimeType });
           const binaryData = new Uint8Array(await webmBlob.arrayBuffer());
+
+          if (encodeCancelRequestedRef.current) {
+            setEncodeStatus("idle");
+            setEncodeProgress(0);
+            encodeCancelRequestedRef.current = false;
+            clearPendingWebm();
+            return;
+          }
+
           const video = await generateMp4Video(
             binaryData,
             webmName,
@@ -3054,6 +3116,14 @@ const Home: NextPage = () => {
             targetLufs,
             exportAudioBitrateKbps
           );
+
+          if (encodeCancelRequestedRef.current) {
+            setEncodeStatus("idle");
+            encodeCancelRequestedRef.current = false;
+            clearPendingWebm();
+            return;
+          }
+
           setEncodeStatus("idle");
           const mp4Blob = new Blob([video], { type: "video/mp4" });
           const objectURL = URL.createObjectURL(mp4Blob);
@@ -3069,6 +3139,8 @@ const Home: NextPage = () => {
           openSnackBar(t("snackbar.convertFailed", { error: (error as Error).message }));
           setEncodeStatus("idle");
         } finally {
+          clearPendingWebm();
+          encodeCancelRequestedRef.current = false;
           setRecordMovieDisabled(false);
         }
       });
@@ -3302,7 +3374,7 @@ const Home: NextPage = () => {
                 {t("dropZone.selectImage")}
                 <input
                   type="file"
-                  accept="image/*"
+                  accept="image/*,video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov"
                   multiple
                   onChange={imageLoad}
                   hidden

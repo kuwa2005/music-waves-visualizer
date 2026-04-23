@@ -11,6 +11,11 @@
 - **Separate roles for MP4**: Music vs **single** background video; drag/drop and image-picker rules; optional second `<video>` when music is `AudioBuffer`; `drawVideoCover` + `syncBackgroundOnlyVideo`; WebGL → Canvas 2D fallback while video background is active ([#36](https://github.com/kuwa2005/music-waves-visualizer/issues/36)).
 - **Recording**: `recordMimePreference` (Settings → video quality); WebM `Blob` `type` matches `MediaRecorder.mimeType` ([#35](https://github.com/kuwa2005/music-waves-visualizer/issues/35) follow-up).
 
+### Fixed
+- **Image picker `accept`**: “Choose image(s)” includes `video/mp4` (and common video extensions) so MP4 is selectable in the system dialog.
+- **Video background flicker**: `drawBars` no longer falls through to the still-image branch when a background `<video>` is present but `readyState` is still warming up; eased `syncBackgroundOnlyVideo` seek threshold.
+- **Stop during recording / FFmpeg**: Preview **Stop** now calls `MediaRecorder.stop()` when a recording is active; during MP4 conversion, Stop clears the sticky warning, cancels the MP4 path, and downloads the recorded **WebM** immediately (`snackbar.encodeCancelledWebm`).
+
 ### Changed (maintenance — cookies, clip, spectrum, restore)
 - **Settings persistence (cookies)**: Most client settings persist in **first-party cookies** via [`lib/mwvCookieStorage.ts`](./lib/mwvCookieStorage.ts) (chunked Base64 for large values). **Legacy `localStorage` entries migrate on first read** then clear. **Not stored**: image/music file content, **title text**, **SRT body**; subtitle/title **styles** and toggles **are** stored. Mode remains in existing `mwv_mode` cookie.
 - **Clip length limit**: YouTube / TikTok / NicoNico buttons only suggest a duration in the field; **start (sec) + duration (sec)** define the window. **Empty duration** = play **to end of media** (no hard platform max).
