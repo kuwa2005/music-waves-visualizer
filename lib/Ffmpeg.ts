@@ -46,21 +46,62 @@ export async function generateMp4Video(
       : "192k";
 
   const lufs = targetLufs != null && targetLufs > -60 && targetLufs < 0 ? targetLufs : null;
-  if (lufs != null) {
+  // 録画コーデックによっては stream copy の MP4 が duration 不整合を起こすことがあるため、
+  // まずは再エンコード寄り（動画/音声とも MP4 互換）を試し、失敗時に段階フォールバックする。
+  const runArgsPrimary =
+    lufs != null
+      ? [
+          "-fflags", "+genpts",
+          "-i", webmName,
+          "-c:v", "libx264",
+          "-pix_fmt", "yuv420p",
+          "-af", `loudnorm=I=${lufs}:LRA=11:TP=-1.5`,
+          "-c:a", "aac",
+          "-b:a", ab,
+          "-movflags", "+faststart",
+          mp4Name,
+        ]
+      : [
+          "-fflags", "+genpts",
+          "-i", webmName,
+          "-c:v", "libx264",
+          "-pix_fmt", "yuv420p",
+          "-c:a", "aac",
+          "-b:a", ab,
+          "-movflags", "+faststart",
+          mp4Name,
+        ];
+
+  const runArgsCopyVideoAac =
+    lufs != null
+      ? [
+          "-fflags", "+genpts",
+          "-i", webmName,
+          "-vcodec", "copy",
+          "-af", `loudnorm=I=${lufs}:LRA=11:TP=-1.5`,
+          "-c:a", "aac",
+          "-b:a", ab,
+          "-movflags", "+faststart",
+          mp4Name,
+        ]
+      : [
+          "-fflags", "+genpts",
+          "-i", webmName,
+          "-vcodec", "copy",
+          "-c:a", "aac",
+          "-b:a", ab,
+          "-movflags", "+faststart",
+          mp4Name,
+        ];
+
+  try {
+    await ffmpeg.run(...runArgsPrimary);
+  } catch (_e1) {
     try {
-      await ffmpeg.run(
-        "-i", webmName,
-        "-vcodec", "copy",
-        "-af", `loudnorm=I=${lufs}:LRA=11:TP=-1.5`,
-        "-c:a", "aac",
-        "-b:a", ab,
-        mp4Name
-      );
-    } catch (e) {
-      await ffmpeg.run("-i", webmName, "-vcodec", "copy", mp4Name);
+      await ffmpeg.run(...runArgsCopyVideoAac);
+    } catch (_e2) {
+      await ffmpeg.run("-fflags", "+genpts", "-i", webmName, "-vcodec", "copy", mp4Name);
     }
-  } else {
-    await ffmpeg.run("-i", webmName, "-vcodec", "copy", mp4Name);
   }
   const videoUint8Array = ffmpeg.FS("readFile", mp4Name);
   try {

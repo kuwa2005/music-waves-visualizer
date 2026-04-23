@@ -3063,6 +3063,24 @@ const Home: NextPage = () => {
       recorder.addEventListener("dataavailable", (e) => {
         recordedBlobs.push(e.data);
       });
+      const safeStopRecorder = () => {
+        if (recorder.state !== "recording") return;
+        try {
+          recorder.requestData();
+        } catch {
+          /* ignore */
+        }
+        // 末尾チャンクの flush を待って stop（即 stop だと終端が欠ける環境がある）
+        window.setTimeout(() => {
+          if (recorder.state === "recording") {
+            try {
+              recorder.stop();
+            } catch {
+              /* ignore */
+            }
+          }
+        }, 140);
+      };
       //録画終了時に動画ファイルのダウンロードリンクを生成する処理
       recorder.addEventListener("stop", async () => {
         const recordedMimeType =
@@ -3160,7 +3178,7 @@ const Home: NextPage = () => {
             if (originalOnEnded) {
               originalOnEnded.call(videoElementRef.current);
             }
-            recorder.stop();
+            safeStopRecorder();
             setIsRecording(false);
             setIsPlaySound(false);
           };
@@ -3168,7 +3186,7 @@ const Home: NextPage = () => {
         // ショート区間の動画は onPlaySound 内のタイマーで停止・recorder.stop
       } else if (audioBufferSrcRef.current) {
         audioBufferSrcRef.current.onended = () => {
-          recorder.stop();
+          safeStopRecorder();
           setIsRecording(false);
           setIsPlaySound(false);
         };
