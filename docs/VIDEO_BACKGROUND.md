@@ -27,11 +27,12 @@ For drag & drop rules in the UI, see [locales](../locales/) copy under `dropZone
 
 ---
 
-## Recording (WebM → MP4)
+## Recording (MP4 fixed output)
 
-- **Settings → Video quality → Recording container (WebM)** — `auto` / VP9 / VP8 / H.264-in-WebM (`recordMimePreference`, persisted in cookies + settings export/import).
-- After recording, the **Blob** uses `MediaRecorder.mimeType` so the container/codec hint matches what was actually recorded.
-- **VP9 alpha**, **full FFmpeg demux parity**, and related caveats: [issue #35](https://github.com/kuwa2005/music-waves-visualizer/issues/35).
+- User-facing output is fixed to **MP4 only**.
+- Alpha/transparency is intentionally **not supported**.
+- Internally the browser records to WebM first (`MediaRecorder`) and then converts to MP4 via FFmpeg in the app.
+- Recording codec selection UI was removed to keep the conversion path stable.
 
 ---
 

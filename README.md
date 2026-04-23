@@ -92,7 +92,7 @@ See [SPECIFICATION.md](./SPECIFICATION.md) for details.
 - **[docs/BUILD.md](./docs/BUILD.md)**: Install (`--legacy-peer-deps`), FFmpeg copy, env vars, scripts
 - **[docs/SECURITY.md](./docs/SECURITY.md)**: Headers, file limits, Docker, audits
 - **[docs/FFMPEG.md](./docs/FFMPEG.md)**: Self-hosted core, COOP/COEP, vs upstream PR #23
-- **[docs/VIDEO_BACKGROUND.md](./docs/VIDEO_BACKGROUND.md)**: MP4 roles (music vs video background), picker / drag-drop rules, recording WebM preferences, links to issues [#34](https://github.com/kuwa2005/music-waves-visualizer/issues/34)–[#36](https://github.com/kuwa2005/music-waves-visualizer/issues/36)
+- **[docs/VIDEO_BACKGROUND.md](./docs/VIDEO_BACKGROUND.md)**: MP4 roles (music vs video background), picker / drag-drop rules, and current **MP4-fixed output** policy (no alpha)
 - **[SPECIFICATION.md](./SPECIFICATION.md)**: Technical spec and feature details
 - **[README_DOCKER.md](./README_DOCKER.md)**: Docker usage
 - **[SERVER_REQUIREMENTS.md](./SERVER_REQUIREMENTS.md)**: Shared hosting requirements
