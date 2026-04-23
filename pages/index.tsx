@@ -149,40 +149,6 @@ function detectLayoutFromAspectRatio(ratio: number): CanvasLayoutKey {
   return best.layout;
 }
 
-type RecordMimePreference = "auto" | "vp9" | "vp8" | "h264";
-
-function pickWebmRecorderMime(preferred: "vp9" | "vp8" | "h264"): string {
-  const lists: Record<typeof preferred, string[]> = {
-    vp9: ["video/webm;codecs=vp9,opus", "video/webm;codecs=vp9", "video/webm"],
-    vp8: ["video/webm;codecs=vp8,opus", "video/webm;codecs=vp8", "video/webm"],
-    h264: ["video/webm;codecs=h264", "video/webm;codecs=avc1", "video/webm"],
-  };
-  for (const m of lists[preferred]) {
-    if (typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(m)) {
-      return m;
-    }
-  }
-  return "video/webm";
-}
-
-function resolveRecordMimePreference(pref: RecordMimePreference): string {
-  if (typeof MediaRecorder === "undefined") {
-    return "video/webm";
-  }
-  if (pref === "auto") {
-    for (const p of ["vp9", "vp8", "h264"] as const) {
-      const m = pickWebmRecorderMime(p);
-      if (MediaRecorder.isTypeSupported(m)) {
-        return m;
-      }
-    }
-    return "video/webm";
-  }
-  if (pref === "vp9") return pickWebmRecorderMime("vp9");
-  if (pref === "vp8") return pickWebmRecorderMime("vp8");
-  return pickWebmRecorderMime("h264");
-}
-
 function getCookieValue(name: string): string | null {
   if (typeof document === "undefined") return null;
   const parts = document.cookie.split("; ").map((v) => v.trim());
@@ -254,12 +220,6 @@ const Home: NextPage = () => {
   // エンコード進捗
   const [encodeStatus, setEncodeStatus] = useState<"idle" | "loading" | "converting">("idle");
   const [encodeProgress, setEncodeProgress] = useState<number>(0);
-  const [encodeProgressKnown, setEncodeProgressKnown] = useState(false);
-  const ENCODE_TIMEOUT_MS = 30 * 60 * 1000;
-  const encodeStatusRef = useRef<"idle" | "loading" | "converting">("idle");
-  /** MP4 変換中にユーザーが停止したとき、即ダウンロード用に保持 */
-  const pendingEncodeWebmRef = useRef<{ blob: Blob; fileName: string } | null>(null);
-  const encodeCancelRequestedRef = useRef(false);
 
   // GPU関連State
   const [gpuInfo, setGpuInfo] = useState<GpuInfo | null>(null);
@@ -376,10 +336,6 @@ const Home: NextPage = () => {
   const mediaElementSourceRef = useRef<MediaElementAudioSourceNode | null>(null);
   const playbackWindowTimerRef = useRef<number | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-
-  useEffect(() => {
-    encodeStatusRef.current = encodeStatus;
-  }, [encodeStatus]);
 
   const getCurrentPlaybackTimeSec = useCallback((): number => {
     if (!isPlaySound && !isRecording) return 0;
@@ -819,7 +775,6 @@ const Home: NextPage = () => {
         titleStyle,
         recordVideoBitrateMbps,
         exportAudioBitrateKbps,
-        recordMimePreference,
         rendererType,
         rainWeather,
         snowWeather,
@@ -870,7 +825,6 @@ const Home: NextPage = () => {
       "common_sparkleParticleColor",
       "common_dustParticleColor",
       "common_recordVideoBitrateMbps",
-      "common_recordMimePreference",
       "common_exportAudioBitrateKbps",
       "common_rainWeather",
       "common_snowWeather",
@@ -1085,15 +1039,6 @@ const Home: NextPage = () => {
         if (c.exportAudioBitrateKbps === 128 || c.exportAudioBitrateKbps === 192 || c.exportAudioBitrateKbps === 256) {
           mwvSetItem("common_exportAudioBitrateKbps", String(c.exportAudioBitrateKbps));
           setExportAudioBitrateKbps(c.exportAudioBitrateKbps);
-        }
-        if (
-          c.recordMimePreference === "auto" ||
-          c.recordMimePreference === "vp9" ||
-          c.recordMimePreference === "vp8" ||
-          c.recordMimePreference === "h264"
-        ) {
-          mwvSetItem("common_recordMimePreference", c.recordMimePreference);
-          setRecordMimePreference(c.recordMimePreference);
         }
         if (c.rendererType === "canvas2d" || c.rendererType === "webgl") {
           // 今後は Canvas2D 固定運用
@@ -1408,18 +1353,12 @@ const Home: NextPage = () => {
   const [backgroundVideoLayoutCache, setBackgroundVideoLayoutCache] = useState<CanvasLayout | null>(null);
   const [dialogClearGalleryForVideo, setDialogClearGalleryForVideo] = useState(false);
   const pendingVideoBackgroundFileRef = useRef<File | null>(null);
-  const [recordMimePreference, setRecordMimePreference] = useState<RecordMimePreference>("auto");
   const [videoBackgroundRepaintNonce, setVideoBackgroundRepaintNonce] = useState(0);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     mwvSetItem("common_galleryAutoEnabled", galleryAutoEnabled ? "1" : "0");
   }, [galleryAutoEnabled]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    mwvSetItem("common_recordMimePreference", recordMimePreference);
-  }, [recordMimePreference]);
 
   const galleryAutoTimerRef = useRef<number | null>(null);
   const galleryAutoPrevLenRef = useRef(0);
@@ -1978,11 +1917,6 @@ const Home: NextPage = () => {
     const savedAudBr = mwvGetItem("common_exportAudioBitrateKbps");
     if (savedAudBr === "128" || savedAudBr === "192" || savedAudBr === "256") {
       setExportAudioBitrateKbps(Number(savedAudBr) as 128 | 192 | 256);
-    }
-
-    const savedRecMime = mwvGetItem("common_recordMimePreference");
-    if (savedRecMime === "auto" || savedRecMime === "vp9" || savedRecMime === "vp8" || savedRecMime === "h264") {
-      setRecordMimePreference(savedRecMime);
     }
 
     const rawTl = mwvGetItem("common_targetLufs");
@@ -2913,24 +2847,6 @@ const Home: NextPage = () => {
           /* ignore */
         }
       }
-      // FFmpeg 変換中に停止した場合: 警告バーを下ろし、録画済み WebM を即ダウンロード
-      if (encodeStatusRef.current !== "idle") {
-        const pending = pendingEncodeWebmRef.current;
-        if (pending) {
-          encodeCancelRequestedRef.current = true;
-          const url = URL.createObjectURL(pending.blob);
-          const a = document.createElement("a");
-          a.href = url;
-          a.download = pending.fileName;
-          a.click();
-          a.remove();
-          window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
-          pendingEncodeWebmRef.current = null;
-          openSnackBar(t("snackbar.encodeCancelledWebm"));
-        }
-        setEncodeStatus("idle");
-        setEncodeProgress(0);
-      }
       if (audioBufferSrcRef.current) {
         try {
           audioBufferSrcRef.current.stop(0);
@@ -2983,9 +2899,6 @@ const Home: NextPage = () => {
       openSnackBar(t("snackbar.canvasNotReady"));
       return;
     }
-    encodeCancelRequestedRef.current = false;
-    pendingEncodeWebmRef.current = null;
-
     // 録画開始フラグを先に設定
     setIsRecording(true);
     
@@ -3054,9 +2967,8 @@ const Home: NextPage = () => {
         });
       });
       const videoBps = Math.round(recordVideoBitrateMbps * 1_000_000);
-      const chosenMime = resolveRecordMimePreference(recordMimePreference);
       const recorderOptions: MediaRecorderOptions = {
-        mimeType: chosenMime,
+        mimeType: "video/webm;codecs=h264",
       };
       if (videoBps >= 1_000_000 && videoBps <= 80_000_000) {
         recorderOptions.videoBitsPerSecond = videoBps;
@@ -3098,38 +3010,13 @@ const Home: NextPage = () => {
         const movieName = "movie_" + Math.random().toString(36).slice(-8);
         const webmName = movieName + ".webm";
         const mp4Name = movieName + ".mp4";
-
         const webmBlob = new Blob(recordedBlobs, { type: recordedMimeType });
-        pendingEncodeWebmRef.current = { blob: webmBlob, fileName: webmName };
-
-        const clearPendingWebm = () => {
-          pendingEncodeWebmRef.current = null;
-        };
 
         try {
-          if (encodeCancelRequestedRef.current) {
-            setEncodeStatus("idle");
-            setEncodeProgress(0);
-            encodeCancelRequestedRef.current = false;
-            clearPendingWebm();
-            return;
-          }
-
           setEncodeStatus("loading");
           setEncodeProgress(0);
-          setEncodeProgressKnown(false);
           const binaryData = new Uint8Array(await webmBlob.arrayBuffer());
-
-          if (encodeCancelRequestedRef.current) {
-            setEncodeStatus("idle");
-            setEncodeProgress(0);
-            encodeCancelRequestedRef.current = false;
-            clearPendingWebm();
-            return;
-          }
-
-          let timeoutId: number | undefined;
-          const convertPromise = generateMp4Video(
+          const video = await generateMp4Video(
             binaryData,
             webmName,
             mp4Name,
@@ -3138,36 +3025,18 @@ const Home: NextPage = () => {
               onLoadComplete: () => {
                 setEncodeStatus("converting");
                 setEncodeProgress(0);
-                setEncodeProgressKnown(false);
               },
               onProgress: (ratio) => {
                 if (!Number.isFinite(ratio)) return;
                 const pct = Math.max(0, Math.min(100, Math.round(ratio * 100)));
                 setEncodeProgress(pct);
-                setEncodeProgressKnown(true);
               },
             },
             targetLufs,
             exportAudioBitrateKbps
           );
-          const timeoutPromise = new Promise<Uint8Array>((_, reject) => {
-            timeoutId = window.setTimeout(() => {
-              reject(new Error("encode_timeout"));
-            }, ENCODE_TIMEOUT_MS);
-          });
-          const video = await Promise.race([convertPromise, timeoutPromise]);
-          if (timeoutId != null) {
-            window.clearTimeout(timeoutId);
-          }
           if (!video || video.length === 0) {
             throw new Error("empty_mp4");
-          }
-
-          if (encodeCancelRequestedRef.current) {
-            setEncodeStatus("idle");
-            encodeCancelRequestedRef.current = false;
-            clearPendingWebm();
-            return;
           }
 
           setEncodeStatus("idle");
@@ -3183,27 +3052,9 @@ const Home: NextPage = () => {
           openSnackBar(t("snackbar.convertComplete"));
         } catch (error) {
           const msg = (error as Error).message || "unknown_error";
-          const pending = pendingEncodeWebmRef.current;
-          if (pending) {
-            const webmUrl = URL.createObjectURL(pending.blob);
-            const a = document.createElement("a");
-            a.href = webmUrl;
-            a.download = pending.fileName;
-            a.click();
-            a.remove();
-            window.setTimeout(() => URL.revokeObjectURL(webmUrl), 60_000);
-            openSnackBar(
-              t("snackbar.convertFailedWebmFallback", {
-                error: msg === "encode_timeout" ? t("snackbar.convertTimeout") : msg,
-              })
-            );
-          } else {
-            openSnackBar(t("snackbar.convertFailed", { error: msg }));
-          }
+          openSnackBar(t("snackbar.convertFailed", { error: msg }));
           setEncodeStatus("idle");
         } finally {
-          clearPendingWebm();
-          encodeCancelRequestedRef.current = false;
           setRecordMovieDisabled(false);
         }
       });
@@ -3377,16 +3228,10 @@ const Home: NextPage = () => {
                 <Typography variant="body2" sx={{ mb: 0.5 }}>
                   {encodeStatus === "loading"
                     ? t("encode.loadingFfmpeg")
-                    : encodeProgressKnown
-                      ? t("encode.converting", { progress: encodeProgress })
-                      : t("encode.convertingUnknown")}
+                    : t("encode.converting", { progress: encodeProgress })}
                 </Typography>
                 <LinearProgress
-                  variant={
-                    encodeStatus === "loading" || (encodeStatus === "converting" && !encodeProgressKnown)
-                      ? "indeterminate"
-                      : "determinate"
-                  }
+                  variant={encodeStatus === "loading" ? "indeterminate" : "determinate"}
                   value={encodeProgress}
                   sx={{
                     height: 6,
@@ -5297,26 +5142,9 @@ const Home: NextPage = () => {
                 <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 2 }}>
                   {t("videoQuality.videoBitrateHint")}
                 </Typography>
-                <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
-                  {t("videoQuality.recordContainer")}
+                <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 2 }}>
+                  {t("videoQuality.recordContainerFixedMp4")}
                 </Typography>
-                <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 1 }}>
-                  {t("videoQuality.recordContainerHint")}
-                </Typography>
-                <FormControl size="small" fullWidth sx={{ mb: 2, maxWidth: 360 }}>
-                  <InputLabel id="record-mime-pref-label">{t("videoQuality.recordContainer")}</InputLabel>
-                  <Select
-                    labelId="record-mime-pref-label"
-                    value={recordMimePreference}
-                    label={t("videoQuality.recordContainer")}
-                    onChange={(e) => setRecordMimePreference(e.target.value as RecordMimePreference)}
-                  >
-                    <MenuItem value="auto">{t("videoQuality.recordMimeAuto")}</MenuItem>
-                    <MenuItem value="vp9">{t("videoQuality.recordMimeVp9")}</MenuItem>
-                    <MenuItem value="vp8">{t("videoQuality.recordMimeVp8")}</MenuItem>
-                    <MenuItem value="h264">{t("videoQuality.recordMimeH264")}</MenuItem>
-                  </Select>
-                </FormControl>
                 <FormControl size="small" fullWidth sx={{ mb: 2, maxWidth: 360 }}>
                   <InputLabel>{t("videoQuality.audioBitrate")}</InputLabel>
                   <Select

@@ -47,66 +47,21 @@ export async function generateMp4Video(
       : "192k";
 
   const lufs = targetLufs != null && targetLufs > -60 && targetLufs < 0 ? targetLufs : null;
-  // まずは MP4 互換性を優先して動画/音声を再エンコードする（軽めの mpeg4 + aac）。
-  // 失敗時は従来の copy ベースへフォールバックする。
-  const runArgsPrimary =
-    lufs != null
-      ? [
-          "-fflags", "+genpts",
-          "-avoid_negative_ts", "make_zero",
-          "-i", webmName,
-          "-c:v", "mpeg4",
-          "-q:v", "4",
-          "-af", `loudnorm=I=${lufs}:LRA=11:TP=-1.5`,
-          "-c:a", "aac",
-          "-b:a", ab,
-          "-movflags", "+faststart",
-          mp4Name,
-        ]
-      : [
-          "-fflags", "+genpts",
-          "-avoid_negative_ts", "make_zero",
-          "-i", webmName,
-          "-c:v", "mpeg4",
-          "-q:v", "4",
-          "-c:a", "aac",
-          "-b:a", ab,
-          "-movflags", "+faststart",
-          mp4Name,
-        ];
-
-  const runArgsCopyVideoAac =
-    lufs != null
-      ? [
-          "-fflags", "+genpts",
-          "-avoid_negative_ts", "make_zero",
-          "-i", webmName,
-          "-vcodec", "copy",
-          "-af", `loudnorm=I=${lufs}:LRA=11:TP=-1.5`,
-          "-c:a", "aac",
-          "-b:a", ab,
-          "-movflags", "+faststart",
-          mp4Name,
-        ]
-      : [
-          "-fflags", "+genpts",
-          "-avoid_negative_ts", "make_zero",
-          "-i", webmName,
-          "-vcodec", "copy",
-          "-c:a", "aac",
-          "-b:a", ab,
-          "-movflags", "+faststart",
-          mp4Name,
-        ];
-
-  try {
-    await ffmpeg.run(...runArgsPrimary);
-  } catch (_e1) {
+  if (lufs != null) {
     try {
-      await ffmpeg.run(...runArgsCopyVideoAac);
-    } catch (_e2) {
-      await ffmpeg.run("-fflags", "+genpts", "-i", webmName, "-vcodec", "copy", mp4Name);
+      await ffmpeg.run(
+        "-i", webmName,
+        "-vcodec", "copy",
+        "-af", `loudnorm=I=${lufs}:LRA=11:TP=-1.5`,
+        "-c:a", "aac",
+        "-b:a", ab,
+        mp4Name
+      );
+    } catch (_e) {
+      await ffmpeg.run("-i", webmName, "-vcodec", "copy", mp4Name);
     }
+  } else {
+    await ffmpeg.run("-i", webmName, "-vcodec", "copy", mp4Name);
   }
   const videoUint8Array = ffmpeg.FS("readFile", mp4Name);
   try {
