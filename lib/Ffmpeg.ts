@@ -47,15 +47,16 @@ export async function generateMp4Video(
       : "192k";
 
   const lufs = targetLufs != null && targetLufs > -60 && targetLufs < 0 ? targetLufs : null;
-  // 変換はまず高速な copy ベースを優先する。
-  // タイムスタンプ補正（genpts / avoid_negative_ts）だけ加えて duration ずれを抑制する。
+  // まずは MP4 互換性を優先して動画/音声を再エンコードする（軽めの mpeg4 + aac）。
+  // 失敗時は従来の copy ベースへフォールバックする。
   const runArgsPrimary =
     lufs != null
       ? [
           "-fflags", "+genpts",
           "-avoid_negative_ts", "make_zero",
           "-i", webmName,
-          "-vcodec", "copy",
+          "-c:v", "mpeg4",
+          "-q:v", "4",
           "-af", `loudnorm=I=${lufs}:LRA=11:TP=-1.5`,
           "-c:a", "aac",
           "-b:a", ab,
@@ -66,7 +67,8 @@ export async function generateMp4Video(
           "-fflags", "+genpts",
           "-avoid_negative_ts", "make_zero",
           "-i", webmName,
-          "-vcodec", "copy",
+          "-c:v", "mpeg4",
+          "-q:v", "4",
           "-c:a", "aac",
           "-b:a", ab,
           "-movflags", "+faststart",
