@@ -36,6 +36,7 @@ import {
   Warning,
   NavigateBefore,
   NavigateNext,
+  Undo,
 } from "@mui/icons-material";
 import i18n from "i18next";
 import { CustomSnackbar } from "../components/CustomSnackbar";
@@ -76,6 +77,13 @@ import {
   isFileGateFailure,
 } from "../lib/fileValidation";
 import {
+  parseLyricsLinesFromSuno,
+  getPlaybackWindowBounds,
+  evenSplitCuesInWindow,
+  formatSrtFromCues,
+  shiftCuesBySeconds,
+} from "../lib/srtAuthoring";
+import {
   parseSrt,
   DEFAULT_SUBTITLE_STYLE,
   DEFAULT_TITLE_STYLE,
@@ -108,6 +116,13 @@ function isHexColorCode(value: string): boolean {
 function isSrtFileByName(name: string): boolean {
   return /\.srt$/i.test(name);
 }
+
+function isLyricsTextFileByName(name: string): boolean {
+  return /\.(txt|lrc)$/i.test(name);
+}
+
+/** 字幕タブの「SRT 作成支援」パネル。公開時は false のまま（再有効化は true に変更） */
+const ENABLE_SRT_AUTHOR_UI = false;
 
 function getCookieValue(name: string): string | null {
   if (typeof document === "undefined") return null;
@@ -157,6 +172,20 @@ const Home: NextPage = () => {
   const [subtitleEnabled, setSubtitleEnabled] = useState<boolean>(true);
   const [subtitleCues, setSubtitleCues] = useState<SubtitleCue[]>([]);
   const [subtitleStyle, setSubtitleStyle] = useState<SubtitleStyle>(DEFAULT_SUBTITLE_STYLE);
+  /** SRT 作成支援（歌詞貼り付け〜タイミング〜書き出し） */
+  const [srtAuthorLyricsRaw, setSrtAuthorLyricsRaw] = useState<string>("");
+  const [srtAuthorCues, setSrtAuthorCues] = useState<SubtitleCue[]>([]);
+  const [srtAuthorRecordActive, setSrtAuthorRecordActive] = useState<boolean>(false);
+  const [srtAuthorPhase, setSrtAuthorPhase] = useState<"wait_start" | "inside_line">("wait_start");
+  const [srtAuthorLineIndex, setSrtAuthorLineIndex] = useState<number>(0);
+  const [srtAuthorGlobalOffsetMs, setSrtAuthorGlobalOffsetMs] = useState<number>(0);
+  const srtAuthorUndoRef = useRef<Array<{ cues: SubtitleCue[]; lineIdx: number; phase: "wait_start" | "inside_line" }>>(
+    []
+  );
+  const srtAuthorLineIndexRef = useRef(0);
+  const srtAuthorPhaseRef = useRef<"wait_start" | "inside_line">("wait_start");
+  const srtRecordPanelRef = useRef<HTMLDivElement | null>(null);
+  const srtAuthorCuesRef = useRef<SubtitleCue[]>([]);
   const [titleText, setTitleText] = useState<string>("");
   const [titleEnabled, setTitleEnabled] = useState<boolean>(true);
   const [titleStyle, setTitleStyle] = useState<TitleStyle>(DEFAULT_TITLE_STYLE);
@@ -292,6 +321,16 @@ const Home: NextPage = () => {
     }
     return 0;
   }, [isPlaySound, isRecording]);
+
+  useEffect(() => {
+    srtAuthorLineIndexRef.current = srtAuthorLineIndex;
+  }, [srtAuthorLineIndex]);
+  useEffect(() => {
+    srtAuthorPhaseRef.current = srtAuthorPhase;
+  }, [srtAuthorPhase]);
+  useEffect(() => {
+    srtAuthorCuesRef.current = srtAuthorCues;
+  }, [srtAuthorCues]);
 
   const loadVideoAsAudioSource = useCallback(
     (file: File) => {
@@ -2166,6 +2205,262 @@ const Home: NextPage = () => {
     }
   }, []);
 
+  const getAuthoringTimeSec = useCallback((): number => {
+    if (isPlaySound || isRecording) {
+      return getCurrentPlaybackTimeSec();
+    }
+    const v = videoElementRef.current;
+    if (v && Number.isFinite(v.currentTime)) {
+      return Math.max(0, v.currentTime);
+    }
+    return NaN;
+  }, [isPlaySound, isRecording, getCurrentPlaybackTimeSec]);
+
+  const pushSrtAuthorUndoSnapshot = useCallback(() => {
+    srtAuthorUndoRef.current.push({
+      cues: JSON.parse(JSON.stringify(srtAuthorCuesRef.current)) as SubtitleCue[],
+      lineIdx: srtAuthorLineIndexRef.current,
+      phase: srtAuthorPhaseRef.current,
+    });
+    if (srtAuthorUndoRef.current.length > 48) {
+      srtAuthorUndoRef.current.shift();
+    }
+  }, []);
+
+  const popSrtAuthorUndoSnapshot = useCallback(() => {
+    const p = srtAuthorUndoRef.current.pop();
+    if (!p) return false;
+    setSrtAuthorCues(p.cues);
+    setSrtAuthorLineIndex(p.lineIdx);
+    setSrtAuthorPhase(p.phase);
+    return true;
+  }, []);
+
+  const srtAuthorReflectLyrics = useCallback(() => {
+    const mediaDur = getMediaDurationSec();
+    if (!(mediaDur > 0)) {
+      openSnackBar(t("snackbar.subtitleAuthorNeedAudio"));
+      return;
+    }
+    const lines = parseLyricsLinesFromSuno(srtAuthorLyricsRaw);
+    if (lines.length === 0) {
+      openSnackBar(t("snackbar.subtitleAuthorNoLyrics"));
+      return;
+    }
+    pushSrtAuthorUndoSnapshot();
+    const win = getPlaybackWindowBounds(resolvePlaybackWindow(), mediaDur);
+    const cues = evenSplitCuesInWindow(lines, win);
+    setSrtAuthorCues(cues);
+    setSrtAuthorLineIndex(0);
+    setSrtAuthorPhase("wait_start");
+    openSnackBar(t("snackbar.subtitleAuthorReflectDone", { count: cues.length }));
+  }, [
+    getMediaDurationSec,
+    openSnackBar,
+    pushSrtAuthorUndoSnapshot,
+    resolvePlaybackWindow,
+    srtAuthorLyricsRaw,
+    t,
+  ]);
+
+  const srtAuthorEvenSplitAgain = useCallback(() => {
+    const mediaDur = getMediaDurationSec();
+    if (!(mediaDur > 0)) {
+      openSnackBar(t("snackbar.subtitleAuthorNeedAudio"));
+      return;
+    }
+    if (srtAuthorCuesRef.current.length === 0) {
+      openSnackBar(t("snackbar.subtitleAuthorNoCues"));
+      return;
+    }
+    pushSrtAuthorUndoSnapshot();
+    const win = getPlaybackWindowBounds(resolvePlaybackWindow(), mediaDur);
+    const texts = srtAuthorCuesRef.current.map((c) => c.text);
+    setSrtAuthorCues(evenSplitCuesInWindow(texts, win));
+    setSrtAuthorLineIndex(0);
+    setSrtAuthorPhase("wait_start");
+    openSnackBar(t("snackbar.subtitleAuthorEvenSplitDone"));
+  }, [getMediaDurationSec, openSnackBar, pushSrtAuthorUndoSnapshot, resolvePlaybackWindow, t]);
+
+  const srtAuthorMarkStart = useCallback(() => {
+    if (!(isPlaySound || isRecording)) {
+      openSnackBar(t("snackbar.subtitleAuthorMarkWhilePlaying"));
+      return;
+    }
+    if (srtAuthorPhaseRef.current !== "wait_start") {
+      return;
+    }
+    const idx = srtAuthorLineIndexRef.current;
+    const cues = srtAuthorCuesRef.current;
+    if (idx >= cues.length) {
+      return;
+    }
+    const tsec = getAuthoringTimeSec();
+    if (!Number.isFinite(tsec)) {
+      openSnackBar(t("snackbar.subtitleAuthorMarkWhilePlaying"));
+      return;
+    }
+    pushSrtAuthorUndoSnapshot();
+    setSrtAuthorCues((prev) => {
+      const next = [...prev];
+      const cur = next[idx];
+      if (!cur) return prev;
+      const endMin = tsec + 0.05;
+      next[idx] = {
+        ...cur,
+        startSec: tsec,
+        endSec: cur.endSec > endMin ? cur.endSec : endMin,
+      };
+      return next;
+    });
+    setSrtAuthorPhase("inside_line");
+  }, [getAuthoringTimeSec, isPlaySound, isRecording, openSnackBar, pushSrtAuthorUndoSnapshot, t]);
+
+  const srtAuthorMarkEnd = useCallback(() => {
+    if (!(isPlaySound || isRecording)) {
+      openSnackBar(t("snackbar.subtitleAuthorMarkWhilePlaying"));
+      return;
+    }
+    if (srtAuthorPhaseRef.current !== "inside_line") {
+      return;
+    }
+    const idx = srtAuthorLineIndexRef.current;
+    const cues = srtAuthorCuesRef.current;
+    if (idx >= cues.length) {
+      return;
+    }
+    const tsec = getAuthoringTimeSec();
+    if (!Number.isFinite(tsec)) {
+      openSnackBar(t("snackbar.subtitleAuthorMarkWhilePlaying"));
+      return;
+    }
+    pushSrtAuthorUndoSnapshot();
+    setSrtAuthorCues((prev) => {
+      const next = [...prev];
+      const cur = next[idx];
+      if (!cur) return prev;
+      const endSec = Math.max(tsec, cur.startSec + 0.05);
+      next[idx] = { ...cur, endSec };
+      return next;
+    });
+    const nextIdx = idx + 1;
+    if (nextIdx >= cues.length) {
+      setSrtAuthorLineIndex(nextIdx);
+      setSrtAuthorPhase("wait_start");
+      setSrtAuthorRecordActive(false);
+      openSnackBar(t("snackbar.subtitleAuthorRecordComplete"));
+    } else {
+      setSrtAuthorLineIndex(nextIdx);
+      setSrtAuthorPhase("wait_start");
+    }
+  }, [getAuthoringTimeSec, isPlaySound, isRecording, openSnackBar, pushSrtAuthorUndoSnapshot, t]);
+
+  const srtAuthorUndoLast = useCallback(() => {
+    if (popSrtAuthorUndoSnapshot()) {
+      openSnackBar(t("snackbar.subtitleAuthorUndo"));
+    }
+  }, [openSnackBar, popSrtAuthorUndoSnapshot, t]);
+
+  const srtAuthorExportSrt = useCallback(() => {
+    const shifted = shiftCuesBySeconds(srtAuthorCuesRef.current, srtAuthorGlobalOffsetMs / 1000);
+    const body = formatSrtFromCues(shifted);
+    if (!body.trim()) {
+      openSnackBar(t("snackbar.subtitleAuthorExportEmpty"));
+      return;
+    }
+    const blob = new Blob([body], { type: "text/plain;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "subtitles.srt";
+    a.click();
+    URL.revokeObjectURL(a.href);
+    openSnackBar(t("snackbar.subtitleAuthorExported"));
+  }, [openSnackBar, srtAuthorGlobalOffsetMs, t]);
+
+  const srtAuthorApplyToPreview = useCallback(() => {
+    const shifted = shiftCuesBySeconds(srtAuthorCuesRef.current, srtAuthorGlobalOffsetMs / 1000);
+    const body = formatSrtFromCues(shifted);
+    if (!body.trim()) {
+      openSnackBar(t("snackbar.subtitleAuthorExportEmpty"));
+      return;
+    }
+    const cues = parseSrt(body);
+    if (cues.length === 0) {
+      openSnackBar(t("snackbar.subtitleParseFailed"));
+      return;
+    }
+    setSubtitleCues(cues);
+    setSubtitleFileName("authored.srt");
+    setSubtitleEnabled(true);
+    openSnackBar(t("snackbar.subtitleAuthorApplied", { count: cues.length }));
+    if (rendererType === "webgl") {
+      setRendererType("canvas2d");
+      mwvSetItem("common_rendererType", "canvas2d");
+      openSnackBar(t("snackbar.subtitleCanvasFallback"));
+    }
+  }, [openSnackBar, rendererType, srtAuthorGlobalOffsetMs, t]);
+
+  const lyricsTxtLoad = useCallback(
+    async (event: { target: HTMLInputElement }) => {
+      const file = event.target.files?.[0];
+      if (!file) return;
+      try {
+        if (!isLyricsTextFileByName(file.name)) {
+          openSnackBar(t("snackbar.subtitleAuthorTxtOnly"));
+          return;
+        }
+        const text = await file.text();
+        setSrtAuthorLyricsRaw(text);
+        openSnackBar(t("snackbar.subtitleAuthorTxtLoaded"));
+      } catch {
+        openSnackBar(t("snackbar.subtitleAuthorTxtFailed"));
+      } finally {
+        event.target.value = "";
+      }
+    },
+    [openSnackBar, t]
+  );
+
+  useEffect(() => {
+    if (!ENABLE_SRT_AUTHOR_UI || !srtAuthorRecordActive) {
+      return;
+    }
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.code !== "Space" && e.key !== " ") {
+        return;
+      }
+      const el = e.target as HTMLElement | null;
+      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable)) {
+        return;
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      if (srtAuthorPhaseRef.current === "wait_start") {
+        srtAuthorMarkStart();
+      }
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.code !== "Space" && e.key !== " ") {
+        return;
+      }
+      const el = e.target as HTMLElement | null;
+      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable)) {
+        return;
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      if (srtAuthorPhaseRef.current === "inside_line") {
+        srtAuthorMarkEnd();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    window.addEventListener("keyup", onKeyUp, true);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown, true);
+      window.removeEventListener("keyup", onKeyUp, true);
+    };
+  }, [srtAuthorRecordActive, srtAuthorMarkStart, srtAuthorMarkEnd]);
+
   const setupAudioSourceForPlayback = (clip: ResolvedClip) => {
     if (videoElementRef.current) {
       const video = videoElementRef.current;
@@ -3894,6 +4189,249 @@ const Home: NextPage = () => {
                 >
                   {t("subtitle.dropSrt")}
                 </Box>
+
+                {ENABLE_SRT_AUTHOR_UI && (
+                <Accordion defaultExpanded={false} sx={{ mb: 1.5 }}>
+                  <AccordionSummary expandIcon={<ExpandMore />}>
+                    <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+                      {t("subtitle.author.sectionTitle")}
+                    </Typography>
+                  </AccordionSummary>
+                  <AccordionDetails>
+                    <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 1 }}>
+                      {t("subtitle.author.hint")}
+                    </Typography>
+                    <TextField
+                      size="small"
+                      fullWidth
+                      multiline
+                      minRows={4}
+                      label={t("subtitle.author.lyricsLabel")}
+                      placeholder={t("subtitle.author.lyricsPlaceholder")}
+                      value={srtAuthorLyricsRaw}
+                      onChange={(e) => setSrtAuthorLyricsRaw(e.target.value)}
+                      sx={{ mb: 1 }}
+                    />
+                    <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap", mb: 1 }}>
+                      <Button variant="outlined" size="small" onClick={srtAuthorReflectLyrics}>
+                        {t("subtitle.author.reflectLyrics")}
+                      </Button>
+                      <Button variant="outlined" size="small" component="label">
+                        {t("subtitle.author.loadTxt")}
+                        <input type="file" accept=".txt,.lrc,text/plain" hidden onChange={lyricsTxtLoad} />
+                      </Button>
+                      <Button variant="outlined" size="small" onClick={srtAuthorEvenSplitAgain} disabled={srtAuthorCues.length === 0}>
+                        {t("subtitle.author.evenSplit")}
+                      </Button>
+                    </Box>
+                    <Typography gutterBottom>{t("subtitle.author.globalOffset", { value: srtAuthorGlobalOffsetMs })}</Typography>
+                    <Slider
+                      value={srtAuthorGlobalOffsetMs}
+                      min={-3000}
+                      max={3000}
+                      step={50}
+                      onChange={(_, v) => setSrtAuthorGlobalOffsetMs(v as number)}
+                      sx={{ mb: 1.5 }}
+                    />
+                    <Box
+                      ref={srtRecordPanelRef}
+                      tabIndex={-1}
+                      sx={{ outline: srtAuthorRecordActive ? "2px solid" : "none", outlineColor: "primary.main", borderRadius: 1, p: 1, mb: 1, bgcolor: "action.hover" }}
+                    >
+                      <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 0.5 }}>
+                        {t("subtitle.author.recordHint")}
+                      </Typography>
+                      <FormControlLabel
+                        control={
+                          <Switch
+                            checked={srtAuthorRecordActive}
+                            onChange={(_, c) => {
+                              if (c) {
+                                if (srtAuthorCues.length === 0) {
+                                  openSnackBar(t("snackbar.subtitleAuthorNoCues"));
+                                  return;
+                                }
+                                setSrtAuthorRecordActive(true);
+                                setSrtAuthorLineIndex(0);
+                                setSrtAuthorPhase("wait_start");
+                                queueMicrotask(() => srtRecordPanelRef.current?.focus());
+                              } else {
+                                setSrtAuthorRecordActive(false);
+                              }
+                            }}
+                            size="small"
+                          />
+                        }
+                        label={t("subtitle.author.recordMode")}
+                        sx={{ mb: 1, display: "block" }}
+                      />
+                      {srtAuthorCues.length > 0 && srtAuthorLineIndex < srtAuthorCues.length && (
+                        <Typography variant="body2" sx={{ mb: 1, fontWeight: 600 }}>
+                          {srtAuthorPhase === "wait_start"
+                            ? t("subtitle.author.statusWaitStart", {
+                                current: srtAuthorLineIndex + 1,
+                                total: srtAuthorCues.length,
+                              })
+                            : t("subtitle.author.statusInside", {
+                                current: srtAuthorLineIndex + 1,
+                                total: srtAuthorCues.length,
+                              })}
+                        </Typography>
+                      )}
+                      {srtAuthorCues.length > 0 && srtAuthorLineIndex < srtAuthorCues.length && (
+                        <Typography variant="body2" color="text.secondary" sx={{ mb: 1, whiteSpace: "pre-wrap" }}>
+                          {srtAuthorCues[srtAuthorLineIndex]?.text ?? ""}
+                        </Typography>
+                      )}
+                      <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap", alignItems: "center", mb: 1 }}>
+                        <Button
+                          variant="contained"
+                          color="primary"
+                          size="medium"
+                          disabled={!srtAuthorRecordActive || srtAuthorPhase !== "wait_start" || srtAuthorLineIndex >= srtAuthorCues.length}
+                          onClick={srtAuthorMarkStart}
+                        >
+                          {t("subtitle.author.btnStart")}
+                        </Button>
+                        <Button
+                          variant="contained"
+                          color="secondary"
+                          size="medium"
+                          disabled={!srtAuthorRecordActive || srtAuthorPhase !== "inside_line" || srtAuthorLineIndex >= srtAuthorCues.length}
+                          onClick={srtAuthorMarkEnd}
+                        >
+                          {t("subtitle.author.btnEnd")}
+                        </Button>
+                        <Tooltip title={t("subtitle.author.undoTooltip")}>
+                          <span>
+                            <Button variant="outlined" size="small" startIcon={<Undo />} onClick={srtAuthorUndoLast}>
+                              {t("subtitle.author.undo")}
+                            </Button>
+                          </span>
+                        </Tooltip>
+                      </Box>
+                    </Box>
+                    <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap", mb: 1 }}>
+                      <Button variant="outlined" size="small" onClick={srtAuthorExportSrt} disabled={srtAuthorCues.length === 0}>
+                        {t("subtitle.author.exportSrt")}
+                      </Button>
+                      <Button variant="contained" size="small" onClick={srtAuthorApplyToPreview} disabled={srtAuthorCues.length === 0}>
+                        {t("subtitle.author.applyPreview")}
+                      </Button>
+                      <Button
+                        variant="outlined"
+                        size="small"
+                        onClick={() => {
+                          const mediaDur = getMediaDurationSec();
+                          if (!(mediaDur > 0)) {
+                            openSnackBar(t("snackbar.subtitleAuthorNeedAudio"));
+                            return;
+                          }
+                          pushSrtAuthorUndoSnapshot();
+                          const win = getPlaybackWindowBounds(resolvePlaybackWindow(), mediaDur);
+                          setSrtAuthorCues((prev) => {
+                            const last = prev[prev.length - 1];
+                            const s = last ? Math.min(last.endSec, win.endSec - 0.06) : win.startSec;
+                            const e = Math.min(win.endSec, s + 0.5);
+                            return [...prev, { startSec: s, endSec: Math.max(s + 0.05, e), text: "" }];
+                          });
+                          openSnackBar(t("snackbar.subtitleAuthorLineAdded"));
+                        }}
+                      >
+                        {t("subtitle.author.addLine")}
+                      </Button>
+                    </Box>
+                    {srtAuthorCues.length > 0 && (
+                      <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 0.5 }}>
+                        {t("subtitle.author.cueListCaption")}
+                      </Typography>
+                    )}
+                    <Box sx={{ maxHeight: 240, overflow: "auto", border: "1px solid", borderColor: "divider", borderRadius: 1, p: 0.5 }}>
+                      {srtAuthorCues.map((cue, index) => (
+                        <Box
+                          key={`srt-cue-${index}`}
+                          sx={{
+                            display: "grid",
+                            gridTemplateColumns: { xs: "1fr", sm: "72px 72px 1fr 40px" },
+                            gap: 0.5,
+                            alignItems: "center",
+                            mb: 0.5,
+                            p: 0.5,
+                            bgcolor: index === srtAuthorLineIndex && srtAuthorRecordActive ? "action.selected" : "transparent",
+                            borderRadius: 0.5,
+                          }}
+                        >
+                          <TextField
+                            size="small"
+                            type="number"
+                            inputProps={{ step: 0.01 }}
+                            label={t("subtitle.author.startSec")}
+                            value={Number.isFinite(cue.startSec) ? cue.startSec.toFixed(2) : ""}
+                            onChange={(e) => {
+                              const v = parseFloat(e.target.value.replace(",", "."));
+                              if (!Number.isFinite(v)) return;
+                              setSrtAuthorCues((prev) => {
+                                const next = [...prev];
+                                if (!next[index]) return prev;
+                                next[index] = { ...next[index], startSec: v };
+                                return next;
+                              });
+                            }}
+                          />
+                          <TextField
+                            size="small"
+                            type="number"
+                            inputProps={{ step: 0.01 }}
+                            label={t("subtitle.author.endSec")}
+                            value={Number.isFinite(cue.endSec) ? cue.endSec.toFixed(2) : ""}
+                            onChange={(e) => {
+                              const v = parseFloat(e.target.value.replace(",", "."));
+                              if (!Number.isFinite(v)) return;
+                              setSrtAuthorCues((prev) => {
+                                const next = [...prev];
+                                if (!next[index]) return prev;
+                                next[index] = { ...next[index], endSec: v };
+                                return next;
+                              });
+                            }}
+                          />
+                          <TextField
+                            size="small"
+                            fullWidth
+                            label={t("subtitle.author.lineText")}
+                            value={cue.text}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              setSrtAuthorCues((prev) => {
+                                const next = [...prev];
+                                if (!next[index]) return prev;
+                                next[index] = { ...next[index], text: v };
+                                return next;
+                              });
+                            }}
+                          />
+                          <IconButton
+                            size="small"
+                            aria-label={t("subtitle.author.deleteLine")}
+                            onClick={() => {
+                              pushSrtAuthorUndoSnapshot();
+                              setSrtAuthorCues((prev) => prev.filter((_, j) => j !== index));
+                              setSrtAuthorLineIndex((li) => {
+                                if (index < li) return Math.max(0, li - 1);
+                                if (index === li) return Math.max(0, li);
+                                return li;
+                              });
+                            }}
+                          >
+                            <DeleteSweep fontSize="small" />
+                          </IconButton>
+                        </Box>
+                      ))}
+                    </Box>
+                  </AccordionDetails>
+                </Accordion>
+                )}
+
                 <FormControlLabel
                   control={<Switch checked={subtitleEnabled} onChange={(_, c) => setSubtitleEnabled(c)} size="small" />}
                   label={t("subtitle.enabled")}
