@@ -319,7 +319,8 @@
   "encode": {
     "warning": "Do not switch windows or close while generating",
     "loadingFfmpeg": "Loading FFmpeg...",
-    "converting": "Converting to MP4... {{progress}}%"
+    "converting": "Converting to MP4... {{progress}}%",
+    "convertingUnknown": "Converting to MP4... (estimating progress)"
   },
   "gallery": {
     "counter": "{{current}} / {{total}}",

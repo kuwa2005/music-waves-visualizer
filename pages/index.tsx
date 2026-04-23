@@ -254,7 +254,8 @@ const Home: NextPage = () => {
   // エンコード進捗
   const [encodeStatus, setEncodeStatus] = useState<"idle" | "loading" | "converting">("idle");
   const [encodeProgress, setEncodeProgress] = useState<number>(0);
-  const ENCODE_TIMEOUT_MS = 5 * 60 * 1000;
+  const [encodeProgressKnown, setEncodeProgressKnown] = useState(false);
+  const ENCODE_TIMEOUT_MS = 30 * 60 * 1000;
   const encodeStatusRef = useRef<"idle" | "loading" | "converting">("idle");
   /** MP4 変換中にユーザーが停止したとき、即ダウンロード用に保持 */
   const pendingEncodeWebmRef = useRef<{ blob: Blob; fileName: string } | null>(null);
@@ -3116,6 +3117,7 @@ const Home: NextPage = () => {
 
           setEncodeStatus("loading");
           setEncodeProgress(0);
+          setEncodeProgressKnown(false);
           const binaryData = new Uint8Array(await webmBlob.arrayBuffer());
 
           if (encodeCancelRequestedRef.current) {
@@ -3136,11 +3138,13 @@ const Home: NextPage = () => {
               onLoadComplete: () => {
                 setEncodeStatus("converting");
                 setEncodeProgress(0);
+                setEncodeProgressKnown(false);
               },
               onProgress: (ratio) => {
                 if (!Number.isFinite(ratio)) return;
                 const pct = Math.max(0, Math.min(100, Math.round(ratio * 100)));
                 setEncodeProgress(pct);
+                setEncodeProgressKnown(true);
               },
             },
             targetLufs,
@@ -3373,10 +3377,16 @@ const Home: NextPage = () => {
                 <Typography variant="body2" sx={{ mb: 0.5 }}>
                   {encodeStatus === "loading"
                     ? t("encode.loadingFfmpeg")
-                    : t("encode.converting", { progress: encodeProgress })}
+                    : encodeProgressKnown
+                      ? t("encode.converting", { progress: encodeProgress })
+                      : t("encode.convertingUnknown")}
                 </Typography>
                 <LinearProgress
-                  variant={encodeStatus === "loading" ? "indeterminate" : "determinate"}
+                  variant={
+                    encodeStatus === "loading" || (encodeStatus === "converting" && !encodeProgressKnown)
+                      ? "indeterminate"
+                      : "determinate"
+                  }
                   value={encodeProgress}
                   sx={{
                     height: 6,

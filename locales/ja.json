@@ -319,7 +319,8 @@
   "encode": {
     "warning": "生成中はウィンドウを切り替えたり閉じないでください",
     "loadingFfmpeg": "FFmpegを読み込み中...",
-    "converting": "MP4変換中... {{progress}}%"
+    "converting": "MP4変換中... {{progress}}%",
+    "convertingUnknown": "MP4変換中...（進捗取得中）"
   },
   "gallery": {
     "counter": "{{current}} / {{total}}",
