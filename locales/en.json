@@ -10,7 +10,7 @@
     "addImage": "Add image",
     "selectAudio": "Select Music File",
     "unselected": "Not selected",
-    "caption": "Still images and audio are auto-detected. For MP4 and other videos, use the music file picker for audio."
+    "caption": "Still images, audio, and subtitles are auto-detected. Use the music picker for MP4 audio, or a single MP4 under “Select image(s)” for a video background (do not mix with stills in one drop)."
   },
   "spectrum": {
     "title": "Spectrum Analyzer",
@@ -255,10 +255,16 @@
     "clearAllHint": "Clear all settings:",
     "clearConfirm": "Delete all saved settings?"
   },
+  "dialog": {
+    "cancel": "Cancel",
+    "clearGalleryForVideoTitle": "Switch to video background?",
+    "clearGalleryForVideoBody": "Your multi-image gallery will be cleared and the selected MP4 will load as the background video.",
+    "confirmReplaceWithVideo": "Clear and load"
+  },
   "snackbar": {
     "imageLoaded": "Image loaded",
     "imageLoadFailed": "Failed to load image",
-    "imageVideoNotAllowed": "Video files (e.g. MP4) cannot be used as the background. Choose a still image, or pick the video under the music file picker.",
+    "imageVideoNotAllowed": "“Add image” accepts still images only. For an MP4 background, pick a single file with “Choose image”, or load audio from a video first and attach a separate MP4.",
     "imageTypeNotSupported": "Unsupported file type. Use a still image such as JPEG, PNG, GIF, WebP, BMP, or SVG.",
     "audioTypeNotSupported": "Unsupported audio type. Use MP3, WAV, OGG, etc.",
     "fileTooLarge": "File is too large (max {{maxMB}} MB)",
@@ -270,6 +276,11 @@
     "videoAudioLoaded": "Loaded audio from video",
     "videoAudioFailed": "Failed to load audio from video: {{error}}",
     "videoLoadFailed": "Failed to load video",
+    "videoBackgroundLoaded": "Background video loaded",
+    "stillsBlockedInVideoBg": "Cannot add still images while video background mode is active. Clear or switch background first.",
+    "mixedMp4AndImages": "Do not mix still images and video (MP4) in one selection. Choose one type only.",
+    "multipleMp4NotAllowed": "Only one video file (e.g. MP4) can be used as the background.",
+    "videoBackgroundCanvasFallback": "Switched renderer to Canvas 2D for video background",
     "canvasNotReady": "Canvas not initialized",
     "recording": "Recording video...",
     "convertComplete": "Video conversion complete!",
@@ -373,6 +384,12 @@
     "title": "Video quality (record & MP4)",
     "videoBitrate": "Recording video bitrate: {{value}} Mbps",
     "videoBitrateHint": "Applied when encoding WebM. Some browsers may ignore this value.",
+    "recordContainer": "Recording container (WebM)",
+    "recordContainerHint": "Auto picks a supported codec. Alpha/transparency vs FFmpeg is tracked in issue #35.",
+    "recordMimeAuto": "Auto (recommended)",
+    "recordMimeVp9": "VP9",
+    "recordMimeVp8": "VP8",
+    "recordMimeH264": "H.264 (in WebM)",
     "audioBitrate": "MP4 audio (AAC) bitrate",
     "outputResolution": "Output resolution (canvas): {{width}} × {{height}} px"
   },

@@ -10,7 +10,7 @@
     "addImage": "画像を追加",
     "selectAudio": "音楽ファイルを選ぶ",
     "unselected": "未選択",
-    "caption": "静止画と音楽ファイルを自動判定します。MP4などの動画は「音楽ファイル」から選ぶと音声として使えます。"
+    "caption": "静止画・音楽・字幕を自動判定します。MP4 は音楽側で音声として読み込むか、「画像を選ぶ」で 1 本だけ選ぶと背景動画になります（静止画と混在不可）。"
   },
   "spectrum": {
     "title": "スペクトラムアナライザー",
@@ -255,10 +255,16 @@
     "clearAllHint": "すべての設定をクリア:",
     "clearConfirm": "すべての保存された設定を削除しますか？"
   },
+  "dialog": {
+    "cancel": "キャンセル",
+    "clearGalleryForVideoTitle": "動画背景に切り替えますか？",
+    "clearGalleryForVideoBody": "複数枚の静止画ギャラリーはクリアされ、選択した 1 本の MP4 を背景動画として読み込みます。",
+    "confirmReplaceWithVideo": "クリアして読み込む"
+  },
   "snackbar": {
     "imageLoaded": "画像を読み込みました",
     "imageLoadFailed": "画像の読み込みに失敗しました",
-    "imageVideoNotAllowed": "動画（MP4など）は背景画像に使えません。静止画を選ぶか、音楽ファイルから動画を選んでください。",
+    "imageVideoNotAllowed": "「画像を追加」では静止画のみ選べます。動画背景にする MP4 は「画像を選ぶ」で 1 本だけ選ぶか、音楽から動画を読み込んだあとに別 MP4 を指定してください。",
     "imageTypeNotSupported": "対応していないファイル形式です。JPEG / PNG / GIF / WebP / BMP / SVG などの静止画を選んでください。",
     "audioTypeNotSupported": "対応していない音声形式です。MP3 / WAV / OGG などを選んでください。",
     "fileTooLarge": "ファイルが大きすぎます（上限 {{maxMB}} MB）",
@@ -270,6 +276,11 @@
     "videoAudioLoaded": "動画ファイルから音声を読み込みました",
     "videoAudioFailed": "動画ファイルの音声読み込みに失敗しました: {{error}}",
     "videoLoadFailed": "動画ファイルの読み込みに失敗しました",
+    "videoBackgroundLoaded": "背景用の動画を読み込みました",
+    "stillsBlockedInVideoBg": "動画背景モード中は静止画ギャラリーを追加できません。クリアするか別の背景に切り替えてください。",
+    "mixedMp4AndImages": "静止画と動画（MP4 等）を同時に選べません。どちらか一方だけ選び直してください。",
+    "multipleMp4NotAllowed": "動画背景として選べるのは MP4 など 1 本のみです。",
+    "videoBackgroundCanvasFallback": "動画背景のためレンダラーを Canvas 2D に切り替えました",
     "canvasNotReady": "Canvas が初期化されていません",
     "recording": "動画を録画しています...",
     "convertComplete": "動画の変換が完了しました！",
@@ -373,6 +384,12 @@
     "title": "動画品質（録画・MP4変換）",
     "videoBitrate": "録画ビデオビットレート: {{value}} Mbps",
     "videoBitrateHint": "WebM 記録時に指定します。ブラウザにより無視される場合があります。",
+    "recordContainer": "録画出力形式（WebM コンテナ）",
+    "recordContainerHint": "自動はブラウザで使えるコーデックを優先します。透過アルファは Issue #35 で FFmpeg 経路と整理予定です。",
+    "recordMimeAuto": "自動（推奨）",
+    "recordMimeVp9": "VP9",
+    "recordMimeVp8": "VP8",
+    "recordMimeH264": "H.264（WebM 内）",
     "audioBitrate": "MP4 音声（AAC）ビットレート",
     "outputResolution": "出力解像度（キャンバス）: {{width}} × {{height}} px"
   },

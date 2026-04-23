@@ -6,6 +6,7 @@ import {
   type TitleOverlaySettings,
 } from "./subtitles";
 import { drawGalleryBackground, peekGalleryImageTransitionFrame } from "./galleryImageTransition";
+import { drawVideoCover } from "./drawVideoCover";
 
 const BASE_LINE_WIDTH_WAVEFORM = 2.0;
 const BASE_LINE_WIDTH_CIRCLE   = 2.0;
@@ -55,6 +56,12 @@ export type SpectrumSettings = {
   subtitleOverlay?: SubtitleOverlaySettings;
   /** タイトルオーバーレイ（Canvas 2D） */
   titleOverlay?: TitleOverlaySettings;
+  /** 背景として毎フレーム描画する動画（静止画・ギャラリートランジションが無いとき） */
+  backgroundVideo?: HTMLVideoElement | null;
+  /** 背景動画が音声タイムラインと別要素のとき、描画前に currentTime を同期 */
+  syncBackgroundVideo?: () => void;
+  /** 背景を透明クリア（映像なし・合成用オーバーレイ） */
+  clearBackgroundTransparent?: boolean;
 };
 
 const SPECTRUM_PRESET_RGB: Record<Exclude<SpectrumColorPresetKey, "custom">, [number, number, number]> = {
@@ -413,9 +420,9 @@ export const drawBars = (
   };
   // GPU加速を有効化（willReadFrequently: falseでGPU最適化）
   const ctx = canvas.getContext("2d", {
-    alpha: false, // 透明度を無効化してパフォーマンス向上
-    desynchronized: true, // 非同期レンダリングでパフォーマンス向上
-    willReadFrequently: false, // GPU最適化を有効化
+    alpha: true,
+    desynchronized: true,
+    willReadFrequently: false,
   });
   
   if (!ctx) {
@@ -437,11 +444,28 @@ export const drawBars = (
   };
 
   const galleryTransition = peekGalleryImageTransitionFrame();
+  const bgVideo = settings.backgroundVideo;
   if (galleryTransition) {
     drawGalleryBackground(ctx, canvasWidth, canvasHeight, imageCtx, galleryTransition);
+  } else if (bgVideo && bgVideo.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+    settings.syncBackgroundVideo?.();
+    const vw = bgVideo.videoWidth || 0;
+    const vh = bgVideo.videoHeight || 0;
+    if (vw > 0 && vh > 0) {
+      ctx.fillStyle = "rgba(34, 34, 34, 1.0)";
+      ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+      drawVideoCover(ctx, bgVideo, canvasWidth, canvasHeight);
+    } else if (settings.clearBackgroundTransparent) {
+      ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+    } else {
+      ctx.fillStyle = "rgba(34, 34, 34, 1.0)";
+      ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+    }
   } else if (imageCtx) {
     const offscreenCanvas = drawImageToOffscreen(imageCtx, canvasWidth, canvasHeight);
     ctx.drawImage(offscreenCanvas, 0, 0);
+  } else if (settings.clearBackgroundTransparent) {
+    ctx.clearRect(0, 0, canvasWidth, canvasHeight);
   } else {
     ctx.fillStyle = "rgba(34, 34, 34, 1.0)";
     ctx.fillRect(0, 0, canvasWidth, canvasHeight);
