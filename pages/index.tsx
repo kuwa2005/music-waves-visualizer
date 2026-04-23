@@ -3102,30 +3102,15 @@ const Home: NextPage = () => {
         setRecordMovieDisabled(true);
       };
 
-      // MP4入力時は video.play の完了前に recorder.start すると先頭で瞬断しやすい。
-      // 再生が実際に走り出すのを待ってから録画開始する。
-      onPlaySound();
+      // MP4入力時のみ、recorder.start の負荷が再生中に入ると瞬断しやすい。
+      // 先に recorder を起動してから再生を始め、瞬断を再生中に発生させない。
       if (videoElementRef.current) {
-        let attempts = 0;
-        const waitForVideoStart = () => {
-          const v = videoElementRef.current;
-          if (!v) {
-            startRecorder();
-            return;
-          }
-          if (!v.paused && v.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
-            window.setTimeout(startRecorder, 80);
-            return;
-          }
-          attempts += 1;
-          if (attempts >= 40) {
-            startRecorder();
-            return;
-          }
-          window.setTimeout(waitForVideoStart, 50);
-        };
-        waitForVideoStart();
+        startRecorder();
+        window.setTimeout(() => {
+          onPlaySound();
+        }, 120);
       } else {
+        onPlaySound();
         window.setTimeout(startRecorder, 80);
       }
     }, 100); // 100ms待機して録画用canvasのアニメーション開始を保証
