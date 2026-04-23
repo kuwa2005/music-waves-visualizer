@@ -47,15 +47,15 @@ export async function generateMp4Video(
       : "192k";
 
   const lufs = targetLufs != null && targetLufs > -60 && targetLufs < 0 ? targetLufs : null;
-  // 録画コーデックによっては stream copy の MP4 が duration 不整合を起こすことがあるため、
-  // まずは再エンコード寄り（動画/音声とも MP4 互換）を試し、失敗時に段階フォールバックする。
+  // 変換はまず高速な copy ベースを優先する。
+  // タイムスタンプ補正（genpts / avoid_negative_ts）だけ加えて duration ずれを抑制する。
   const runArgsPrimary =
     lufs != null
       ? [
           "-fflags", "+genpts",
+          "-avoid_negative_ts", "make_zero",
           "-i", webmName,
-          "-c:v", "libx264",
-          "-pix_fmt", "yuv420p",
+          "-vcodec", "copy",
           "-af", `loudnorm=I=${lufs}:LRA=11:TP=-1.5`,
           "-c:a", "aac",
           "-b:a", ab,
@@ -64,11 +64,9 @@ export async function generateMp4Video(
         ]
       : [
           "-fflags", "+genpts",
+          "-avoid_negative_ts", "make_zero",
           "-i", webmName,
-          "-c:v", "libx264",
-          "-pix_fmt", "yuv420p",
-          "-c:a", "aac",
-          "-b:a", ab,
+          "-vcodec", "copy",
           "-movflags", "+faststart",
           mp4Name,
         ];
@@ -77,6 +75,7 @@ export async function generateMp4Video(
     lufs != null
       ? [
           "-fflags", "+genpts",
+          "-avoid_negative_ts", "make_zero",
           "-i", webmName,
           "-vcodec", "copy",
           "-af", `loudnorm=I=${lufs}:LRA=11:TP=-1.5`,
@@ -87,10 +86,9 @@ export async function generateMp4Video(
         ]
       : [
           "-fflags", "+genpts",
+          "-avoid_negative_ts", "make_zero",
           "-i", webmName,
           "-vcodec", "copy",
-          "-c:a", "aac",
-          "-b:a", ab,
           "-movflags", "+faststart",
           mp4Name,
         ];
