@@ -2225,7 +2225,7 @@ const Home: NextPage = () => {
     }
     clearImageCache();
     clearWebGLImageCache();
-    const immediateCtx = canvasRef.current.getContext("2d", { alpha: false });
+    const immediateCtx = canvasRef.current.getContext("2d", { alpha: true });
     if (immediateCtx) {
       immediateCtx.fillStyle = "rgba(34, 34, 34, 1.0)";
       immediateCtx.fillRect(0, 0, dims.width, dims.height);
@@ -3135,7 +3135,7 @@ const Home: NextPage = () => {
     stopCanvas2DAnimation();
     stopWebGLAnimation();
     if (canvasRef.current) {
-      const ctx = canvasRef.current.getContext("2d");
+      const ctx = canvasRef.current.getContext("2d", { alpha: true });
       if (ctx) {
         ctx.fillStyle = "rgba(34, 34, 34, 1.0)";
         ctx.fillRect(0, 0, canvasRef.current.width, canvasRef.current.height);
