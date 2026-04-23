@@ -67,6 +67,8 @@ export async function generateMp4Video(
           "-avoid_negative_ts", "make_zero",
           "-i", webmName,
           "-vcodec", "copy",
+          "-c:a", "aac",
+          "-b:a", ab,
           "-movflags", "+faststart",
           mp4Name,
         ];
@@ -89,6 +91,8 @@ export async function generateMp4Video(
           "-avoid_negative_ts", "make_zero",
           "-i", webmName,
           "-vcodec", "copy",
+          "-c:a", "aac",
+          "-b:a", ab,
           "-movflags", "+faststart",
           mp4Name,
         ];
