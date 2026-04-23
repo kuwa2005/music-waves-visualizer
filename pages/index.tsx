@@ -3064,12 +3064,6 @@ const Home: NextPage = () => {
           setRecordMovieDisabled(false);
         }
       });
-      mediaRecorderRef.current = recorder;
-      recorder.start();
-      openSnackBar(t("snackbar.recording"));
-      onPlaySound();
-      setRecordMovieDisabled(true);
-
       const clip = resolvePlaybackWindow();
 
       // 再生終了時の処理（音声はスライス再生時も onended で区間終了）
@@ -3093,6 +3087,16 @@ const Home: NextPage = () => {
           setIsPlaySound(false);
         };
       }
+
+      // 再生開始直後に Recorder を同時スタートすると先頭で音声が引っかかる環境があるため、
+      // まず再生を開始してから少し遅らせて録画を開始する。
+      onPlaySound();
+      window.setTimeout(() => {
+        mediaRecorderRef.current = recorder;
+        recorder.start();
+        openSnackBar(t("snackbar.recording"));
+        setRecordMovieDisabled(true);
+      }, 180);
     }, 100); // 100ms待機して録画用canvasのアニメーション開始を保証
   };
 
