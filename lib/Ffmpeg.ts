@@ -31,7 +31,8 @@ export async function generateMp4Video(
     log: process.env.NODE_ENV === "development",
     progress: onProgress
       ? ({ ratio }) => {
-          onProgress(Math.min(1, ratio));
+          if (!Number.isFinite(ratio)) return;
+          onProgress(Math.max(0, Math.min(1, ratio)));
         }
       : undefined,
   });
@@ -56,7 +57,7 @@ export async function generateMp4Video(
         "-b:a", ab,
         mp4Name
       );
-    } catch (e) {
+    } catch (_e) {
       await ffmpeg.run("-i", webmName, "-vcodec", "copy", mp4Name);
     }
   } else {

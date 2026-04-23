@@ -6,8 +6,8 @@ Music Waves Visualizer is a web application that creates audio waveform videos b
 
 ### 1.1 Features
 
-- **Image loading**: Background image (drag & drop supported)
-- **Audio loading**: Waveform analysis source (MP4 supported)
+- **Image loading**: Still-image gallery or **single MP4** as **background video** (drag & drop supported); rules in [docs/VIDEO_BACKGROUND.md](./docs/VIDEO_BACKGROUND.md)
+- **Audio loading**: Waveform analysis source; **MP4** as music (audio track) or combined with same-file reuse when used for both roles
 - **Real-time waveform**: Seven internal modes; **five plus OFF** are exposed in the UI (modes 1 and 5 hidden)
 - **Resolution**: Manual (1920×1080, 1080×1920, 1920×1920) + **Auto** (detect from loaded image aspect ratio and map to 16:9 / 9:16 / 1:1)
 - **Display adjustment**: Scale and position per mode (saved per resolved layout)
@@ -83,6 +83,15 @@ Effects are shown during preview/recording only. Strength: weak / medium / stron
 └── styles/        # SCSS
 ```
 
+## 8. Background media (stills vs MP4 video)
+
+- **Still gallery**: Multiple images, transitions, auto-advance during preview/recording (see changelog 1.0.3).
+- **Video background**: One `<video>` element (either **reused** from the music MP4 or a **second** element when music is `AudioBuffer` / different file). Canvas draws with `drawVideoCover` (`lib/drawVideoCover.ts`) after optional `syncBackgroundOnlyVideo` (`pages/index.tsx`).
+- **UI constraints**: No still+MP4 in the same **Choose image** selection; no multiple MP4s for background; **Add image** is stills only and blocked during video-background mode. See [docs/VIDEO_BACKGROUND.md](./docs/VIDEO_BACKGROUND.md).
+- **Renderer**: Video background forces **Canvas 2D** for the spectrum loop until WebGL gains a video texture path ([#36](https://github.com/kuwa2005/music-waves-visualizer/issues/36)).
+- **Recording**: `recordMimePreference` (auto / VP9 / VP8 / H.264-in-WebM); recorded `Blob` type matches `MediaRecorder.mimeType`. FFmpeg / alpha follow-up: [#35](https://github.com/kuwa2005/music-waves-visualizer/issues/35).
+- **Sync**: Separate-file drift reduction: [#34](https://github.com/kuwa2005/music-waves-visualizer/issues/34).
+
 ---
 
 ## 日本語
@@ -90,4 +99,4 @@ Effects are shown during preview/recording only. Strength: weak / medium / stron
 - スペクトラムは内部で7モードあるが、**UI では OFF＋5種**（折れ線・波形上下対称のボタンは非表示。描画は残す）。
 - **きらきら**はラジアルグロウなし（星形のみ）。**空気感（ほこり）**は単色の小さな円で表現（Canvas/WebGL で方針を揃えた記述は上記）。
 - **設定の保存**は第一党 Cookie が主。クリップは開始＋長さで区間指定（長さ空欄＝末尾まで）。
-- 詳細は [仕様書.md](./仕様書.md) を参照。
+- **MP4 の音楽／背景動画の分離**は [docs/VIDEO_BACKGROUND.md](./docs/VIDEO_BACKGROUND.md) と [仕様書.md](./仕様書.md) §3.1 を参照。

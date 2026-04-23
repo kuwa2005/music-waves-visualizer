@@ -25,6 +25,10 @@ import {
   FormControlLabel,
   IconButton,
   Tooltip,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
 } from "@mui/material";
 import {
   FiberManualRecord,
@@ -123,6 +127,27 @@ function isLyricsTextFileByName(name: string): boolean {
 
 /** 字幕タブの「SRT 作成支援」パネル。公開時は false のまま（再有効化は true に変更） */
 const ENABLE_SRT_AUTHOR_UI = false;
+
+type CanvasLayoutKey = "1920x1080" | "1080x1920" | "1920x1920";
+
+function detectLayoutFromAspectRatio(ratio: number): CanvasLayoutKey {
+  const candidates: Array<{ layout: CanvasLayoutKey; ratio: number }> = [
+    { layout: "1920x1080", ratio: 16 / 9 },
+    { layout: "1080x1920", ratio: 9 / 16 },
+    { layout: "1920x1920", ratio: 1 },
+  ];
+  let best = candidates[0];
+  let bestDiff = Math.abs(ratio - best.ratio);
+  for (let i = 1; i < candidates.length; i++) {
+    const c = candidates[i];
+    const d = Math.abs(ratio - c.ratio);
+    if (d < bestDiff) {
+      best = c;
+      bestDiff = d;
+    }
+  }
+  return best.layout;
+}
 
 function getCookieValue(name: string): string | null {
   if (typeof document === "undefined") return null;
@@ -306,9 +331,12 @@ const Home: NextPage = () => {
   const audioPlaybackStartCtxTimeRef = useRef<number | null>(null);
   const audioPlaybackOffsetSecRef = useRef<number>(0);
   const videoElementRef = useRef<HTMLVideoElement>(null);
+  /** 音声が AudioBuffer のとき、映像のみ別 MP4 を背景にする用 */
+  const backgroundOnlyVideoRef = useRef<HTMLVideoElement | null>(null);
   const mediaElementSourceRef = useRef<MediaElementAudioSourceNode | null>(null);
   const playbackWindowTimerRef = useRef<number | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+
   const getCurrentPlaybackTimeSec = useCallback((): number => {
     if (!isPlaySound && !isRecording) return 0;
     const v = videoElementRef.current;
@@ -322,6 +350,41 @@ const Home: NextPage = () => {
     return 0;
   }, [isPlaySound, isRecording]);
 
+  const syncBackgroundOnlyVideo = useCallback(() => {
+    const v = backgroundOnlyVideoRef.current;
+    if (!v || !(v.duration > 0)) return;
+    const t = getCurrentPlaybackTimeSec();
+    const end = Math.max(0, v.duration - 0.04);
+    const clamped = Math.min(Math.max(0, t), end);
+    const drift = Math.abs(v.currentTime - clamped);
+    // シークを詰めすぎるとフレームがちらつくため、ある程度のズレまで許容
+    if (drift > 0.12) {
+      try {
+        v.currentTime = clamped;
+      } catch {
+        /* ignore */
+      }
+    }
+  }, [getCurrentPlaybackTimeSec]);
+
+  const disposeStandaloneBackgroundVideo = useCallback(() => {
+    const v = backgroundOnlyVideoRef.current;
+    if (!v) return;
+    v.onerror = null;
+    v.onloadedmetadata = null;
+    v.onended = null;
+    try {
+      v.pause();
+    } catch {
+      /* ignore */
+    }
+    if (v.src?.startsWith("blob:")) {
+      URL.revokeObjectURL(v.src);
+    }
+    v.src = "";
+    backgroundOnlyVideoRef.current = null;
+  }, []);
+
   useEffect(() => {
     srtAuthorLineIndexRef.current = srtAuthorLineIndex;
   }, [srtAuthorLineIndex]);
@@ -331,51 +394,6 @@ const Home: NextPage = () => {
   useEffect(() => {
     srtAuthorCuesRef.current = srtAuthorCues;
   }, [srtAuthorCues]);
-
-  const loadVideoAsAudioSource = useCallback(
-    (file: File) => {
-      const g = gateVideoAsMediaFile(file);
-      if (snackbarFileGate(g, "video")) {
-        return;
-      }
-      const video = document.createElement("video");
-      video.preload = "auto";
-      video.crossOrigin = "anonymous";
-      video.src = URL.createObjectURL(file);
-      videoElementRef.current = video;
-
-      video.onloadedmetadata = () => {
-        try {
-          mediaElementSourceRef.current?.disconnect();
-          const source = audioCtxRef.current.createMediaElementSource(video);
-          mediaElementSourceRef.current = source;
-          source.connect(analyserRef.current);
-          analyserRef.current.connect(audioCtxRef.current.destination);
-          analyserRef.current.connect(streamDestinationRef.current);
-
-          video.onended = () => {
-            setIsPlaySound(false);
-            stopCanvas2DAnimation();
-            stopWebGLAnimation();
-          };
-
-          setPlaySoundDisabled(false);
-          setRecordMovieDisabled(false);
-          setAudioFileName(file.name);
-          exitConfirmRef.current = true;
-          openSnackBar(t("snackbar.videoAudioLoaded"));
-        } catch (error) {
-          openSnackBar(t("snackbar.videoAudioFailed", { error }));
-          videoElementRef.current = null;
-        }
-      };
-      video.onerror = () => {
-        openSnackBar(t("snackbar.videoLoadFailed"));
-        videoElementRef.current = null;
-      };
-    },
-    [t, openSnackBar, snackbarFileGate]
-  );
 
   // 開発者モードフラグ（環境変数で制御）
   const isDeveloperMode =
@@ -675,9 +693,9 @@ const Home: NextPage = () => {
 
   // レイアウト別スペアナ設定のキー（縦/横/正方形 × モード）
   const LAYOUTS: CanvasLayout[] = ["1920x1080", "1080x1920", "1920x1920"];
-  const getSettingsKey = (layout: CanvasLayout, m: number) => {
+  const getSettingsKey = useCallback((layout: CanvasLayout, m: number) => {
     return `spectrumSettings_${layout}_${m}`;
-  };
+  }, []);
 
   // レイアウト×モードの設定を保存
   const saveSettings = (layout: CanvasLayout, m: number, adjustments: ModeAdjustments) => {
@@ -689,36 +707,42 @@ const Home: NextPage = () => {
     }
   };
 
-  const clampModeAdjustments = (adj: ModeAdjustments): ModeAdjustments => ({
-    scaleX: Math.min(5, Math.max(0.1, adj.scaleX)),
-    scaleY: Math.min(5, Math.max(0.1, adj.scaleY)),
-    offsetX: Math.min(150, Math.max(-150, Math.round(adj.offsetX))),
-    offsetY: Math.min(150, Math.max(-150, Math.round(adj.offsetY))),
-  });
+  const clampModeAdjustments = useCallback(
+    (adj: ModeAdjustments): ModeAdjustments => ({
+      scaleX: Math.min(5, Math.max(0.1, adj.scaleX)),
+      scaleY: Math.min(5, Math.max(0.1, adj.scaleY)),
+      offsetX: Math.min(150, Math.max(-150, Math.round(adj.offsetX))),
+      offsetY: Math.min(150, Math.max(-150, Math.round(adj.offsetY))),
+    }),
+    []
+  );
 
   // レイアウト×モードの設定を読み込み
-  const loadSettings = (layout: CanvasLayout, m: number): ModeAdjustments | null => {
-    try {
-      const key = getSettingsKey(layout, m);
-      const saved = mwvGetItem(key);
-      if (saved) {
-        return clampModeAdjustments(JSON.parse(saved) as ModeAdjustments);
+  const loadSettings = useCallback(
+    (layout: CanvasLayout, m: number): ModeAdjustments | null => {
+      try {
+        const key = getSettingsKey(layout, m);
+        const saved = mwvGetItem(key);
+        if (saved) {
+          return clampModeAdjustments(JSON.parse(saved) as ModeAdjustments);
+        }
+        // 旧形式のキー（mode_size）にも対応
+        const legacyKey = `spectrumSettings_${m}_${layout}`;
+        const legacy = mwvGetItem(legacyKey);
+        if (legacy) {
+          const parsed = JSON.parse(legacy) as ModeAdjustments;
+          const clamped = clampModeAdjustments(parsed);
+          mwvSetItem(key, JSON.stringify(clamped));
+          mwvRemoveItem(legacyKey);
+          return clamped;
+        }
+      } catch (error) {
+        console.error("設定の読み込みに失敗しました:", error);
       }
-      // 旧形式のキー（mode_size）にも対応
-      const legacyKey = `spectrumSettings_${m}_${layout}`;
-      const legacy = mwvGetItem(legacyKey);
-      if (legacy) {
-        const parsed = JSON.parse(legacy) as ModeAdjustments;
-        const clamped = clampModeAdjustments(parsed);
-        mwvSetItem(key, JSON.stringify(clamped));
-        mwvRemoveItem(legacyKey);
-        return clamped;
-      }
-    } catch (error) {
-      console.error("設定の読み込みに失敗しました:", error);
-    }
-    return null;
-  };
+      return null;
+    },
+    [clampModeAdjustments, getSettingsKey]
+  );
 
   const DEFAULT_ADJUSTMENTS: ModeAdjustments = { scaleX: 1.0, scaleY: 1.0, offsetX: 0, offsetY: 0 };
 
@@ -1321,6 +1345,16 @@ const Home: NextPage = () => {
   const [galleryAutoEnabled, setGalleryAutoEnabled] = useState(false);
   const [galleryAutoSec, setGalleryAutoSec] = useState(5);
 
+  /** 背景: なし / 静止画ギャラリー / 単体 MP4 動画 */
+  type BackgroundMediaMode = "none" | "stills" | "video";
+  const [backgroundMediaMode, setBackgroundMediaMode] = useState<BackgroundMediaMode>("none");
+  const [backgroundVideoFileName, setBackgroundVideoFileName] = useState("");
+  const [reuseAudioVideoForBackground, setReuseAudioVideoForBackground] = useState(false);
+  const [backgroundVideoLayoutCache, setBackgroundVideoLayoutCache] = useState<CanvasLayout | null>(null);
+  const [dialogClearGalleryForVideo, setDialogClearGalleryForVideo] = useState(false);
+  const pendingVideoBackgroundFileRef = useRef<File | null>(null);
+  const [videoBackgroundRepaintNonce, setVideoBackgroundRepaintNonce] = useState(0);
+
   useEffect(() => {
     if (typeof window === "undefined") return;
     mwvSetItem("common_galleryAutoEnabled", galleryAutoEnabled ? "1" : "0");
@@ -1430,10 +1464,220 @@ const Home: NextPage = () => {
     isRecording,
   ]);
 
-  const activeCanvasLayout = useMemo(
-    () => resolveCanvasLayout(canvasSize, imageCtx),
-    [canvasSize, imageCtx, resolveCanvasLayout]
+  const activeCanvasLayout = useMemo(() => {
+    if (canvasSize === "auto" && backgroundMediaMode === "video" && backgroundVideoLayoutCache) {
+      return backgroundVideoLayoutCache;
+    }
+    return resolveCanvasLayout(canvasSize, imageCtx);
+  }, [
+    canvasSize,
+    imageCtx,
+    backgroundMediaMode,
+    backgroundVideoLayoutCache,
+    resolveCanvasLayout,
+  ]);
+
+  const primeCanvasForVideoElement = useCallback(
+    (video: HTMLVideoElement) => {
+      if (!canvasRef.current) return;
+      const w = video.videoWidth || 1;
+      const h = video.videoHeight || 1;
+      const layout =
+        canvasSize === "auto" ? detectLayoutFromAspectRatio(w / h) : (canvasSize as CanvasLayout);
+      const dims = getCanvasDimensions(layout);
+      if (canvasRef.current.width !== dims.width || canvasRef.current.height !== dims.height) {
+        canvasRef.current.width = dims.width;
+        canvasRef.current.height = dims.height;
+      }
+      clearImageCache();
+      clearWebGLImageCache();
+      setBackgroundVideoLayoutCache(canvasSize === "auto" ? layout : null);
+      const immediateCtx = canvasRef.current.getContext("2d", { alpha: true });
+      if (immediateCtx) {
+        immediateCtx.fillStyle = "rgba(34, 34, 34, 1.0)";
+        immediateCtx.fillRect(0, 0, dims.width, dims.height);
+        const scale = Math.max(dims.width / w, dims.height / h);
+        const drawW = Math.round(w * scale);
+        const drawH = Math.round(h * scale);
+        const x = (dims.width - drawW) / 2;
+        const y = (dims.height - drawH) / 2;
+        immediateCtx.drawImage(video, 0, 0, w, h, x, y, drawW, drawH);
+      }
+    },
+    [canvasSize, getCanvasDimensions]
   );
+
+  const loadVideoAsAudioSource = useCallback(
+    (file: File, options?: { visualBackgroundSameElement?: boolean }) => {
+      disposeStandaloneBackgroundVideo();
+      setReuseAudioVideoForBackground(false);
+      setBackgroundVideoLayoutCache(null);
+      const g = gateVideoAsMediaFile(file);
+      if (snackbarFileGate(g, "video")) {
+        return;
+      }
+      const video = document.createElement("video");
+      video.preload = "auto";
+      video.crossOrigin = "anonymous";
+      video.src = URL.createObjectURL(file);
+      videoElementRef.current = video;
+
+      video.onloadedmetadata = () => {
+        try {
+          mediaElementSourceRef.current?.disconnect();
+          const source = audioCtxRef.current.createMediaElementSource(video);
+          mediaElementSourceRef.current = source;
+          source.connect(analyserRef.current);
+          analyserRef.current.connect(audioCtxRef.current.destination);
+          analyserRef.current.connect(streamDestinationRef.current);
+
+          video.onended = () => {
+            setIsPlaySound(false);
+            stopCanvas2DAnimation();
+            stopWebGLAnimation();
+          };
+
+          setPlaySoundDisabled(false);
+          setRecordMovieDisabled(false);
+          setAudioFileName(file.name);
+          exitConfirmRef.current = true;
+          if (options?.visualBackgroundSameElement) {
+            setImageGallery((prev) => {
+              prev.forEach((p) => URL.revokeObjectURL(p.objectUrl));
+              return [];
+            });
+            setGalleryIndex(0);
+            setReuseAudioVideoForBackground(true);
+            setBackgroundMediaMode("video");
+            setBackgroundVideoFileName(file.name);
+            const lay = detectLayoutFromAspectRatio(
+              (video.videoWidth || 1) / (video.videoHeight || 1)
+            );
+            setBackgroundVideoLayoutCache(canvasSize === "auto" ? lay : null);
+            primeCanvasForVideoElement(video);
+            if (canvasSize === "auto") {
+              const loaded = loadSettings(lay, mode);
+              setModeAdjustments(loaded ?? { scaleX: 1.0, scaleY: 1.0, offsetX: 0, offsetY: 0 });
+            }
+          } else {
+            setBackgroundMediaMode("none");
+            setBackgroundVideoFileName("");
+          }
+          setVideoBackgroundRepaintNonce((n) => n + 1);
+          openSnackBar(t("snackbar.videoAudioLoaded"));
+        } catch (error) {
+          openSnackBar(t("snackbar.videoAudioFailed", { error }));
+          videoElementRef.current = null;
+        }
+      };
+      video.onerror = () => {
+        openSnackBar(t("snackbar.videoLoadFailed"));
+        videoElementRef.current = null;
+      };
+    },
+    [
+      canvasSize,
+      disposeStandaloneBackgroundVideo,
+      loadSettings,
+      mode,
+      openSnackBar,
+      primeCanvasForVideoElement,
+      snackbarFileGate,
+      t,
+    ]
+  );
+
+  const applyBackgroundMp4File = useCallback(
+    (file: File) => {
+      const hasBuffer = decodedAudioBufferRef.current != null;
+      const av = videoElementRef.current;
+      const sameName = !!(av && audioFileName === file.name);
+
+      if (hasBuffer || (av && !sameName)) {
+        const g = gateVideoAsMediaFile(file);
+        if (snackbarFileGate(g, "video")) {
+          return;
+        }
+        disposeStandaloneBackgroundVideo();
+        const video = document.createElement("video");
+        video.preload = "auto";
+        video.crossOrigin = "anonymous";
+        video.src = URL.createObjectURL(file);
+        video.onloadedmetadata = () => {
+          try {
+            backgroundOnlyVideoRef.current = video;
+            setReuseAudioVideoForBackground(false);
+            setImageGallery((prev) => {
+              prev.forEach((p) => URL.revokeObjectURL(p.objectUrl));
+              return [];
+            });
+            setGalleryIndex(0);
+            setBackgroundMediaMode("video");
+            setBackgroundVideoFileName(file.name);
+            const lay = detectLayoutFromAspectRatio(
+              (video.videoWidth || 1) / (video.videoHeight || 1)
+            );
+            setBackgroundVideoLayoutCache(canvasSize === "auto" ? lay : null);
+            primeCanvasForVideoElement(video);
+            if (canvasSize === "auto") {
+              const loaded = loadSettings(lay, mode);
+              setModeAdjustments(loaded ?? { scaleX: 1.0, scaleY: 1.0, offsetX: 0, offsetY: 0 });
+            }
+            exitConfirmRef.current = true;
+            setVideoBackgroundRepaintNonce((n) => n + 1);
+            openSnackBar(t("snackbar.videoBackgroundLoaded"));
+          } catch (_e) {
+            openSnackBar(t("snackbar.videoLoadFailed"));
+          }
+        };
+        video.onerror = () => {
+          openSnackBar(t("snackbar.videoLoadFailed"));
+        };
+        return;
+      }
+
+      loadVideoAsAudioSource(file, { visualBackgroundSameElement: true });
+    },
+    [
+      audioFileName,
+      canvasSize,
+      disposeStandaloneBackgroundVideo,
+      loadSettings,
+      loadVideoAsAudioSource,
+      mode,
+      openSnackBar,
+      primeCanvasForVideoElement,
+      snackbarFileGate,
+      t,
+    ]
+  );
+
+  const spectrumVideoBackground = useMemo(() => {
+    void videoBackgroundRepaintNonce;
+    const el =
+      backgroundMediaMode === "video"
+        ? reuseAudioVideoForBackground
+          ? videoElementRef.current
+          : backgroundOnlyVideoRef.current
+        : null;
+    const clearTransparent =
+      backgroundMediaMode === "video" &&
+      el != null &&
+      (el.videoWidth === 0 || el.videoHeight === 0);
+    return {
+      backgroundVideo: el,
+      syncBackgroundVideo:
+        backgroundMediaMode === "video" && !reuseAudioVideoForBackground
+          ? syncBackgroundOnlyVideo
+          : undefined,
+      clearBackgroundTransparent: clearTransparent,
+    };
+  }, [
+    backgroundMediaMode,
+    reuseAudioVideoForBackground,
+    syncBackgroundOnlyVideo,
+    videoBackgroundRepaintNonce,
+  ]);
 
   // マウント直後に Cookie から設定を読み込み（useLayoutEffect: 永続化用 useEffect より先に state を確定）
   useLayoutEffect(() => {
@@ -1784,6 +2028,15 @@ const Home: NextPage = () => {
     }
   }, [rendererType, subtitleEnabled, subtitleCues.length, titleEnabled, titleText, openSnackBar, t]);
 
+  useEffect(() => {
+    if (backgroundMediaMode !== "video" || rendererType !== "webgl") {
+      return;
+    }
+    setRendererType("canvas2d");
+    mwvSetItem("common_rendererType", "canvas2d");
+    openSnackBar(t("snackbar.videoBackgroundCanvasFallback"));
+  }, [backgroundMediaMode, rendererType, openSnackBar, t]);
+
   // Canvas サイズ設定（canvasSize または rendererType が変更されたときに実行）
   // useLayoutEffectを使用してDOM更新直後にサイズを設定
   useLayoutEffect(() => {
@@ -1838,6 +2091,7 @@ const Home: NextPage = () => {
         isPlaying: isPlaySound || isRecording,
         playbackTimeSec: getCurrentPlaybackTimeSec(),
       },
+      ...spectrumVideoBackground,
     };
 
     if (rendererType === 'webgl') {
@@ -1895,6 +2149,7 @@ const Home: NextPage = () => {
     titleText,
     titleStyle,
     getCurrentPlaybackTimeSec,
+    spectrumVideoBackground,
   ]);
 
   // FPS表示更新（1秒ごとに更新）
@@ -1920,7 +2175,7 @@ const Home: NextPage = () => {
     }
     clearImageCache();
     clearWebGLImageCache();
-    const immediateCtx = canvasRef.current.getContext("2d", { alpha: false });
+    const immediateCtx = canvasRef.current.getContext("2d", { alpha: true });
     if (immediateCtx) {
       immediateCtx.fillStyle = "rgba(34, 34, 34, 1.0)";
       immediateCtx.fillRect(0, 0, dims.width, dims.height);
@@ -1937,6 +2192,11 @@ const Home: NextPage = () => {
 
   /** replaceAll: 一覧を差し替え（複数枚は先頭でキャンバス確定後に連結）。false: 空なら新規、既存があれば追加 */
   const loadGalleryImagesFromFiles = (files: File[], replaceAll: boolean) => {
+    if (backgroundMediaMode === "video") {
+      openSnackBar(t("snackbar.stillsBlockedInVideoBg"));
+      return;
+    }
+    setBackgroundMediaMode("stills");
     const valid: File[] = [];
     for (const file of files) {
       if (isVideoFileByName(file.name)) {
@@ -2033,6 +2293,28 @@ const Home: NextPage = () => {
       return;
     }
     try {
+      disposeStandaloneBackgroundVideo();
+      if (videoElementRef.current) {
+        videoElementRef.current.onerror = null;
+        videoElementRef.current.onloadedmetadata = null;
+        videoElementRef.current.onended = null;
+        try {
+          videoElementRef.current.pause();
+        } catch {
+          /* ignore */
+        }
+        if (videoElementRef.current.src?.startsWith("blob:")) {
+          URL.revokeObjectURL(videoElementRef.current.src);
+        }
+        videoElementRef.current.src = "";
+        videoElementRef.current = null;
+      }
+      mediaElementSourceRef.current?.disconnect();
+      mediaElementSourceRef.current = null;
+      setReuseAudioVideoForBackground(false);
+      setBackgroundMediaMode("none");
+      setBackgroundVideoFileName("");
+      setBackgroundVideoLayoutCache(null);
       const arraybuffer = await file.arrayBuffer();
       decodedAudioBufferRef.current = await audioCtxRef.current.decodeAudioData(
         arraybuffer
@@ -2072,12 +2354,45 @@ const Home: NextPage = () => {
   // 画像ボタンから読み込み（複数選択で一括登録・差し替え）
   const imageLoad = (event: { target: HTMLInputElement }) => {
     const raw = Array.from(event.target.files ?? []);
-    if (raw.length === 0) return;
-    loadGalleryImagesFromFiles(raw, true);
     event.target.value = "";
+    if (raw.length === 0) return;
+
+    const videos = raw.filter((f) => isVideoFileByName(f.name));
+    const images = raw.filter((f) => isImageFileByName(f.name) && !isVideoFileByName(f.name));
+    if (raw.length !== videos.length + images.length) {
+      openSnackBar(t("snackbar.imageTypeNotSupported"));
+      return;
+    }
+    if (videos.length > 0 && images.length > 0) {
+      openSnackBar(t("snackbar.mixedMp4AndImages"));
+      return;
+    }
+    if (videos.length > 1) {
+      openSnackBar(t("snackbar.multipleMp4NotAllowed"));
+      return;
+    }
+    if (videos.length === 1) {
+      const vf = videos[0]!;
+      const g = gateVideoAsMediaFile(vf);
+      if (snackbarFileGate(g, "video")) return;
+      if (imageGallery.length >= 2) {
+        pendingVideoBackgroundFileRef.current = vf;
+        setDialogClearGalleryForVideo(true);
+        return;
+      }
+      applyBackgroundMp4File(vf);
+      return;
+    }
+
+    loadGalleryImagesFromFiles(images, true);
   };
 
   const appendImageLoad = (event: { target: HTMLInputElement }) => {
+    if (backgroundMediaMode === "video") {
+      openSnackBar(t("snackbar.stillsBlockedInVideoBg"));
+      event.target.value = "";
+      return;
+    }
     const raw = Array.from(event.target.files ?? []);
     if (raw.length === 0) return;
     loadGalleryImagesFromFiles(raw, false);
@@ -2119,30 +2434,40 @@ const Home: NextPage = () => {
   const handleDrop = async (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     const files = Array.from(e.dataTransfer.files);
-    
+
     if (files.length === 0) {
       return;
     }
 
-    const imageFiles: File[] = [];
+    const imageFiles = files.filter((f) => isImageFileByName(f.name) && !isVideoFileByName(f.name));
+    const videoFiles = files.filter((f) => isVideoFileByName(f.name));
+    const mixedStillsAndVideo = imageFiles.length > 0 && videoFiles.length > 0;
+    if (mixedStillsAndVideo) {
+      openSnackBar(t("snackbar.mixedMp4AndImages"));
+    } else if (videoFiles.length > 1) {
+      openSnackBar(t("snackbar.multipleMp4NotAllowed"));
+    }
+
     let audioFile: File | null = null;
     let subtitleFile: File | null = null;
 
     for (const file of files) {
-      if (isImageFileByName(file.name) && !isVideoFileByName(file.name)) {
-        imageFiles.push(file);
-      } else if (isAudioFileByName(file.name) && !audioFile) {
-        audioFile = file;
-      } else if (isSrtFileByName(file.name) && !subtitleFile) {
+      if (isSrtFileByName(file.name) && !subtitleFile) {
         subtitleFile = file;
-      } else if (isVideoFileByName(file.name)) {
-        if (!audioFile) {
+      } else if (!mixedStillsAndVideo && videoFiles.length <= 1) {
+        if (isVideoFileByName(file.name) && !audioFile) {
+          audioFile = file;
+        } else if (isAudioFileByName(file.name) && !isVideoFileByName(file.name) && !audioFile) {
+          audioFile = file;
+        }
+      } else if (mixedStillsAndVideo || videoFiles.length > 1) {
+        if (isAudioFileByName(file.name) && !isVideoFileByName(file.name) && !audioFile) {
           audioFile = file;
         }
       }
     }
 
-    if (imageFiles.length > 0) {
+    if (!mixedStillsAndVideo && imageFiles.length > 0) {
       loadGalleryImagesFromFiles(imageFiles, true);
     }
 
@@ -2468,10 +2793,16 @@ const Home: NextPage = () => {
         video.pause();
       }
       if (clip.full === false) {
-        video.currentTime = clip.start;
-        audioPlaybackOffsetSecRef.current = clip.start;
+        const target = clip.start;
+        // 毎回 currentTime を書き換えると先頭付近で微小な停止が出る端末がある
+        if (!Number.isFinite(video.currentTime) || Math.abs(video.currentTime - target) > 0.05) {
+          video.currentTime = target;
+        }
+        audioPlaybackOffsetSecRef.current = target;
       } else {
-        video.currentTime = 0;
+        if (!Number.isFinite(video.currentTime) || Math.abs(video.currentTime) > 0.05) {
+          video.currentTime = 0;
+        }
         audioPlaybackOffsetSecRef.current = 0;
       }
       audioPlaybackStartCtxTimeRef.current = null;
@@ -2514,6 +2845,14 @@ const Home: NextPage = () => {
   const onPlaySound = () => {
     if (isPlaySound) {
       clearPlaybackWindowTimer();
+      // MediaRecorder を先に止めて partial WebM の stop イベントを発火させる
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
+        try {
+          mediaRecorderRef.current.stop();
+        } catch {
+          /* ignore */
+        }
+      }
       if (audioBufferSrcRef.current) {
         try {
           audioBufferSrcRef.current.stop(0);
@@ -2566,7 +2905,6 @@ const Home: NextPage = () => {
       openSnackBar(t("snackbar.canvasNotReady"));
       return;
     }
-    
     // 録画開始フラグを先に設定
     setIsRecording(true);
     
@@ -2596,6 +2934,7 @@ const Home: NextPage = () => {
         isPlaying: true,
         playbackTimeSec: getCurrentPlaybackTimeSec(),
       },
+      ...spectrumVideoBackground,
     };
     if (canvasRef.current && analyserRef.current) {
       if (rendererType === "webgl") {
@@ -2644,24 +2983,44 @@ const Home: NextPage = () => {
       try {
         recorder = new MediaRecorder(outputStream, recorderOptions);
       } catch {
-        recorder = new MediaRecorder(outputStream, { mimeType: "video/webm;codecs=h264" });
+        recorder = new MediaRecorder(outputStream, { mimeType: "video/webm" });
       }
       const recordedBlobs: Blob[] = [];
       recorder.addEventListener("dataavailable", (e) => {
         recordedBlobs.push(e.data);
       });
+      const safeStopRecorder = () => {
+        if (recorder.state !== "recording") return;
+        try {
+          recorder.requestData();
+        } catch {
+          /* ignore */
+        }
+        // 末尾チャンクの flush を待って stop（即 stop だと終端が欠ける環境がある）
+        window.setTimeout(() => {
+          if (recorder.state === "recording") {
+            try {
+              recorder.stop();
+            } catch {
+              /* ignore */
+            }
+          }
+        }, 140);
+      };
       //録画終了時に動画ファイルのダウンロードリンクを生成する処理
       recorder.addEventListener("stop", async () => {
+        const recordedMimeType =
+          recorder.mimeType && recorder.mimeType.length > 0 ? recorder.mimeType : "video/webm";
         mediaRecorderRef.current = null;
         setIsRecording(false);
         const movieName = "movie_" + Math.random().toString(36).slice(-8);
         const webmName = movieName + ".webm";
         const mp4Name = movieName + ".mp4";
+        const webmBlob = new Blob(recordedBlobs, { type: recordedMimeType });
 
         try {
           setEncodeStatus("loading");
           setEncodeProgress(0);
-          const webmBlob = new Blob(recordedBlobs, { type: "video/webm" });
           const binaryData = new Uint8Array(await webmBlob.arrayBuffer());
           const video = await generateMp4Video(
             binaryData,
@@ -2673,11 +3032,19 @@ const Home: NextPage = () => {
                 setEncodeStatus("converting");
                 setEncodeProgress(0);
               },
-              onProgress: (ratio) => setEncodeProgress(Math.round(ratio * 100)),
+              onProgress: (ratio) => {
+                if (!Number.isFinite(ratio)) return;
+                const pct = Math.max(0, Math.min(100, Math.round(ratio * 100)));
+                setEncodeProgress(pct);
+              },
             },
             targetLufs,
             exportAudioBitrateKbps
           );
+          if (!video || video.length === 0) {
+            throw new Error("empty_mp4");
+          }
+
           setEncodeStatus("idle");
           const mp4Blob = new Blob([video], { type: "video/mp4" });
           const objectURL = URL.createObjectURL(mp4Blob);
@@ -2690,19 +3057,20 @@ const Home: NextPage = () => {
           exitConfirmRef.current = false;
           openSnackBar(t("snackbar.convertComplete"));
         } catch (error) {
-          openSnackBar(t("snackbar.convertFailed", { error: (error as Error).message }));
+          const msg = (error as Error).message || "unknown_error";
+          openSnackBar(t("snackbar.convertFailed", { error: msg }));
           setEncodeStatus("idle");
         } finally {
           setRecordMovieDisabled(false);
         }
       });
-      mediaRecorderRef.current = recorder;
-      recorder.start();
-      openSnackBar(t("snackbar.recording"));
-      onPlaySound();
-      setRecordMovieDisabled(true);
-
       const clip = resolvePlaybackWindow();
+      if (clip.full === false && clip.duration <= 0) {
+        setIsRecording(false);
+        setRecordMovieDisabled(false);
+        openSnackBar(t("snackbar.shortClipInvalid"));
+        return;
+      }
 
       // 再生終了時の処理（音声はスライス再生時も onended で区間終了）
       if (videoElementRef.current) {
@@ -2712,7 +3080,7 @@ const Home: NextPage = () => {
             if (originalOnEnded) {
               originalOnEnded.call(videoElementRef.current);
             }
-            recorder.stop();
+            safeStopRecorder();
             setIsRecording(false);
             setIsPlaySound(false);
           };
@@ -2720,10 +3088,30 @@ const Home: NextPage = () => {
         // ショート区間の動画は onPlaySound 内のタイマーで停止・recorder.stop
       } else if (audioBufferSrcRef.current) {
         audioBufferSrcRef.current.onended = () => {
-          recorder.stop();
+          safeStopRecorder();
           setIsRecording(false);
           setIsPlaySound(false);
         };
+      }
+
+      const startRecorder = () => {
+        if (recorder.state !== "inactive") return;
+        mediaRecorderRef.current = recorder;
+        recorder.start();
+        openSnackBar(t("snackbar.recording"));
+        setRecordMovieDisabled(true);
+      };
+
+      // MP4入力時のみ、recorder.start の負荷が再生中に入ると瞬断しやすい。
+      // 先に recorder を起動してから再生を始め、瞬断を再生中に発生させない。
+      if (videoElementRef.current) {
+        startRecorder();
+        window.setTimeout(() => {
+          onPlaySound();
+        }, 120);
+      } else {
+        onPlaySound();
+        window.setTimeout(startRecorder, 80);
       }
     }, 100); // 100ms待機して録画用canvasのアニメーション開始を保証
   };
@@ -2732,6 +3120,12 @@ const Home: NextPage = () => {
   const onClear = () => {
     clearPlaybackWindowTimer();
     mediaRecorderRef.current = null;
+    disposeStandaloneBackgroundVideo();
+    setBackgroundMediaMode("none");
+    setBackgroundVideoFileName("");
+    setReuseAudioVideoForBackground(false);
+    setBackgroundVideoLayoutCache(null);
+    setVideoBackgroundRepaintNonce((n) => n + 1);
     // 再生停止
     if (audioBufferSrcRef.current) {
       try {
@@ -2740,6 +3134,9 @@ const Home: NextPage = () => {
       audioBufferSrcRef.current = null;
     }
     if (videoElementRef.current) {
+      videoElementRef.current.onerror = null;
+      videoElementRef.current.onloadedmetadata = null;
+      videoElementRef.current.onended = null;
       videoElementRef.current.pause();
       if (videoElementRef.current.src?.startsWith("blob:")) {
         URL.revokeObjectURL(videoElementRef.current.src);
@@ -2753,7 +3150,7 @@ const Home: NextPage = () => {
     stopCanvas2DAnimation();
     stopWebGLAnimation();
     if (canvasRef.current) {
-      const ctx = canvasRef.current.getContext("2d");
+      const ctx = canvasRef.current.getContext("2d", { alpha: true });
       if (ctx) {
         ctx.fillStyle = "rgba(34, 34, 34, 1.0)";
         ctx.fillRect(0, 0, canvasRef.current.width, canvasRef.current.height);
@@ -2920,7 +3317,7 @@ const Home: NextPage = () => {
                 {t("dropZone.selectImage")}
                 <input
                   type="file"
-                  accept="image/*"
+                  accept="image/*,video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov"
                   multiple
                   onChange={imageLoad}
                   hidden
@@ -4771,6 +5168,9 @@ const Home: NextPage = () => {
                 <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 2 }}>
                   {t("videoQuality.videoBitrateHint")}
                 </Typography>
+                <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 2 }}>
+                  {t("videoQuality.recordContainerFixedMp4")}
+                </Typography>
                 <FormControl size="small" fullWidth sx={{ mb: 2, maxWidth: 360 }}>
                   <InputLabel>{t("videoQuality.audioBitrate")}</InputLabel>
                   <Select
@@ -5023,6 +5423,42 @@ const Home: NextPage = () => {
           </div>
         </div>
       </main>
+
+      <Dialog
+        open={dialogClearGalleryForVideo}
+        onClose={() => {
+          pendingVideoBackgroundFileRef.current = null;
+          setDialogClearGalleryForVideo(false);
+        }}
+      >
+        <DialogTitle>{t("dialog.clearGalleryForVideoTitle")}</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2">{t("dialog.clearGalleryForVideoBody")}</Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button
+            onClick={() => {
+              pendingVideoBackgroundFileRef.current = null;
+              setDialogClearGalleryForVideo(false);
+            }}
+          >
+            {t("dialog.cancel")}
+          </Button>
+          <Button
+            variant="contained"
+            onClick={() => {
+              const f = pendingVideoBackgroundFileRef.current;
+              pendingVideoBackgroundFileRef.current = null;
+              setDialogClearGalleryForVideo(false);
+              if (f) {
+                applyBackgroundMp4File(f);
+              }
+            }}
+          >
+            {t("dialog.confirmReplaceWithVideo")}
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       <CustomSnackbar
         {...snackBarProps}

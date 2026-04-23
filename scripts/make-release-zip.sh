@@ -44,7 +44,7 @@ for f in LICENSE NOTICE CHANGELOG.md HTML_HOSTING.md SERVER_REQUIREMENTS.md SERV
 done
 
 # docs/ subtree (selected)
-for f in BUILD.md SECURITY.md FFMPEG.md README.md INSTALL_LOCAL_STATIC.md; do
+for f in BUILD.md SECURITY.md FFMPEG.md README.md INSTALL_LOCAL_STATIC.md VIDEO_BACKGROUND.md; do
   if [[ -f "${ROOT}/docs/${f}" ]]; then
     cp "${ROOT}/docs/${f}" "${STAGE}/docs-bundled/docs/"
   fi
