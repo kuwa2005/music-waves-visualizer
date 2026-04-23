@@ -31,7 +31,8 @@ export async function generateMp4Video(
     log: process.env.NODE_ENV === "development",
     progress: onProgress
       ? ({ ratio }) => {
-          onProgress(Math.min(1, ratio));
+          if (!Number.isFinite(ratio)) return;
+          onProgress(Math.max(0, Math.min(1, ratio)));
         }
       : undefined,
   });

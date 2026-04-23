@@ -254,6 +254,7 @@ const Home: NextPage = () => {
   // エンコード進捗
   const [encodeStatus, setEncodeStatus] = useState<"idle" | "loading" | "converting">("idle");
   const [encodeProgress, setEncodeProgress] = useState<number>(0);
+  const ENCODE_TIMEOUT_MS = 5 * 60 * 1000;
   const encodeStatusRef = useRef<"idle" | "loading" | "converting">("idle");
   /** MP4 変換中にユーザーが停止したとき、即ダウンロード用に保持 */
   const pendingEncodeWebmRef = useRef<{ blob: Blob; fileName: string } | null>(null);
@@ -3119,7 +3120,8 @@ const Home: NextPage = () => {
             return;
           }
 
-          const video = await generateMp4Video(
+          let timeoutId: number | undefined;
+          const convertPromise = generateMp4Video(
             binaryData,
             webmName,
             mp4Name,
@@ -3129,11 +3131,27 @@ const Home: NextPage = () => {
                 setEncodeStatus("converting");
                 setEncodeProgress(0);
               },
-              onProgress: (ratio) => setEncodeProgress(Math.round(ratio * 100)),
+              onProgress: (ratio) => {
+                if (!Number.isFinite(ratio)) return;
+                const pct = Math.max(0, Math.min(100, Math.round(ratio * 100)));
+                setEncodeProgress(pct);
+              },
             },
             targetLufs,
             exportAudioBitrateKbps
           );
+          const timeoutPromise = new Promise<Uint8Array>((_, reject) => {
+            timeoutId = window.setTimeout(() => {
+              reject(new Error("encode_timeout"));
+            }, ENCODE_TIMEOUT_MS);
+          });
+          const video = await Promise.race([convertPromise, timeoutPromise]);
+          if (timeoutId != null) {
+            window.clearTimeout(timeoutId);
+          }
+          if (!video || video.length === 0) {
+            throw new Error("empty_mp4");
+          }
 
           if (encodeCancelRequestedRef.current) {
             setEncodeStatus("idle");
@@ -3154,7 +3172,24 @@ const Home: NextPage = () => {
           exitConfirmRef.current = false;
           openSnackBar(t("snackbar.convertComplete"));
         } catch (error) {
-          openSnackBar(t("snackbar.convertFailed", { error: (error as Error).message }));
+          const msg = (error as Error).message || "unknown_error";
+          const pending = pendingEncodeWebmRef.current;
+          if (pending) {
+            const webmUrl = URL.createObjectURL(pending.blob);
+            const a = document.createElement("a");
+            a.href = webmUrl;
+            a.download = pending.fileName;
+            a.click();
+            a.remove();
+            window.setTimeout(() => URL.revokeObjectURL(webmUrl), 60_000);
+            openSnackBar(
+              t("snackbar.convertFailedWebmFallback", {
+                error: msg === "encode_timeout" ? t("snackbar.convertTimeout") : msg,
+              })
+            );
+          } else {
+            openSnackBar(t("snackbar.convertFailed", { error: msg }));
+          }
           setEncodeStatus("idle");
         } finally {
           clearPendingWebm();
