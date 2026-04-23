@@ -2793,10 +2793,16 @@ const Home: NextPage = () => {
         video.pause();
       }
       if (clip.full === false) {
-        video.currentTime = clip.start;
-        audioPlaybackOffsetSecRef.current = clip.start;
+        const target = clip.start;
+        // 毎回 currentTime を書き換えると先頭付近で微小な停止が出る端末がある
+        if (!Number.isFinite(video.currentTime) || Math.abs(video.currentTime - target) > 0.05) {
+          video.currentTime = target;
+        }
+        audioPlaybackOffsetSecRef.current = target;
       } else {
-        video.currentTime = 0;
+        if (!Number.isFinite(video.currentTime) || Math.abs(video.currentTime) > 0.05) {
+          video.currentTime = 0;
+        }
         audioPlaybackOffsetSecRef.current = 0;
       }
       audioPlaybackStartCtxTimeRef.current = null;
