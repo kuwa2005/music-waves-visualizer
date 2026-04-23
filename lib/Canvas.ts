@@ -418,10 +418,10 @@ export const drawBars = (
     lineWidthCircle: 3.2,
     lineWidthSymWave: 3.6,
   };
-  // GPU加速を有効化（willReadFrequently: falseでGPU最適化）
+  // 安定表示優先: desynchronized は動画背景でのちらつきを誘発する環境がある
   const ctx = canvas.getContext("2d", {
     alpha: true,
-    desynchronized: true,
+    desynchronized: false,
     willReadFrequently: false,
   });
   
