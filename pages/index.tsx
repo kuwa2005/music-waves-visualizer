@@ -3065,6 +3065,12 @@ const Home: NextPage = () => {
         }
       });
       const clip = resolvePlaybackWindow();
+      if (clip.full === false && clip.duration <= 0) {
+        setIsRecording(false);
+        setRecordMovieDisabled(false);
+        openSnackBar(t("snackbar.shortClipInvalid"));
+        return;
+      }
 
       // 再生終了時の処理（音声はスライス再生時も onended で区間終了）
       if (videoElementRef.current) {
@@ -3088,15 +3094,40 @@ const Home: NextPage = () => {
         };
       }
 
-      // 再生開始直後に Recorder を同時スタートすると先頭で音声が引っかかる環境があるため、
-      // まず再生を開始してから少し遅らせて録画を開始する。
-      onPlaySound();
-      window.setTimeout(() => {
+      const startRecorder = () => {
+        if (recorder.state !== "inactive") return;
         mediaRecorderRef.current = recorder;
         recorder.start();
         openSnackBar(t("snackbar.recording"));
         setRecordMovieDisabled(true);
-      }, 180);
+      };
+
+      // MP4入力時は video.play の完了前に recorder.start すると先頭で瞬断しやすい。
+      // 再生が実際に走り出すのを待ってから録画開始する。
+      onPlaySound();
+      if (videoElementRef.current) {
+        let attempts = 0;
+        const waitForVideoStart = () => {
+          const v = videoElementRef.current;
+          if (!v) {
+            startRecorder();
+            return;
+          }
+          if (!v.paused && v.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+            window.setTimeout(startRecorder, 80);
+            return;
+          }
+          attempts += 1;
+          if (attempts >= 40) {
+            startRecorder();
+            return;
+          }
+          window.setTimeout(waitForVideoStart, 50);
+        };
+        waitForVideoStart();
+      } else {
+        window.setTimeout(startRecorder, 80);
+      }
     }, 100); // 100ms待機して録画用canvasのアニメーション開始を保証
   };
 
