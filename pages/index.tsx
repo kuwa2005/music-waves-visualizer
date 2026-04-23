@@ -3026,6 +3026,8 @@ const Home: NextPage = () => {
       });
       //録画終了時に動画ファイルのダウンロードリンクを生成する処理
       recorder.addEventListener("stop", async () => {
+        const recordedMimeType =
+          recorder.mimeType && recorder.mimeType.length > 0 ? recorder.mimeType : "video/webm";
         mediaRecorderRef.current = null;
         setIsRecording(false);
         const movieName = "movie_" + Math.random().toString(36).slice(-8);
@@ -3035,7 +3037,7 @@ const Home: NextPage = () => {
         try {
           setEncodeStatus("loading");
           setEncodeProgress(0);
-          const webmBlob = new Blob(recordedBlobs, { type: "video/webm" });
+          const webmBlob = new Blob(recordedBlobs, { type: recordedMimeType });
           const binaryData = new Uint8Array(await webmBlob.arrayBuffer());
           const video = await generateMp4Video(
             binaryData,
