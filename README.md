@@ -18,7 +18,7 @@ Static build with SEO-friendly absolute URLs for that host: `npm run build:html:
 
 ## Features
 
-- **File loading**: Drag & drop or button to load image and audio files
+- **File loading**: Drag & drop or button to load image and audio files; **MP4** can be **music (audio)** or a **single background video** (see [docs/VIDEO_BACKGROUND.md](./docs/VIDEO_BACKGROUND.md))
 - **Auto image scaling**: Loaded images are scaled to recommended resolution (1920×1080, etc.) with aspect ratio preserved
 - **Spectrum analyzer**: OFF plus **5 selectable styles** in the UI (frequency bars, circle, symmetric bars, dots, glyco). *Line (mode 1) and symmetric waveform (mode 5) remain in the engine but are hidden from the toolbar; old saved sessions using those modes fall back to frequency bars.*
 - **Resolution mode**: Manual (1920×1080 / 1080×1920 / 1920×1920) and **Auto** (detect from loaded image aspect ratio as 16:9 / 9:16 / 1:1)
@@ -75,7 +75,7 @@ npm run build:html
 
 ## Usage
 
-1. **Load files**: Drag & drop or use buttons to select image and audio
+1. **Load files**: Drag & drop or use buttons to select stills and/or audio; use **Music** for MP4 audio, or **one** MP4 under image picker for **video background** (see [docs/VIDEO_BACKGROUND.md](./docs/VIDEO_BACKGROUND.md))
 2. **Select spectrum analyzer**: Choose from the visible modes (OFF + five styles)
 3. **Settings > Resolution**: Use Auto or manual 3 layouts
 4. **Audio (optional)**: Configure target LUFS
@@ -92,6 +92,7 @@ See [SPECIFICATION.md](./SPECIFICATION.md) for details.
 - **[docs/BUILD.md](./docs/BUILD.md)**: Install (`--legacy-peer-deps`), FFmpeg copy, env vars, scripts
 - **[docs/SECURITY.md](./docs/SECURITY.md)**: Headers, file limits, Docker, audits
 - **[docs/FFMPEG.md](./docs/FFMPEG.md)**: Self-hosted core, COOP/COEP, vs upstream PR #23
+- **[docs/VIDEO_BACKGROUND.md](./docs/VIDEO_BACKGROUND.md)**: MP4 roles (music vs video background), picker / drag-drop rules, recording WebM preferences, links to issues [#34](https://github.com/kuwa2005/music-waves-visualizer/issues/34)–[#36](https://github.com/kuwa2005/music-waves-visualizer/issues/36)
 - **[SPECIFICATION.md](./SPECIFICATION.md)**: Technical spec and feature details
 - **[README_DOCKER.md](./README_DOCKER.md)**: Docker usage
 - **[SERVER_REQUIREMENTS.md](./SERVER_REQUIREMENTS.md)**: Shared hosting requirements
@@ -130,7 +131,7 @@ MIT License. See [LICENSE](./LICENSE). Dependencies: [NOTICE](./NOTICE).
 
 ### 主な機能
 
-- **ファイル読み込み**: ドラッグ&ドロップまたはボタンから画像・音楽ファイルを読み込み
+- **ファイル読み込み**: ドラッグ&ドロップまたはボタンから画像・音楽を読み込み。**MP4** は音楽用／**単体**で背景動画用（詳細は [docs/VIDEO_BACKGROUND.md](./docs/VIDEO_BACKGROUND.md)）
 - **画像の自動スケーリング**: 読み込んだ画像を推奨解像度に自動拡大・縮小
 - **スペクトラムアナライザー**: UI では周波数系（OFF・周波数バー・円形・上下対称バー・ドット・面塗り・グライコ・オシロ）＋音圧系（パルス・VU・リング・オーブ・背景・粒子・ジオメトリ）。リサージュ(16)・折れ線(1)・波形上下対称(5)は描画ロジックのみ残しボタン非表示
 - **解像度モード**: 手動3種（1920×1080、1080×1920、1920×1920）＋**自動**（画像比率から16:9/9:16/1:1を判定）
@@ -157,7 +158,8 @@ npm run build:html
 
 ### ドキュメント（日本語）
 
-- [docs/README.md](./docs/README.md): ドキュメント索引（ビルド・セキュリティ・FFmpeg）
+- [docs/README.md](./docs/README.md): ドキュメント索引（ビルド・セキュリティ・FFmpeg・動画背景）
+- [docs/VIDEO_BACKGROUND.md](./docs/VIDEO_BACKGROUND.md): MP4 の使い分け・UI 規則・録画・関連 Issue
 - [仕様書.md](./仕様書.md): 技術仕様と機能詳細
 - [README_DOCKER.md](./README_DOCKER.md): Dockerの使い方
 - [サーバー要件.md](./サーバー要件.md): レンタルサーバー用要件

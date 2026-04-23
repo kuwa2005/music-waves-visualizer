@@ -3,8 +3,13 @@
 ## [Unreleased]
 
 ### Documentation
+- **MP4 / video background**: New hub [docs/VIDEO_BACKGROUND.md](./docs/VIDEO_BACKGROUND.md) (EN + 日本語サマリ, UI rules, recording MIME, links to [#34](https://github.com/kuwa2005/music-waves-visualizer/issues/34) / [#35](https://github.com/kuwa2005/music-waves-visualizer/issues/35) / [#36](https://github.com/kuwa2005/music-waves-visualizer/issues/36)). Indexed from [docs/README.md](./docs/README.md), [README.md](./README.md), [SPECIFICATION.md](./SPECIFICATION.md) §8, [仕様書.md](./仕様書.md) §3.1. **Release ZIP** (`scripts/make-release-zip.sh`) now bundles `docs-bundled/docs/VIDEO_BACKGROUND.md`.
 - **`npm run build:html:lil-la`**: One-shot static build with `NEXT_PUBLIC_SITE_URL=https://lil.la` for [lil.la/visualizer](https://lil.la/visualizer/) (canonical / OG). Documented in [docs/BUILD.md](./docs/BUILD.md), [README](./README.md), and [`.env.production.example`](./.env.production.example).
 - **Persistence / clip / build**: README, [SPECIFICATION.md](./SPECIFICATION.md), [仕様書.md](./仕様書.md), [PRIVACY_POLICY.md](./PRIVACY_POLICY.md), [EU_GDPR_NOTICE.md](./EU_GDPR_NOTICE.md), [docs/BUILD.md](./docs/BUILD.md) — first-party cookies for settings; clip UI semantics; `next export` / static-export notices.
+
+### Added (video background — fork)
+- **Separate roles for MP4**: Music vs **single** background video; drag/drop and image-picker rules; optional second `<video>` when music is `AudioBuffer`; `drawVideoCover` + `syncBackgroundOnlyVideo`; WebGL → Canvas 2D fallback while video background is active ([#36](https://github.com/kuwa2005/music-waves-visualizer/issues/36)).
+- **Recording**: `recordMimePreference` (Settings → video quality); WebM `Blob` `type` matches `MediaRecorder.mimeType` ([#35](https://github.com/kuwa2005/music-waves-visualizer/issues/35) follow-up).
 
 ### Changed (maintenance — cookies, clip, spectrum, restore)
 - **Settings persistence (cookies)**: Most client settings persist in **first-party cookies** via [`lib/mwvCookieStorage.ts`](./lib/mwvCookieStorage.ts) (chunked Base64 for large values). **Legacy `localStorage` entries migrate on first read** then clear. **Not stored**: image/music file content, **title text**, **SRT body**; subtitle/title **styles** and toggles **are** stored. Mode remains in existing `mwv_mode` cookie.
