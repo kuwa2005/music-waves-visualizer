@@ -413,6 +413,9 @@ const Home: NextPage = () => {
   const disposeStandaloneBackgroundVideo = useCallback(() => {
     const v = backgroundOnlyVideoRef.current;
     if (!v) return;
+    v.onerror = null;
+    v.onloadedmetadata = null;
+    v.onended = null;
     try {
       v.pause();
     } catch {
@@ -2357,6 +2360,9 @@ const Home: NextPage = () => {
     try {
       disposeStandaloneBackgroundVideo();
       if (videoElementRef.current) {
+        videoElementRef.current.onerror = null;
+        videoElementRef.current.onloadedmetadata = null;
+        videoElementRef.current.onended = null;
         try {
           videoElementRef.current.pause();
         } catch {
@@ -3247,6 +3253,9 @@ const Home: NextPage = () => {
       audioBufferSrcRef.current = null;
     }
     if (videoElementRef.current) {
+      videoElementRef.current.onerror = null;
+      videoElementRef.current.onloadedmetadata = null;
+      videoElementRef.current.onended = null;
       videoElementRef.current.pause();
       if (videoElementRef.current.src?.startsWith("blob:")) {
         URL.revokeObjectURL(videoElementRef.current.src);
