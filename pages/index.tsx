@@ -30,6 +30,7 @@ import {
   DialogContent,
   DialogActions,
 } from "@mui/material";
+import { ThemeProvider, createTheme } from "@mui/material/styles";
 import {
   FiberManualRecord,
   ExpandMore,
@@ -41,6 +42,8 @@ import {
   NavigateBefore,
   NavigateNext,
   Undo,
+  Lightbulb,
+  LightbulbOutlined,
 } from "@mui/icons-material";
 import i18n from "i18next";
 import { CustomSnackbar } from "../components/CustomSnackbar";
@@ -100,6 +103,8 @@ import { mwvGetItem, mwvSetItem, mwvRemoveItem } from "../lib/mwvCookieStorage";
 type ShortOutputPreset = "all" | "tiktok" | "youtube" | "niconico";
 type ResolvedClip = { full: true } | { full: false; start: number; duration: number };
 const MODE_COOKIE_KEY = "mwv_mode";
+/** ライト／ダーク UI 切替（`light` | `dark`）。電球点灯＝ライトモード */
+const UI_SCHEME_COOKIE = "mwv_ui_scheme";
 /** Cookie 上で targetLufs === null（正規化オフ）を表す */
 const TARGET_LUFS_NONE_COOKIE = "__none__";
 const JP_DEFAULT_FONT_FAMILY = "'Noto Sans JP', sans-serif";
@@ -189,6 +194,8 @@ const Home: NextPage = () => {
   }
 
   // UI State
+  /** ライト／ダーク。初期は固定でハイドレーション一致（Cookie は useLayoutEffect で適用） */
+  const [uiScheme, setUiScheme] = useState<"light" | "dark">("light");
   const [isPlaySound, setIsPlaySound] = useState<boolean>(false);
   const [playSoundDisabled, setPlaySoundDisabled] = useState<boolean>(true);
   const [recordMovieDisabled, setRecordMovieDisabled] = useState<boolean>(true);
@@ -250,6 +257,27 @@ const Home: NextPage = () => {
     },
     []
   );
+
+  const muiTheme = useMemo(
+    () =>
+      createTheme({
+        palette: {
+          mode: uiScheme === "dark" ? "dark" : "light",
+        },
+      }),
+    [uiScheme]
+  );
+
+  const toggleUiScheme = useCallback(() => {
+    setUiScheme((prev) => {
+      const next = prev === "light" ? "dark" : "light";
+      setCookieValue(UI_SCHEME_COOKIE, next, 60 * 60 * 24 * 365);
+      if (typeof document !== "undefined") {
+        document.documentElement.classList.toggle("dark", next === "dark");
+      }
+      return next;
+    });
+  }, []);
 
   const snackbarFileGate = useCallback(
     (gate: FileGate, kind: "image" | "audio" | "video") => {
@@ -1681,6 +1709,11 @@ const Home: NextPage = () => {
 
   // マウント直後に Cookie から設定を読み込み（useLayoutEffect: 永続化用 useEffect より先に state を確定）
   useLayoutEffect(() => {
+    const cookieScheme = getCookieValue(UI_SCHEME_COOKIE);
+    const initialScheme: "light" | "dark" = cookieScheme === "dark" ? "dark" : "light";
+    setUiScheme(initialScheme);
+    document.documentElement.classList.toggle("dark", initialScheme === "dark");
+
     const savedModeCookie = getCookieValue(MODE_COOKIE_KEY);
     let modeVal = savedModeCookie ? parseInt(savedModeCookie, 10) : 0;
     // UI 非表示のモード（折れ線=1・波形上下対称=5）は周波数バーへ
@@ -3212,9 +3245,10 @@ const Home: NextPage = () => {
   };
 
   return (
-    <>
-      <div style={{ maxWidth: 900, margin: "0 auto", padding: "0 12px", boxSizing: "border-box" }}>
-      <main>
+    <ThemeProvider theme={muiTheme}>
+      <>
+      <div className="mx-auto box-border w-full max-w-[900px] px-3 pb-8 pt-4 text-slate-900 md:px-4 md:pt-8 dark:text-slate-100">
+      <main className="space-y-5 md:space-y-6">
         {/* 録画・変換中の注意喚起（スクロール追随）。プログレスバーはその直下に表示 */}
         {(isRecording || encodeStatus !== "idle") && (
           <Box
@@ -3272,7 +3306,32 @@ const Home: NextPage = () => {
             )}
           </Box>
         )}
-        <div className={styles.heading}>
+        <div
+          className={`${styles.heading} relative rounded-2xl border border-slate-200/70 bg-white/80 p-5 shadow-md backdrop-blur-sm dark:border-slate-600/50 dark:bg-slate-900/85 dark:shadow-lg`}
+        >
+          <Tooltip
+            title={uiScheme === "light" ? t("theme.toggleToDark") : t("theme.toggleToLight")}
+            arrow
+          >
+            <IconButton
+              type="button"
+              size="small"
+              onClick={toggleUiScheme}
+              aria-label={uiScheme === "light" ? t("theme.toggleToDark") : t("theme.toggleToLight")}
+              sx={{
+                position: "absolute",
+                top: 8,
+                right: 8,
+                zIndex: 2,
+              }}
+            >
+              {uiScheme === "light" ? (
+                <Lightbulb sx={{ color: "#f59e0b" }} fontSize="small" />
+              ) : (
+                <LightbulbOutlined sx={{ color: "#94a3b8" }} fontSize="small" />
+              )}
+            </IconButton>
+          </Tooltip>
           <h1 className={styles.heading__title}>{t("heading.title")}</h1>
           <div className={styles.heading__text}>
             <p>{t("heading.description")}</p>
@@ -3289,7 +3348,7 @@ const Home: NextPage = () => {
         </div>
 
         <div
-          className={styles.dropZone}
+          className={`${styles.dropZone} rounded-2xl border border-slate-200/80 bg-white/85 p-4 shadow-sm backdrop-blur-sm md:p-5 dark:border-slate-600/50 dark:bg-slate-900/75 dark:shadow-md`}
           onDrop={handleDrop}
           onDragOver={handleDragOver}
         >
@@ -3474,7 +3533,7 @@ const Home: NextPage = () => {
           </Typography>
         </div>
 
-        <div className={styles.menu}>
+        <div className={`${styles.menu} rounded-2xl border border-slate-200/80 bg-white/90 shadow-sm backdrop-blur-sm dark:border-slate-600/50 dark:bg-slate-900/80 dark:shadow-md`}>
           <Box sx={{ borderBottom: 1, borderColor: "divider", width: "100%" }}>
             <Tabs
               value={settingsTab}
@@ -5372,15 +5431,17 @@ const Home: NextPage = () => {
           </div>
         </div>
 
-        <div className={styles.canvasWrapper}>
-          <canvas
-            key={rendererType}
-            className={styles.canvas}
-            ref={canvasRef}
-            data-size={activeCanvasLayout}
-          ></canvas>
+        <div className={`${styles.canvasWrapper} rounded-2xl border border-slate-200/80 bg-white/90 px-3 pb-3 pt-2 shadow-sm md:px-4 md:pb-4 dark:border-slate-600/50 dark:bg-slate-900/80 dark:shadow-md`}>
+          <div className="flex justify-center py-5 px-2 md:py-7 md:px-4">
+            <canvas
+              key={rendererType}
+              className={styles.canvas}
+              ref={canvasRef}
+              data-size={activeCanvasLayout}
+            ></canvas>
+          </div>
 
-          <div className={styles.menu__right}>
+          <div className={`${styles.menu__right} mt-3 rounded-xl bg-slate-50/70 p-3 dark:bg-slate-800/80`}>
             <Box sx={{ display: "flex", gap: 1.5, justifyContent: "center", flexWrap: "wrap", mt: 1 }}>
             <Button
               variant="outlined"
@@ -5413,7 +5474,7 @@ const Home: NextPage = () => {
           </Box>
           </div>
 
-          <div className={styles.canvasInfo}>
+          <div className={`${styles.canvasInfo} mt-1 rounded-md dark:bg-slate-800/70`}>
             <Typography variant="caption" color="textSecondary">
               {t("recordSize", {
               width: getCanvasDimensions(activeCanvasLayout).width,
@@ -5465,7 +5526,7 @@ const Home: NextPage = () => {
         handleClose={handleClose}
       ></CustomSnackbar>
 
-      <footer className={styles.footer}>
+      <footer className={`${styles.footer} mt-8 rounded-xl border border-slate-200/70 bg-white/75 px-4 py-3 shadow-sm backdrop-blur-sm dark:border-slate-600/50 dark:bg-slate-900/75 dark:shadow-md`}>
         <p>
           Original work ©{" "}
           <a
@@ -5489,6 +5550,7 @@ const Home: NextPage = () => {
       </footer>
       </div>
     </>
+    </ThemeProvider>
   );
 };
 

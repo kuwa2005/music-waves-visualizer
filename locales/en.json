@@ -4,6 +4,10 @@
     "description": "Create audio waveform videos by loading image and music. Output format is MP4.",
     "termsLink": "Terms of Service"
   },
+  "theme": {
+    "toggleToDark": "Switch to dark mode (turn off the bulb)",
+    "toggleToLight": "Switch to light mode (turn on the bulb)"
+  },
   "dropZone": {
     "hint": "Drag & drop files (multiple files supported)",
     "selectImage": "Select image(s)",

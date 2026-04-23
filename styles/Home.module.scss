@@ -53,6 +53,18 @@
   }
 }
 
+/* ダークモード: .dropZone の固定背景が Tailwind dark: より優先されるため明示上書き */
+:global(html.dark) .dropZone {
+  background: rgba(15, 23, 42, 0.92);
+  border-color: rgba(148, 163, 184, 0.5);
+
+  &:hover {
+    border-color: #fb923c;
+    background: rgba(30, 41, 59, 0.96);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+  }
+}
+
 .menu {
   display: flex;
   flex-direction: column;
@@ -124,6 +136,27 @@
   padding: 4px 8px;
   background-color: rgba(0, 0, 0, 0.05);
   border-radius: 4px;
+}
+
+:global(html.dark) .heading {
+  background: linear-gradient(135deg, #1e293b 0%, #0f172a 50%, #020617 100%);
+  border-bottom-color: rgba(148, 163, 184, 0.22);
+}
+
+:global(html.dark) .heading__title {
+  color: #fdba74;
+}
+
+:global(html.dark) .heading__text {
+  color: #cbd5e1;
+}
+
+:global(html.dark) .heading__terms a {
+  color: #fdba74;
+}
+
+:global(html.dark) .footer {
+  color: #94a3b8;
 }
 
 .footer {
