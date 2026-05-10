@@ -1,6 +1,6 @@
 .heading {
   border-bottom: 1px solid rgba(0, 0, 0, 0.04);
-  padding: 0 10px 4px;
+  padding: 5px 10px;
   background: linear-gradient(135deg, #ffffff 0%, #fff6ed 45%, #ffe6d5 100%);
   &__title {
     font-size: 20px;
@@ -23,7 +23,7 @@
   }
   &__terms {
     text-align: right;
-    margin: 4px 0 0 0;
+    margin: 2px 0 0 0;
     font-size: 11px;
     a {
       color: #ff7a3c;
@@ -209,7 +209,7 @@
 
 @media (max-width: 576px) {
   .heading {
-    padding: 12px;
+    padding: 5px 10px;
     &__title {
       font-size: 24px;
     }

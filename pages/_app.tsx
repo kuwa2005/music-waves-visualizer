@@ -4,6 +4,7 @@ import React, { useEffect, useMemo } from "react";
 import getConfig from "next/config";
 import "../styles/globals.scss";
 import i18n from "../lib/i18n";
+import { mwvError } from "../lib/mwvConsole";
 
 const { publicRuntimeConfig } = getConfig();
 const assetBasePath: string = publicRuntimeConfig?.assetBasePath ?? "";
@@ -35,6 +36,21 @@ const useBrowserLanguage = () => {
 
 const App = ({ Component, pageProps }: AppProps) => {
   useBrowserLanguage();
+
+  useEffect(() => {
+    const onWindowError = (ev: ErrorEvent) => {
+      mwvError("global: window.error", ev.error ?? ev.message, ev.filename, ev.lineno);
+    };
+    const onUnhandledRejection = (ev: PromiseRejectionEvent) => {
+      mwvError("global: unhandledrejection", ev.reason);
+    };
+    window.addEventListener("error", onWindowError);
+    window.addEventListener("unhandledrejection", onUnhandledRejection);
+    return () => {
+      window.removeEventListener("error", onWindowError);
+      window.removeEventListener("unhandledrejection", onUnhandledRejection);
+    };
+  }, []);
 
   const canonicalUrl = siteUrl !== "" ? `${siteUrl}${basePathNorm}/` : "";
   const ogImageUrl =
