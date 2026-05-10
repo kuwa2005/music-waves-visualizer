@@ -70,6 +70,7 @@ import type { EffectType, EffectDensity, EffectParams } from "../lib/Effects";
 import { getGpuInfo, getGpuDisplayName, type GpuInfo } from "../lib/GpuDetector";
 import { isWebCodecsSupported, checkHardwareEncoderSupport, getBestEncodingMethod } from "../lib/WebCodecsEncoder";
 import { generateMp4Video } from "../lib/Ffmpeg";
+import { mwvError, mwvLog, mwvMilestone } from "../lib/mwvConsole";
 import {
   gateImageFile,
   gateAudioFile,
@@ -165,6 +166,18 @@ function getCookieValue(name: string): string | null {
 function setCookieValue(name: string, value: string, maxAgeSec: number): void {
   if (typeof document === "undefined") return;
   document.cookie = `${name}=${encodeURIComponent(value)}; path=/; max-age=${maxAgeSec}; samesite=lax`;
+}
+
+function buildDownloadMp4Name(audioName: string, fallbackBaseName: string): string {
+  const trimmed = (audioName ?? "").trim();
+  const withoutExt = trimmed.replace(/\.[^.]+$/, "");
+  const safeBase = withoutExt
+    .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "_")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/[. ]+$/g, "");
+  const base = safeBase !== "" ? safeBase : fallbackBaseName;
+  return `${base}.mp4`;
 }
 
 const hasWindow = () => {
@@ -461,7 +474,6 @@ const Home: NextPage = () => {
     "dust",
     "rain",
     "snow",
-    "scanlines",
   ];
   const EFFECT_TYPES_STRENGTH_LEGACY_HIDDEN: EffectType[] = ["vignette", "rainbow", "curtain"];
   const ALL_EFFECT_STRENGTH_TYPES: EffectType[] = [
@@ -480,7 +492,6 @@ const Home: NextPage = () => {
     "dust",
     "rain",
     "snow",
-    "scanlines",
   ];
   const defaultEffectDensities = (): Partial<Record<EffectType, EffectDensity>> => {
     const o: Partial<Record<EffectType, EffectDensity>> = {};
@@ -560,6 +571,11 @@ const Home: NextPage = () => {
   const [spaceColorInput, setSpaceColorInput] = useState<string>(DEFAULT_SPACE_PARTICLE.toUpperCase());
   const [sparkleColorInput, setSparkleColorInput] = useState<string>(DEFAULT_SPARKLE_PARTICLE.toUpperCase());
   const [dustColorInput, setDustColorInput] = useState<string>(DEFAULT_DUST_PARTICLE.toUpperCase());
+  const [spaceDirection, setSpaceDirection] = useState<"forward" | "backward">("forward");
+  const [spaceSpeed, setSpaceSpeed] = useState<number>(1);
+  const [sparkleVariant, setSparkleVariant] = useState<"normal" | "heart" | "star">("normal");
+  const [atmosphereVariant, setAtmosphereVariant] = useState<"dust" | "sparks" | "fireflies">("dust");
+  const [atmosphereStrength, setAtmosphereStrength] = useState<number>(45);
   const [spectrumRainbowColorful, setSpectrumRainbowColorful] = useState<boolean>(true);
 
   const effectForCanvas = useMemo((): EffectParams | undefined => {
@@ -575,10 +591,15 @@ const Home: NextPage = () => {
       base.weatherColor = snowWeather.color;
     } else if (effectType === "space" || effectType === "spaceConstant" || effectType === "spaceAudio") {
       base.effectTintColor = spaceParticleColor;
+      base.spaceDirection = spaceDirection;
+      base.spaceSpeed = spaceSpeed;
     } else if (effectType === "sparkle") {
       base.effectTintColor = sparkleParticleColor;
+      base.sparkleVariant = sparkleVariant;
     } else if (effectType === "dust") {
       base.effectTintColor = dustParticleColor;
+      base.atmosphereVariant = atmosphereVariant;
+      base.effectStrengthScale = Math.max(0.05, Math.min(1, atmosphereStrength / 100));
     }
     return base;
   }, [
@@ -587,8 +608,13 @@ const Home: NextPage = () => {
     rainWeather,
     snowWeather,
     spaceParticleColor,
+    spaceDirection,
+    spaceSpeed,
     sparkleParticleColor,
+    sparkleVariant,
     dustParticleColor,
+    atmosphereVariant,
+    atmosphereStrength,
   ]);
 
   const [recordVideoBitrateMbps, setRecordVideoBitrateMbps] = useState<number>(8);
@@ -613,8 +639,13 @@ const Home: NextPage = () => {
     mwvSetItem("common_spectrumColorHex", spectrumColorHex);
     mwvSetItem("common_galleryTransitionMode", galleryTransitionMode);
     mwvSetItem("common_spaceParticleColor", spaceParticleColor);
+    mwvSetItem("common_spaceDirection", spaceDirection);
+    mwvSetItem("common_spaceSpeed", String(spaceSpeed));
     mwvSetItem("common_sparkleParticleColor", sparkleParticleColor);
+    mwvSetItem("common_sparkleVariant", sparkleVariant);
     mwvSetItem("common_dustParticleColor", dustParticleColor);
+    mwvSetItem("common_atmosphereVariant", atmosphereVariant);
+    mwvSetItem("common_atmosphereStrength", String(atmosphereStrength));
     mwvSetItem("common_spectrumRainbowColorful", spectrumRainbowColorful ? "1" : "0");
     mwvSetItem(
       "common_circleRotationRpm",
@@ -636,8 +667,13 @@ const Home: NextPage = () => {
     spectrumColorHex,
     galleryTransitionMode,
     spaceParticleColor,
+    spaceDirection,
+    spaceSpeed,
     sparkleParticleColor,
+    sparkleVariant,
     dustParticleColor,
+    atmosphereVariant,
+    atmosphereStrength,
     spectrumRainbowColorful,
     circleRotationRpm,
     loudnessParamsByMode,
@@ -808,8 +844,13 @@ const Home: NextPage = () => {
         snowWeather,
         galleryTransitionMode,
         spaceParticleColor,
+        spaceDirection,
+        spaceSpeed,
         sparkleParticleColor,
+        sparkleVariant,
         dustParticleColor,
+        atmosphereVariant,
+        atmosphereStrength,
         canvasSize,
         settingsTab,
         lineWidthWaveform,
@@ -850,8 +891,13 @@ const Home: NextPage = () => {
       "common_titleStyle",
       "common_galleryTransitionMode",
       "common_spaceParticleColor",
+      "common_spaceDirection",
+      "common_spaceSpeed",
       "common_sparkleParticleColor",
+      "common_sparkleVariant",
       "common_dustParticleColor",
+      "common_atmosphereVariant",
+      "common_atmosphereStrength",
       "common_recordVideoBitrateMbps",
       "common_exportAudioBitrateKbps",
       "common_rainWeather",
@@ -949,6 +995,28 @@ const Home: NextPage = () => {
         applyParticle(c.spaceParticleColor, "common_spaceParticleColor", setSpaceParticleColor);
         applyParticle(c.sparkleParticleColor, "common_sparkleParticleColor", setSparkleParticleColor);
         applyParticle(c.dustParticleColor, "common_dustParticleColor", setDustParticleColor);
+        if (c.spaceDirection === "forward" || c.spaceDirection === "backward") {
+          mwvSetItem("common_spaceDirection", c.spaceDirection);
+          setSpaceDirection(c.spaceDirection);
+        }
+        if (typeof c.spaceSpeed === "number") {
+          const v = Math.max(0.2, Math.min(3, c.spaceSpeed));
+          mwvSetItem("common_spaceSpeed", String(v));
+          setSpaceSpeed(v);
+        }
+        if (c.sparkleVariant === "normal" || c.sparkleVariant === "heart" || c.sparkleVariant === "star") {
+          mwvSetItem("common_sparkleVariant", c.sparkleVariant);
+          setSparkleVariant(c.sparkleVariant);
+        }
+        if (c.atmosphereVariant === "dust" || c.atmosphereVariant === "sparks" || c.atmosphereVariant === "fireflies") {
+          mwvSetItem("common_atmosphereVariant", c.atmosphereVariant);
+          setAtmosphereVariant(c.atmosphereVariant);
+        }
+        if (typeof c.atmosphereStrength === "number") {
+          const v = Math.max(1, Math.min(100, Math.round(c.atmosphereStrength)));
+          mwvSetItem("common_atmosphereStrength", String(v));
+          setAtmosphereStrength(v);
+        }
         if (c.spectrumRainbowColorful === true || c.spectrumRainbowColorful === false) {
           mwvSetItem(
             "common_spectrumRainbowColorful",
@@ -1721,6 +1789,11 @@ const Home: NextPage = () => {
       modeVal = 0;
       setCookieValue(MODE_COOKIE_KEY, "0", 60 * 60 * 24 * 365);
     }
+    // 音圧系（8〜14）は UI 非表示のため周波数バーへ
+    if (modeVal >= 8 && modeVal <= 14) {
+      modeVal = 0;
+      setCookieValue(MODE_COOKIE_KEY, "0", 60 * 60 * 24 * 365);
+    }
     setMode(modeVal);
 
     const savedCanvas = mwvGetItem("common_canvasSize");
@@ -1824,17 +1897,39 @@ const Home: NextPage = () => {
       setSpaceParticleColor(u);
       setSpaceColorInput(u);
     }
+    const savedSpaceDirection = mwvGetItem("common_spaceDirection");
+    if (savedSpaceDirection === "forward" || savedSpaceDirection === "backward") {
+      setSpaceDirection(savedSpaceDirection);
+    }
+    const savedSpaceSpeed = mwvGetItem("common_spaceSpeed");
+    if (savedSpaceSpeed != null) {
+      const n = parseFloat(savedSpaceSpeed);
+      if (!isNaN(n)) setSpaceSpeed(Math.max(0.2, Math.min(3, n)));
+    }
     const savedSparkleC = mwvGetItem("common_sparkleParticleColor");
     if (savedSparkleC && /^#[0-9a-fA-F]{6}$/.test(savedSparkleC)) {
       const u = savedSparkleC.toUpperCase();
       setSparkleParticleColor(u);
       setSparkleColorInput(u);
     }
+    const savedSparkleVariant = mwvGetItem("common_sparkleVariant");
+    if (savedSparkleVariant === "normal" || savedSparkleVariant === "heart" || savedSparkleVariant === "star") {
+      setSparkleVariant(savedSparkleVariant);
+    }
     const savedDustC = mwvGetItem("common_dustParticleColor");
     if (savedDustC && /^#[0-9a-fA-F]{6}$/.test(savedDustC)) {
       const u = savedDustC.toUpperCase();
       setDustParticleColor(u);
       setDustColorInput(u);
+    }
+    const savedAtmosphereVariant = mwvGetItem("common_atmosphereVariant");
+    if (savedAtmosphereVariant === "dust" || savedAtmosphereVariant === "sparks" || savedAtmosphereVariant === "fireflies") {
+      setAtmosphereVariant(savedAtmosphereVariant);
+    }
+    const savedAtmosphereStrength = mwvGetItem("common_atmosphereStrength");
+    if (savedAtmosphereStrength != null) {
+      const n = parseInt(savedAtmosphereStrength, 10);
+      if (!isNaN(n)) setAtmosphereStrength(Math.max(1, Math.min(100, n)));
     }
     const savedRainbow = mwvGetItem("common_spectrumRainbowColorful");
     if (savedRainbow === "0") setSpectrumRainbowColorful(false);
@@ -2877,6 +2972,10 @@ const Home: NextPage = () => {
   // PlaySoundEvent
   const onPlaySound = () => {
     if (isPlaySound) {
+      mwvMilestone("preview: 停止（再生オフ）", {
+        hadRecorder: Boolean(mediaRecorderRef.current),
+        recorderState: mediaRecorderRef.current?.state,
+      });
       clearPlaybackWindowTimer();
       // MediaRecorder を先に止めて partial WebM の stop イベントを発火させる
       if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
@@ -2907,6 +3006,11 @@ const Home: NextPage = () => {
       openSnackBar(t("snackbar.shortClipInvalid"));
       return;
     }
+    mwvLog("preview: 再生開始", {
+      clipFull: clip.full,
+      duration: clip.full === false ? clip.duration : "full",
+      hasVideo: Boolean(videoElementRef.current),
+    });
     setupAudioSourceForPlayback(clip);
 
     if (videoElementRef.current) {
@@ -2938,64 +3042,13 @@ const Home: NextPage = () => {
       openSnackBar(t("snackbar.canvasNotReady"));
       return;
     }
-    // 録画開始フラグを先に設定
-    setIsRecording(true);
-    
-    // キャンバスアニメーションを確実に開始（前回ストップで停止している場合に備える）
-    const effect = effectForCanvas;
-    const spectrumSettings = {
-      opacity: 1 - spectrumOpacityPercent / 100,
-      lineWidthWaveform,
-      lineWidthCircle,
-      lineWidthSymWave,
-      circleRotationRpm,
-      loudnessParams: loudnessParamsByMode[mode] ?? defaultLoudnessParamsRef.current,
-      wmpTrailParams: wmpTrailParamsByMode[mode] ?? defaultWmpTrailParamsForMode,
-      glycoColorSet,
-      spectrumColorHex,
-      spectrumRainbowColorful,
-      subtitleOverlay: {
-        enabled: subtitleEnabled,
-        cues: subtitleCues,
-        getCurrentTimeSec: getCurrentPlaybackTimeSec,
-        style: subtitleStyle,
-      },
-      titleOverlay: {
-        enabled: titleEnabled,
-        text: titleText,
-        style: titleStyle,
-        isPlaying: true,
-        playbackTimeSec: getCurrentPlaybackTimeSec(),
-      },
-      ...spectrumVideoBackground,
-    };
-    if (canvasRef.current && analyserRef.current) {
-      if (rendererType === "webgl") {
-        drawBarsWebGL(
-          canvasRef.current,
-          imageCtx,
-          mode,
-          analyserRef.current,
-          modeAdjustments,
-          effect,
-          true,  // 録画開始時はエフェクトを有効
-          spectrumSettings
-        );
-      } else {
-        drawBars(
-          canvasRef.current,
-          imageCtx,
-          mode,
-          analyserRef.current,
-          modeAdjustments,
-          effect,
-          true,  // 録画開始時はエフェクトを有効
-          spectrumSettings
-        );
-      }
-    }
-    
-    // 録画用canvasのアニメーションが開始されるまで少し待つ
+    mwvMilestone("record: 動画生成クリック", {
+      hasVideo: Boolean(videoElementRef.current),
+      rendererType,
+      mode,
+      spectrumOpacityPercent,
+    });
+    // 録画セットアップ（MediaRecorder初期化）
     setTimeout(() => {
       const audioStream = streamDestinationRef.current.stream;
       const canvasStream = canvasRef.current.captureStream();
@@ -3023,7 +3076,11 @@ const Home: NextPage = () => {
         recordedBlobs.push(e.data);
       });
       const safeStopRecorder = () => {
-        if (recorder.state !== "recording") return;
+        if (recorder.state !== "recording") {
+          mwvLog("record: safeStopRecorder skipped (not recording)", { state: recorder.state });
+          return;
+        }
+        mwvLog("record: safeStopRecorder (requestData + delayed stop)");
         try {
           recorder.requestData();
         } catch {
@@ -3047,14 +3104,21 @@ const Home: NextPage = () => {
         mediaRecorderRef.current = null;
         setIsRecording(false);
         const movieName = "movie_" + Math.random().toString(36).slice(-8);
+        const downloadMp4Name = buildDownloadMp4Name(audioFileName, movieName);
         const webmName = movieName + ".webm";
         const mp4Name = movieName + ".mp4";
         const webmBlob = new Blob(recordedBlobs, { type: recordedMimeType });
+        mwvMilestone("record: MediaRecorder stop", {
+          chunkCount: recordedBlobs.length,
+          webmBytes: webmBlob.size,
+          mimeType: recordedMimeType,
+        });
 
         try {
           setEncodeStatus("loading");
           setEncodeProgress(0);
           const binaryData = new Uint8Array(await webmBlob.arrayBuffer());
+          mwvMilestone("record: ffmpeg へ渡す直前", { bufferBytes: binaryData.byteLength });
           const video = await generateMp4Video(
             binaryData,
             webmName,
@@ -3084,13 +3148,14 @@ const Home: NextPage = () => {
 
           const a = document.createElement("a");
           a.href = objectURL;
-          a.download = mp4Name;
+          a.download = downloadMp4Name;
           a.click();
           a.remove();
           exitConfirmRef.current = false;
           openSnackBar(t("snackbar.convertComplete"));
         } catch (error) {
           const msg = (error as Error).message || "unknown_error";
+          mwvError("record: MP4 変換エラー", error);
           openSnackBar(t("snackbar.convertFailed", { error: msg }));
           setEncodeStatus("idle");
         } finally {
@@ -3110,6 +3175,7 @@ const Home: NextPage = () => {
         if (clip.full !== false) {
           const originalOnEnded = videoElementRef.current.onended;
           videoElementRef.current.onended = () => {
+            mwvMilestone("record: 背景動画再生終了（録画停止へ）");
             if (originalOnEnded) {
               originalOnEnded.call(videoElementRef.current);
             }
@@ -3119,18 +3185,20 @@ const Home: NextPage = () => {
           };
         }
         // ショート区間の動画は onPlaySound 内のタイマーで停止・recorder.stop
-      } else if (audioBufferSrcRef.current) {
-        audioBufferSrcRef.current.onended = () => {
-          safeStopRecorder();
-          setIsRecording(false);
-          setIsPlaySound(false);
-        };
       }
+      // 静止画＋音声のみ: setupAudioSourceForPlayback は onPlaySound 内で実行されるため、
+      // ここ（再生前）に onended を付けても旧ノード／null に当たり、録画が終わらない不具合になる。
+      // 録画終了ハンドラは onPlaySound 直後に audioBufferSrcRef へ差し込む（下の else 分岐）。
 
       const startRecorder = () => {
         if (recorder.state !== "inactive") return;
+        setIsRecording(true);
         mediaRecorderRef.current = recorder;
         recorder.start();
+        mwvMilestone("record: MediaRecorder.start", {
+          mimeType: recorder.mimeType,
+          state: recorder.state,
+        });
         openSnackBar(t("snackbar.recording"));
         setRecordMovieDisabled(true);
       };
@@ -3144,6 +3212,25 @@ const Home: NextPage = () => {
         }, 120);
       } else {
         onPlaySound();
+        if (audioBufferSrcRef.current) {
+          const node = audioBufferSrcRef.current;
+          const priorOnEnded = node.onended;
+          node.onended = (ev: Event) => {
+            mwvMilestone("record: 音声再生終了（録画停止へ）");
+            try {
+              if (typeof priorOnEnded === "function") {
+                priorOnEnded.call(node, ev);
+              }
+            } catch {
+              /* ignore */
+            }
+            safeStopRecorder();
+            setIsRecording(false);
+            setIsPlaySound(false);
+          };
+        } else {
+          mwvError("record: 音声のみ録画だが audioBufferSrcRef が無い（onPlaySound 後）");
+        }
         window.setTimeout(startRecorder, 80);
       }
     }, 100); // 100ms待機して録画用canvasのアニメーション開始を保証
@@ -3234,6 +3321,11 @@ const Home: NextPage = () => {
     setSpaceParticleColor(DEFAULT_SPACE_PARTICLE);
     setSparkleParticleColor(DEFAULT_SPARKLE_PARTICLE);
     setDustParticleColor(DEFAULT_DUST_PARTICLE);
+    setSpaceDirection("forward");
+    setSpaceSpeed(1);
+    setSparkleVariant("normal");
+    setAtmosphereVariant("dust");
+    setAtmosphereStrength(45);
     setSpaceColorInput(DEFAULT_SPACE_PARTICLE.toUpperCase());
     setSparkleColorInput(DEFAULT_SPARKLE_PARTICLE.toUpperCase());
     setDustColorInput(DEFAULT_DUST_PARTICLE.toUpperCase());
@@ -3288,8 +3380,13 @@ const Home: NextPage = () => {
                 <Typography variant="body2" sx={{ mb: 0.5 }}>
                   {encodeStatus === "loading"
                     ? t("encode.loadingFfmpeg")
-                    : t("encode.converting", { progress: encodeProgress })}
+                    : t("encode.converting", { progress: Math.round(encodeProgress) })}
                 </Typography>
+                {encodeStatus === "converting" && (
+                  <Typography variant="caption" sx={{ display: "block", mb: 0.75, opacity: 0.92 }}>
+                    {t("encode.convertingHint")}
+                  </Typography>
+                )}
                 <LinearProgress
                   variant={encodeStatus === "loading" ? "indeterminate" : "determinate"}
                   value={encodeProgress}
@@ -3307,7 +3404,7 @@ const Home: NextPage = () => {
           </Box>
         )}
         <div
-          className={`${styles.heading} relative rounded-2xl border border-slate-200/70 bg-white/80 p-5 shadow-md backdrop-blur-sm dark:border-slate-600/50 dark:bg-slate-900/85 dark:shadow-lg`}
+          className={`${styles.heading} relative rounded-2xl border border-slate-200/70 bg-white/80 shadow-md backdrop-blur-sm dark:border-slate-600/50 dark:bg-slate-900/85 dark:shadow-lg`}
         >
           <Tooltip
             title={uiScheme === "light" ? t("theme.toggleToDark") : t("theme.toggleToLight")}
@@ -3320,8 +3417,8 @@ const Home: NextPage = () => {
               aria-label={uiScheme === "light" ? t("theme.toggleToDark") : t("theme.toggleToLight")}
               sx={{
                 position: "absolute",
-                top: 8,
-                right: 8,
+                top: 4,
+                right: 6,
                 zIndex: 2,
               }}
             >
@@ -3560,7 +3657,7 @@ const Home: NextPage = () => {
                 <Typography variant="caption" color="textSecondary" sx={{ display: "block", mb: 0.5, textAlign: "center" }}>
                   {t("spectrum.groupFrequency")}
                 </Typography>
-                <Box sx={{ display: "flex", gap: 1, justifyContent: "center", flexWrap: "wrap", mb: 1.5 }}>
+                <Box sx={{ display: "flex", gap: 1, justifyContent: "center", flexWrap: "wrap", mb: 2 }}>
                   {[
                     { value: -1, label: t("spectrum.shortOff") },
                     { value: 0, label: t("spectrum.shortFreqBar") },
@@ -3569,30 +3666,6 @@ const Home: NextPage = () => {
                     { value: 4, label: t("spectrum.shortDot") },
                     { value: 7, label: t("spectrum.shortAreaFill") },
                     { value: 6, label: t("spectrum.shortGlyco") },
-                  ].map((item) => (
-                    <Tooltip key={item.value} title={t(getModeDescriptionKey(item.value))} arrow>
-                      <Button
-                        variant={mode === item.value ? "contained" : "outlined"}
-                        onClick={() => onChangeMode({ target: { value: item.value.toString() } } as SelectChangeEvent<string>)}
-                        size="small"
-                      >
-                        {item.label}
-                      </Button>
-                    </Tooltip>
-                  ))}
-                </Box>
-                <Typography variant="caption" color="textSecondary" sx={{ display: "block", mb: 0.5, textAlign: "center" }}>
-                  {t("spectrum.groupLoudness")}
-                </Typography>
-                <Box sx={{ display: "flex", gap: 1, justifyContent: "center", flexWrap: "wrap", mb: 2 }}>
-                  {[
-                    { value: 8, label: t("spectrum.shortLoudnessPulse") },
-                    { value: 9, label: t("spectrum.shortVuMeter") },
-                    { value: 10, label: t("spectrum.shortPulseRing") },
-                    { value: 11, label: t("spectrum.shortCenterOrb") },
-                    { value: 12, label: t("spectrum.shortBreathingBg") },
-                    { value: 13, label: t("spectrum.shortParticleDensity") },
-                    { value: 14, label: t("spectrum.shortGeomMorph") },
                   ].map((item) => (
                     <Tooltip key={item.value} title={t(getModeDescriptionKey(item.value))} arrow>
                       <Button
@@ -4058,13 +4131,6 @@ const Home: NextPage = () => {
                   <Button variant={effectType === "snow" ? "contained" : "outlined"} onClick={() => setEffectType("snow")} size="small">
                     {t("effect.snow")}
                   </Button>
-                  <Button
-                    variant={effectType === "scanlines" ? "contained" : "outlined"}
-                    onClick={() => setEffectType("scanlines")}
-                    size="small"
-                  >
-                    {t("effect.scanlines")}
-                  </Button>
                 </Box>
                 <Accordion sx={{ mt: 2 }}>
                   <AccordionSummary expandIcon={<ExpandMore />}>
@@ -4073,7 +4139,7 @@ const Home: NextPage = () => {
                     </Typography>
                   </AccordionSummary>
                   <AccordionDetails>
-                    {effectType !== "none" && ALL_EFFECT_STRENGTH_TYPES.includes(effectType) && (
+                    {effectType !== "none" && effectType !== "dust" && ALL_EFFECT_STRENGTH_TYPES.includes(effectType) && (
                       <Box
                         sx={{
                           display: "flex",
@@ -4097,6 +4163,20 @@ const Home: NextPage = () => {
                             {d === 1 ? t("effect.weak") : d === 2 ? t("effect.medium") : t("effect.strong")}
                           </Button>
                         ))}
+                      </Box>
+                    )}
+                    {effectType === "dust" && (
+                      <Box sx={{ width: "100%", maxWidth: 440, mt: 1.5, mx: "auto" }}>
+                        <Typography variant="caption" color="textSecondary" display="block">
+                          {t("effect.atmosphereStrength", { value: atmosphereStrength })}
+                        </Typography>
+                        <Slider
+                          value={atmosphereStrength}
+                          min={1}
+                          max={100}
+                          step={1}
+                          onChange={(_, v) => setAtmosphereStrength(v as number)}
+                        />
                       </Box>
                     )}
                     {isSpaceEffect && (
@@ -4126,6 +4206,37 @@ const Home: NextPage = () => {
                           >
                             {t("effect.space3")}
                           </Button>
+                        </Box>
+                        <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1, justifyContent: "center", alignItems: "center", mt: 1 }}>
+                          <Typography variant="caption" color="textSecondary">
+                            {t("effect.spaceDirection")}
+                          </Typography>
+                          <Button
+                            variant={spaceDirection === "forward" ? "contained" : "outlined"}
+                            onClick={() => setSpaceDirection("forward")}
+                            size="small"
+                          >
+                            {t("effect.spaceForward")}
+                          </Button>
+                          <Button
+                            variant={spaceDirection === "backward" ? "contained" : "outlined"}
+                            onClick={() => setSpaceDirection("backward")}
+                            size="small"
+                          >
+                            {t("effect.spaceBackward")}
+                          </Button>
+                        </Box>
+                        <Box sx={{ width: "100%", maxWidth: 440, mt: 1, mx: "auto" }}>
+                          <Typography variant="caption" color="textSecondary" display="block">
+                            {t("effect.spaceSpeed", { value: spaceSpeed.toFixed(2) })}
+                          </Typography>
+                          <Slider
+                            value={spaceSpeed}
+                            min={0.2}
+                            max={3}
+                            step={0.05}
+                            onChange={(_, v) => setSpaceSpeed(v as number)}
+                          />
                         </Box>
                         <Box sx={{ width: "100%", maxWidth: 440, mt: 2, mx: "auto" }}>
                           <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 0.5 }}>
@@ -4183,6 +4294,32 @@ const Home: NextPage = () => {
                     )}
                     {effectType === "sparkle" && (
                       <Box sx={{ width: "100%", maxWidth: 440, mt: 2, mx: "auto" }}>
+                        <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1, justifyContent: "center", alignItems: "center", mb: 1 }}>
+                          <Typography variant="caption" color="textSecondary">
+                            {t("effect.sparkleType")}
+                          </Typography>
+                          <Button
+                            variant={sparkleVariant === "normal" ? "contained" : "outlined"}
+                            onClick={() => setSparkleVariant("normal")}
+                            size="small"
+                          >
+                            {t("effect.sparkleNormal")}
+                          </Button>
+                          <Button
+                            variant={sparkleVariant === "heart" ? "contained" : "outlined"}
+                            onClick={() => setSparkleVariant("heart")}
+                            size="small"
+                          >
+                            {t("effect.sparkleHeart")}
+                          </Button>
+                          <Button
+                            variant={sparkleVariant === "star" ? "contained" : "outlined"}
+                            onClick={() => setSparkleVariant("star")}
+                            size="small"
+                          >
+                            {t("effect.sparkleStar")}
+                          </Button>
+                        </Box>
                         <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 0.5 }}>
                           {t("effect.weatherColor")}
                         </Typography>
@@ -4237,6 +4374,32 @@ const Home: NextPage = () => {
                     )}
                     {effectType === "dust" && (
                       <Box sx={{ width: "100%", maxWidth: 440, mt: 2, mx: "auto" }}>
+                        <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1, justifyContent: "center", alignItems: "center", mb: 1 }}>
+                          <Typography variant="caption" color="textSecondary">
+                            {t("effect.atmosphereType")}
+                          </Typography>
+                          <Button
+                            variant={atmosphereVariant === "dust" ? "contained" : "outlined"}
+                            onClick={() => setAtmosphereVariant("dust")}
+                            size="small"
+                          >
+                            {t("effect.atmosphereDust")}
+                          </Button>
+                          <Button
+                            variant={atmosphereVariant === "sparks" ? "contained" : "outlined"}
+                            onClick={() => setAtmosphereVariant("sparks")}
+                            size="small"
+                          >
+                            {t("effect.atmosphereSparks")}
+                          </Button>
+                          <Button
+                            variant={atmosphereVariant === "fireflies" ? "contained" : "outlined"}
+                            onClick={() => setAtmosphereVariant("fireflies")}
+                            size="small"
+                          >
+                            {t("effect.atmosphereFireflies")}
+                          </Button>
+                        </Box>
                         <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 0.5 }}>
                           {t("effect.weatherColor")}
                         </Typography>

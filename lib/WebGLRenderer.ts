@@ -1242,6 +1242,8 @@ function renderFrame(): void {
         latestEffect.density,
         deltaTime,
         variant,
+        latestEffect.spaceDirection ?? "forward",
+        latestEffect.spaceSpeed ?? 1,
         variant === "spaceAudio" ? audioRForEffects : undefined,
         latestEffect.effectTintColor
       );
@@ -1264,6 +1266,7 @@ function renderFrame(): void {
           canvasHeight,
           latestEffect.density,
           deltaTime,
+          latestEffect.sparkleVariant ?? "normal",
           audioRForEffects,
           latestEffect.effectTintColor
         );
@@ -1313,6 +1316,8 @@ function renderFrame(): void {
           canvasHeight,
           latestEffect.density,
           deltaTime,
+          latestEffect.atmosphereVariant ?? "dust",
+          latestEffect.effectStrengthScale ?? 1,
           audioRForEffects,
           latestEffect.effectTintColor
         );
