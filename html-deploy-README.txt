@@ -14,7 +14,7 @@ Deployment:
    Example: https://example.com/visualizer/
 
 ※ For a different path (e.g. /mwv), edit basePath/assetPrefix in next.config.js
-   and run `npm run build:html` again. See HTML_HOSTING.md in the repository.
+   and run `npm run build:html` again. See docs/HTML_HOSTING.md in the repository.
 
 Build:
 ------
@@ -38,4 +38,4 @@ Notes:
 アクセス: https://あなたのドメイン/visualizer/
 
 別パスで公開する場合は next.config.js の basePath/assetPrefix を変更して
-`npm run build:html` を再実行してください。リポジトリの HTML_HOSTING.md を参照。
+`npm run build:html` を再実行してください。リポジトリの docs/HTML_HOSTING.md を参照。

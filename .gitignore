@@ -52,5 +52,5 @@ public/ffmpeg-core/
 # local editor / scripts
 mining.code-workspace
 x.sh
-引継ぎ資料_Windows_Cursor.md
+docs/引継ぎ資料_Windows_Cursor.md
 .cursor/rules/backup-location.mdc

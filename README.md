@@ -55,7 +55,7 @@ npm run build:html
 - The generated `visualizer/` is a **static HTML build** (Next.js `next export`; CLI may print deprecation / static-export notices — see [docs/BUILD.md](./docs/BUILD.md)).
 - Default config uses **`/visualizer` path**. Upload to the server's `visualizer` directory.
   - Example: Place `index.html`, `_next/`, `.htaccess` in `public_html/visualizer/`
-- For custom paths, see [HTML_HOSTING.md](./HTML_HOSTING.md).
+- For custom paths, see [docs/HTML_HOSTING.md](./docs/HTML_HOSTING.md).
 
 ## Usage
 
@@ -67,7 +67,7 @@ npm run build:html
 6. **Generate video**: Export MP4, or use the fast-generation option when available
 7. **Save or reset**: Export/import settings JSON, or clear everything to start over
 
-See [SPECIFICATION.md](./SPECIFICATION.md) for details.
+See [docs/SPECIFICATION.md](./docs/SPECIFICATION.md) for details.
 
 ## Documentation
 
@@ -76,13 +76,13 @@ See [SPECIFICATION.md](./SPECIFICATION.md) for details.
 - **[docs/SECURITY.md](./docs/SECURITY.md)**: Headers, file limits, dependency audits
 - **[docs/FFMPEG.md](./docs/FFMPEG.md)**: Self-hosted core, COOP/COEP, vs upstream PR #23
 - **[docs/VIDEO_BACKGROUND.md](./docs/VIDEO_BACKGROUND.md)**: MP4 roles (music vs video background), picker / drag-drop rules, and current **MP4-fixed output** policy (no alpha)
-- **[SPECIFICATION.md](./SPECIFICATION.md)**: Technical spec and feature details
-- **[SERVER_REQUIREMENTS.md](./SERVER_REQUIREMENTS.md)**: Shared hosting requirements
-- **[DEVELOPER_MODE.md](./DEVELOPER_MODE.md)**: Developer mode
-- **[CHANGELOG.md](./CHANGELOG.md)**: Changelog
-- **[USER_TERMS.md](./USER_TERMS.md)**: Terms of Service (EN + 日本語)
-- **[PRIVACY_POLICY.md](./PRIVACY_POLICY.md)**: Privacy policy
-- **[EU_GDPR_NOTICE.md](./EU_GDPR_NOTICE.md)**: EU/EEA users — GDPR-related summary (non-legal advice)
+- **[docs/SPECIFICATION.md](./docs/SPECIFICATION.md)**: Technical spec and feature details
+- **[docs/SERVER_REQUIREMENTS.md](./docs/SERVER_REQUIREMENTS.md)**: Shared hosting requirements
+- **[docs/DEVELOPER_MODE.md](./docs/DEVELOPER_MODE.md)**: Developer mode
+- **[docs/CHANGELOG.md](./docs/CHANGELOG.md)**: Changelog
+- **[docs/USER_TERMS.md](./docs/USER_TERMS.md)**: Terms of Service (EN + 日本語)
+- **[docs/PRIVACY_POLICY.md](./docs/PRIVACY_POLICY.md)**: Privacy policy
+- **[docs/EU_GDPR_NOTICE.md](./docs/EU_GDPR_NOTICE.md)**: EU/EEA users — GDPR-related summary (non-legal advice)
 - **[docs/INSTALL_LOCAL_STATIC.md](./docs/INSTALL_LOCAL_STATIC.md)**: GitHub Release ZIP / hosting `visualizer/` only (paths, headers, MP4 caveats)
 
 ## GitHub Releases
@@ -142,13 +142,13 @@ npm run build:html
 
 - [docs/README.md](./docs/README.md): ドキュメント索引（ビルド・セキュリティ・FFmpeg・動画背景）
 - [docs/VIDEO_BACKGROUND.md](./docs/VIDEO_BACKGROUND.md): MP4 の使い分け・UI 規則・録画・関連 Issue
-- [仕様書.md](./仕様書.md): 技術仕様と機能詳細
-- [サーバー要件.md](./サーバー要件.md): レンタルサーバー用要件
-- [DEVELOPER_MODE.md](./DEVELOPER_MODE.md): 開発者モード
-- [CHANGELOG.md](./CHANGELOG.md): 変更履歴
-- [USER_TERMS.md](./USER_TERMS.md): 利用規約
-- [PRIVACY_POLICY.md](./PRIVACY_POLICY.md): プライバシーポリシー
-- [EU_GDPR_NOTICE.md](./EU_GDPR_NOTICE.md): EU/EEA 向け GDPR 関連の案内（法的助言ではありません）
+- [docs/仕様書.md](./docs/仕様書.md): 技術仕様と機能詳細
+- [docs/サーバー要件.md](./docs/サーバー要件.md): レンタルサーバー用要件
+- [docs/DEVELOPER_MODE.md](./docs/DEVELOPER_MODE.md): 開発者モード
+- [docs/CHANGELOG.md](./docs/CHANGELOG.md): 変更履歴
+- [docs/USER_TERMS.md](./docs/USER_TERMS.md): 利用規約
+- [docs/PRIVACY_POLICY.md](./docs/PRIVACY_POLICY.md): プライバシーポリシー
+- [docs/EU_GDPR_NOTICE.md](./docs/EU_GDPR_NOTICE.md): EU/EEA 向け GDPR 関連の案内（法的助言ではありません）
 - [docs/INSTALL_LOCAL_STATIC.md](./docs/INSTALL_LOCAL_STATIC.md): リリース ZIP・`visualizer/` 単体利用時の手順と注意（パス・ヘッダ・MP4）
 
 ### GitHub Releases

@@ -36,10 +36,15 @@ mkdir -p "${STAGE}/visualizer" "${STAGE}/docs-bundled/docs"
 cp -a "${ROOT}/visualizer/." "${STAGE}/visualizer/"
 cp "${ROOT}/docs/INSTALL_LOCAL_STATIC.md" "${STAGE}/INSTALL_LOCAL_STATIC.md"
 
-# Root-level legal & hosting docs
-for f in LICENSE NOTICE CHANGELOG.md HTML_HOSTING.md SERVER_REQUIREMENTS.md USER_TERMS.md PRIVACY_POLICY.md EU_GDPR_NOTICE.md; do
+# Additional legal & hosting docs
+for f in LICENSE NOTICE; do
   if [[ -f "${ROOT}/${f}" ]]; then
     cp "${ROOT}/${f}" "${STAGE}/docs-bundled/"
+  fi
+done
+for f in CHANGELOG.md HTML_HOSTING.md SERVER_REQUIREMENTS.md USER_TERMS.md PRIVACY_POLICY.md EU_GDPR_NOTICE.md; do
+  if [[ -f "${ROOT}/docs/${f}" ]]; then
+    cp "${ROOT}/docs/${f}" "${STAGE}/docs-bundled/"
   fi
 done
 

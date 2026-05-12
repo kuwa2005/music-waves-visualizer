@@ -44,8 +44,6 @@ import {
   Undo,
   Lightbulb,
   LightbulbOutlined,
-  Speed,
-  Cancel,
 } from "@mui/icons-material";
 import i18n from "i18next";
 import { CustomSnackbar } from "../components/CustomSnackbar";
@@ -76,7 +74,7 @@ import {
   type QuickEncoderProgress,
   type QuickEncoderConfig
 } from "../lib/QuickVideoEncoder";
-import { isWebCodecsSupported, checkHardwareEncoderSupport, getBestEncodingMethod } from "../lib/WebCodecsEncoder";
+import { isWebCodecsSupported, checkHardwareEncoderSupport } from "../lib/WebCodecsEncoder";
 import { generateMp4Video } from "../lib/Ffmpeg";
 import { mwvError, mwvLog, mwvMilestone } from "../lib/mwvConsole";
 import {
@@ -3586,7 +3584,7 @@ const Home: NextPage = () => {
             <p>{t("heading.description")}</p>
             <p className={styles.heading__terms}>
               <a
-                href="https://github.com/kuwa2005/music-waves-visualizer/blob/master/USER_TERMS.md"
+                href="https://github.com/kuwa2005/music-waves-visualizer/blob/main/docs/USER_TERMS.md"
                 target="_blank"
                 rel="noopener noreferrer"
               >
@@ -5778,16 +5776,6 @@ const Home: NextPage = () => {
               size="medium"
             >
               {t("buttons.generateVideo")}
-            </Button>
-            <Button
-              variant={isQuickEncoding ? "contained" : "outlined"}
-              color={isQuickEncoding ? "error" : "primary"}
-              startIcon={isQuickEncoding ? <Cancel /> : <Speed />}
-              disabled={playSoundDisabled || isPlaySound || isRecording}
-              onClick={isQuickEncoding ? onCancelQuickEncode : onQuickEncodeMovie}
-              size="medium"
-            >
-              {isQuickEncoding ? "キャンセル" : "動画高速生成"}
             </Button>
             <Button
               variant="outlined"
