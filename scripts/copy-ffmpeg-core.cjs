@@ -4,12 +4,16 @@
 const fs = require("fs");
 const path = require("path");
 
-const src = path.join(__dirname, "../node_modules/@ffmpeg/core/dist");
+const srcCandidates = [
+  path.join(__dirname, "../node_modules/@ffmpeg/core/dist/umd"),
+  path.join(__dirname, "../node_modules/@ffmpeg/core/dist"),
+];
+const src = srcCandidates.find((dir) => fs.existsSync(dir));
 const dest = path.join(__dirname, "../public/ffmpeg-core");
 
-if (!fs.existsSync(src)) {
+if (!src) {
   console.error(
-    "copy-ffmpeg-core: node_modules/@ffmpeg/core/dist が見つかりません。npm ci を実行してください。"
+    "copy-ffmpeg-core: @ffmpeg/core の dist/umd または dist が見つかりません。npm install を実行してください。"
   );
   process.exit(1);
 }
