@@ -16,19 +16,17 @@ https://lil.la/visualizer/
 
 ## Features
 
-- **File loading**: Drag & drop or button to load image and audio files
-- **Auto image scaling**: Loaded images are scaled to recommended resolution (1920×1080, etc.) with aspect ratio preserved
-- **Spectrum analyzer**: OFF plus **5 selectable styles** in the UI (frequency bars, circle, symmetric bars, dots, glyco). *Line (mode 1) and symmetric waveform (mode 5) remain in the engine but are hidden from the toolbar; old saved sessions using those modes fall back to frequency bars.*
-- **Resolution mode**: Manual (1920×1080 / 1080×1920 / 1920×1920) and **Auto** (detect from loaded image aspect ratio as 16:9 / 9:16 / 1:1)
-- **Clip length limit (short platforms)**: For preview/recording you can limit playback to a window with presets: **YouTube (60s)**, **TikTok (60s)**, **NicoNico (300s)**. Playback starts at the specified start position and ends after the specified duration.
-- **Settings tabs**: Spectrum Analyzer / Effects / Audio / Clip Length / Settings
-- **Display & volume settings**: Scale/position adjustment (saved per layout), target LUFS (YouTube -14, NicoNico -15, custom)
-- **Effects**: Space (select type 1/2/3 in parameter panel), vignette, rainbow, curtain, sparkle (きらきら), dust (atmosphere), rain, snow. Shown during preview/recording only. Per-effect strength (weak/medium/strong). Sparkle/dust use compact rendering (no large radial glow halos)
-- **Preview**: Real-time waveform display while playing music
-- **Video generation**: MP4 output
-- **Settings management**: Export all settings, import with overwrite of existing keys only
-- **Clear**: Reset image/music selection and settings to initial state
-- **Bilingual UI**: Japanese / English (auto-detected from browser language)
+- **File loading**: Drag & drop or buttons for still images, audio, subtitle files, and a single MP4/video background
+- **Multi-image gallery**: Add multiple still images, auto-advance them during playback/recording, and apply transitions such as crossfade, wipe, slide, zoom, checker, and flash
+- **Spectrum visualizers**: Frequency and loudness modes including bars, circle, symmetric bars, dots, fill, glyco, loudness pulse, VU meter, pulse ring, center orb, breathing background, particles, geometry morph, oscilloscope, and Lissajous-style curves
+- **Title and subtitles**: Canvas title overlay plus SRT subtitle import, styling, animation, and built-in subtitle authoring/timing tools from pasted lyrics
+- **Video background support**: Use a single MP4 as the background visual, or extract audio/stills from video files where appropriate
+- **Resolution and tuning**: Auto/manual layouts (16:9 / 9:16 / 1:1), per-layout scale/position, waveform color/style presets, LUFS normalization, bitrate controls, and Canvas 2D / WebGL renderer selection
+- **Effects**: Space, vignette, rainbow, curtain, sparkle, atmosphere, rain, snow, and scanlines with per-effect parameters
+- **Clip length limit**: Presets and manual ranges for preview/recording windows, including YouTube, TikTok, and NicoNico-oriented lengths
+- **Video generation**: MP4 output plus a fast-generation path when the alternative encoder route is available
+- **Settings management**: Export/import settings JSON, persistent saved values, and one-click clear
+- **UI extras**: Dark/light mode toggle and bilingual Japanese / English UI
 
 ## Quick Start
 
@@ -58,14 +56,13 @@ npm run build:html
 
 ## Usage
 
-1. **Load files**: Drag & drop or use buttons to select image and audio
-2. **Select spectrum analyzer**: Choose from the visible modes (OFF + five styles)
-3. **Settings > Resolution**: Use Auto or manual 3 layouts
-4. **Audio (optional)**: Configure target LUFS
-5. **Effects (optional)**: Select effect and adjust parameters (collapsible panel)
-6. **Preview**: Play music and view waveform
-7. **Generate video**: Output MP4 (do not switch windows during generation)
-8. **Clear**: Reset to initial state
+1. **Load media**: Drop/select still images, audio, subtitles, or a single MP4 for video background
+2. **Build the scene**: Add more gallery images, choose a spectrum mode, and optionally enable title/subtitle overlays
+3. **Tune visuals**: Adjust effects, layout, waveform style, renderer, and clip-length range
+4. **Tune audio/output**: Configure target LUFS, bitrate, and output resolution as needed
+5. **Preview**: Play the track and confirm transitions, subtitles, and waveform behavior
+6. **Generate video**: Export MP4, or use the fast-generation option when available
+7. **Save or reset**: Export/import settings JSON, or clear everything to start over
 
 See [SPECIFICATION.md](./SPECIFICATION.md) for details.
 
@@ -111,15 +108,17 @@ MIT License. See [LICENSE](./LICENSE). Dependencies: [NOTICE](./NOTICE).
 
 ### 主な機能
 
-- **ファイル読み込み**: ドラッグ&ドロップまたはボタンから画像・音楽ファイルを読み込み
-- **画像の自動スケーリング**: 読み込んだ画像を推奨解像度に自動拡大・縮小
-- **スペクトラムアナライザー**: UI では OFF＋5種（周波数バー・円形・上下対称バー・ドット・グライコ風）。折れ線(1)・波形上下対称(5)は描画ロジックのみ残しボタン非表示。旧保存で1/5のときは周波数バーにフォールバック
-- **解像度モード**: 手動3種（1920×1080、1080×1920、1920×1920）＋**自動**（画像比率から16:9/9:16/1:1を判定）
-- **表示・音量設定**: 倍率・位置の調整、目標LUFS（YouTube -14、ニコニコ -15、任意値）
-- **設定タブ**: スペアナ / エフェクト / 音設定 / 動画長 / 設定
-- **エフェクト**: 宇宙空間（タイプ1/2/3はパラメータで選択）、ビネット、レインボー、カーテン、きらきら、空気感（ほこり）、雨、雪
-- **プレビュー・動画生成・設定管理・クリア**
-- **バイリンガルUI**: ブラウザ言語に応じて日本語/英語を自動切り替え
+- **ファイル読み込み**: 静止画・音楽・字幕をドラッグ&ドロップまたはボタンから読み込み。単一 MP4 を背景動画として使うことも可能
+- **複数画像ギャラリー**: 追加画像の読み込み、自動切替、クロスフェード・ワイプ・ズーム・フラッシュなどのトランジションに対応
+- **スペクトラムアナライザー**: 周波数系と音圧系の両方を搭載。バー、円形、対称バー、ドット、面、グライコ、パルス、VU、リング、オーブ、背景ブリージング、粒子、ジオメトリ変形、オシロスコープ、リサージュ系などを選択可能
+- **タイトル・字幕**: タイトル文字のオーバーレイ、SRT 字幕の読み込み・装飾・アニメーション、歌詞からの字幕作成/タイミング記録に対応
+- **背景動画対応**: 静止画ギャラリーの代わりに単一 MP4 を背景として使用可能。動画から音声や静止画を取り込む導線もあり
+- **解像度・表示・音量調整**: 自動/手動レイアウト、倍率・位置、波形カラー/スタイル、LUFS 正規化、ビットレート、Canvas 2D / WebGL の切り替えに対応
+- **エフェクト**: 宇宙空間、ビネット、レインボー、カーテン、きらきら、空気感、雨、雪、スキャンラインをパラメータ付きで利用可能
+- **動画長制限**: YouTube / TikTok / ニコニコ向けの長さプリセットと、開始位置・秒数の手動指定に対応
+- **動画生成**: MP4 出力に加えて、条件が合えば高速生成ルートも利用可能
+- **設定管理**: JSON のエクスポート/インポート、保存済み設定の利用、ワンクリッククリア
+- **UI**: ダーク/ライト切り替えと、日本語/英語のバイリンガル表示
 
 ### クイックスタート
 
