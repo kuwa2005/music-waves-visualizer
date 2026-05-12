@@ -4,7 +4,17 @@
  */
 
 import type { ModeAdjustments, SpectrumSettings } from './Canvas';
-import { GLYCO_COLOR_SETS, GLYCO_GRADIENT_SETS } from './Canvas';
+import {
+  GLYCO_COLOR_SETS,
+  GLYCO_GRADIENT_SETS,
+  getSpectrumPrimaryRgb,
+  getSpectrumSecondaryRgb,
+  glycoBarRawEnergy,
+  glycoAdjustedLevel,
+  GLYCO_BAR_VERTICAL_SCALE,
+  SPECTRUM_THROTTLE_TARGET_FPS,
+  spectrumLinearBarLowGain,
+} from './Canvas';
 import {
   updateAndGetSpaceParticles,
   updateAndGetSparkleParticles,
@@ -15,6 +25,7 @@ import {
   type EffectType,
   type AudioReactiveData,
 } from './Effects';
+import { drawGalleryBackground, peekGalleryImageTransitionFrame } from './galleryImageTransition';
 
 const BASE_LINE_WIDTH_WAVEFORM = 2.0;
 const BASE_LINE_WIDTH_CIRCLE = 2.0;
@@ -29,6 +40,7 @@ const EFFECT_TYPE_TO_GL: Record<EffectType, number> = {
   dust: 0,
   rain: 0,
   snow: 0,
+  scanlines: 0,
   filmGrain: 1,
   vignette: 2,
   rainbow: 3,
@@ -429,6 +441,66 @@ function drawBackgroundWebGL(
   // 背景色でクリア
   gl.clearColor(34 / 255, 34 / 255, 34 / 255, 1.0);
   gl.clear(gl.COLOR_BUFFER_BIT);
+
+  const galleryTransition = peekGalleryImageTransitionFrame();
+  if (galleryTransition) {
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = canvasWidth;
+    tempCanvas.height = canvasHeight;
+    const tctx = tempCanvas.getContext('2d', {
+      alpha: false,
+      desynchronized: true,
+      willReadFrequently: false,
+    });
+    if (tctx) {
+      drawGalleryBackground(tctx, canvasWidth, canvasHeight, null, galleryTransition);
+      if (!ctx.imageTexture) {
+        ctx.imageTexture = gl.createTexture();
+      }
+      gl.bindTexture(gl.TEXTURE_2D, ctx.imageTexture);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, tempCanvas);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      ctx.imageCache = { image: null, width: -1, height: -1 };
+      gl.useProgram(textureProgram);
+      if (texResolutionLocation) {
+        gl.uniform2f(texResolutionLocation, canvasWidth, canvasHeight);
+      }
+      const positions = new Float32Array([
+        0, 0,
+        canvasWidth, 0,
+        0, canvasHeight,
+        0, canvasHeight,
+        canvasWidth, 0,
+        canvasWidth, canvasHeight,
+      ]);
+      const texCoords = new Float32Array([
+        0, 0,
+        1, 0,
+        0, 1,
+        0, 1,
+        1, 0,
+        1, 1,
+      ]);
+      gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+      gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
+      gl.enableVertexAttribArray(texPositionLocation);
+      gl.vertexAttribPointer(texPositionLocation, 2, gl.FLOAT, false, 0, 0);
+      gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
+      gl.bufferData(gl.ARRAY_BUFFER, texCoords, gl.STATIC_DRAW);
+      gl.enableVertexAttribArray(texCoordLocation);
+      gl.vertexAttribPointer(texCoordLocation, 2, gl.FLOAT, false, 0, 0);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, ctx.imageTexture);
+      if (textureLocation) {
+        gl.uniform1i(textureLocation, 0);
+      }
+      gl.drawArrays(gl.TRIANGLES, 0, 6);
+    }
+    return;
+  }
 
   // 画像がない場合は背景色のみ
   if (!image) {
@@ -1015,7 +1087,6 @@ function renderFrame(): void {
 
     const settings: SpectrumSettings = latestSpectrumSettings ?? {
       opacity: 0.9,
-      fps: 30,
       lineWidthWaveform: 3.2,
       lineWidthCircle: 3.2,
       lineWidthSymWave: 3.6,
@@ -1056,11 +1127,11 @@ function renderFrame(): void {
 
     audioRForEffects = getAudioReactive();
 
-    // 更新レートを設定値に合わせて落とす（約 settings.fps fps）
+    // モード1・5: スペアナ本体を SPECTRUM_THROTTLE_TARGET_FPS に合わせて間引く
     let skipSpectrumDraw = false;
     if (mode === 1 || mode === 5) {
       const now = performance.now();
-      const interval = 1000 / settings.fps;
+      const interval = 1000 / SPECTRUM_THROTTLE_TARGET_FPS;
       const key = mode === 1 ? '_lastTimeMode1' : '_lastTimeMode5';
       const last = (renderFrame as any)[key] ?? 0;
       if (now - last < interval) {
@@ -1111,11 +1182,55 @@ function renderFrame(): void {
         analyser.getByteFrequencyData(bufferData);
         drawMode6Glyco(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
         break;
+      case 7:
+        analyser.getByteFrequencyData(bufferData);
+        drawMode7Area(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
+        break;
+      case 8:
+        analyser.getByteFrequencyData(bufferData);
+        drawMode8LoudnessPulse(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
+        break;
+      case 9:
+        analyser.getByteFrequencyData(bufferData);
+        drawMode9Vu(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
+        break;
+      case 10:
+        analyser.getByteFrequencyData(bufferData);
+        drawMode10Ring(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
+        break;
+      case 11:
+        analyser.getByteFrequencyData(bufferData);
+        drawMode11Orb(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
+        break;
+      case 12:
+        analyser.getByteFrequencyData(bufferData);
+        drawMode12Breathing(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
+        break;
+      case 13:
+        analyser.getByteFrequencyData(bufferData);
+        drawMode13Particles(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
+        break;
+      case 14:
+        analyser.getByteFrequencyData(bufferData);
+        drawMode14Morph(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
+        break;
+      case 15:
+        analyser.getByteTimeDomainData(bufferData);
+        drawMode15Oscilloscope(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
+        break;
+      case 16:
+        analyser.getByteTimeDomainData(bufferData);
+        drawMode16Lissajous(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
+        break;
     }
   }
 
   // エフェクトオーバーレイ（wantSpectrum 時のみ到達＝上で取得した音源メトリクス）
   if (latestEffect && latestEffect.type !== "none") {
+    const effectDucking =
+      mode !== -1 && (latestEffect.type === "scanlines" || latestEffect.type === "rain" || latestEffect.type === "dust")
+        ? 0.78
+        : 1.0;
     if (latestEffect.type === "space" || latestEffect.type === "spaceConstant" || latestEffect.type === "spaceAudio") {
       const now = performance.now();
       const deltaTime = Math.min(now - lastEffectTime, 50);
@@ -1127,7 +1242,10 @@ function renderFrame(): void {
         latestEffect.density,
         deltaTime,
         variant,
-        variant === "spaceAudio" ? audioRForEffects : undefined
+        latestEffect.spaceDirection ?? "forward",
+        latestEffect.spaceSpeed ?? 1,
+        variant === "spaceAudio" ? audioRForEffects : undefined,
+        latestEffect.effectTintColor
       );
       for (const p of particles) {
         const r = p.r / 255;
@@ -1148,7 +1266,9 @@ function renderFrame(): void {
           canvasHeight,
           latestEffect.density,
           deltaTime,
-          audioRForEffects
+          latestEffect.sparkleVariant ?? "normal",
+          audioRForEffects,
+          latestEffect.effectTintColor
         );
         for (const p of parts) {
           const rad = Math.max(1, p.radius);
@@ -1196,7 +1316,10 @@ function renderFrame(): void {
           canvasHeight,
           latestEffect.density,
           deltaTime,
-          audioRForEffects
+          latestEffect.atmosphereVariant ?? "dust",
+          latestEffect.effectStrengthScale ?? 1,
+          audioRForEffects,
+          latestEffect.effectTintColor
         );
         for (const p of parts) {
           drawCircle(
@@ -1207,7 +1330,7 @@ function renderFrame(): void {
             p.r / 255,
             p.g / 255,
             p.b / 255,
-            p.alpha
+            p.alpha * effectDucking
           );
         }
       }
@@ -1237,7 +1360,7 @@ function renderFrame(): void {
           s.r / 255,
           s.g / 255,
           s.b / 255,
-          s.a,
+          s.a * effectDucking,
           s.lw
         );
       }
@@ -1269,6 +1392,22 @@ function renderFrame(): void {
         );
       }
       gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    } else if (latestEffect.type === "scanlines") {
+      const strength = DENSITY_STRENGTH[latestEffect.density];
+      const spacing = latestEffect.density === 3 ? 2 : latestEffect.density === 2 ? 3 : 4;
+      const base = 0.14 + 0.22 * strength;
+      const pulse =
+        0.78 +
+        0.22 *
+          Math.min(1, audioRForEffects.volume * 0.7 + audioRForEffects.bass * 0.35);
+      const alpha = Math.min(0.42, base * pulse) * effectDucking;
+      const lineH = latestEffect.density === 3 ? 2 : 1;
+      for (let y = 0; y < canvasHeight; y += spacing) {
+        drawRect(glContext, 0, y, canvasWidth, lineH, 0, 0, 0, alpha);
+        if (lineH === 2 && y + 1 < canvasHeight) {
+          drawRect(glContext, 0, y + 1, canvasWidth, 1, 0, 0, 0, alpha * 0.35);
+        }
+      }
     } else {
       drawEffectOverlayWebGL(glContext, canvasWidth, canvasHeight, latestEffect, audioRForEffects);
     }
@@ -1292,7 +1431,7 @@ function renderFrame(): void {
  */
 export const drawBarsWebGL = (
   canvas: HTMLCanvasElement,
-  imageCtx: HTMLImageElement,
+  imageCtx: HTMLImageElement | null,
   mode: number,
   analyser: AnalyserNode,
   adjustments?: ModeAdjustments,
@@ -1355,9 +1494,14 @@ function drawMode0(
   const barWidth = canvasWidth / barsLength;
   let barX = 0;
   const opacity = settings.opacity;
+  const [pr, pg, pb] = getSpectrumPrimaryRgb(settings);
+  const r = pr / 255;
+  const g = pg / 255;
+  const b = pb / 255;
 
   for (let i = 0; i < barsLength; i++) {
-    const barHeight = bufferData[i];
+    const g = spectrumLinearBarLowGain(i, barsLength);
+    const barHeight = Math.min(255, bufferData[i] * g);
     const y = canvasHeight - barHeight;
 
     // 4つの角の座標を変換
@@ -1368,7 +1512,7 @@ function drawMode0(
     const transformedWidth = x2 - x1;
     const transformedHeight = y2 - y1;
 
-    drawRect(ctx, x1, y1, transformedWidth, transformedHeight, 1.0, 1.0, 1.0, opacity);
+    drawRect(ctx, x1, y1, transformedWidth, transformedHeight, r, g, b, opacity);
     barX += barWidth;
   }
 }
@@ -1387,6 +1531,10 @@ function drawMode1(
   const scale = (canvasHeight / 2) / 128;
   const opacity = settings.opacity;
   const lineWidth = BASE_LINE_WIDTH_WAVEFORM * settings.lineWidthWaveform;
+  const [pr, pg, pb] = getSpectrumPrimaryRgb(settings);
+  const r = pr / 255;
+  const g = pg / 255;
+  const b = pb / 255;
 
   for (let i = 0; i < bufferLength - 1; i++) {
     const x1 = (i / bufferLength) * canvasWidth;
@@ -1398,7 +1546,7 @@ function drawMode1(
     const [tx1, ty1] = applyTransform(x1, y1, canvasWidth, canvasHeight, adj);
     const [tx2, ty2] = applyTransform(x2, y2, canvasWidth, canvasHeight, adj);
 
-    drawLine(ctx, tx1, ty1, tx2, ty2, 1.0, 1.0, 1.0, opacity, lineWidth);
+    drawLine(ctx, tx1, ty1, tx2, ty2, r, g, b, opacity, lineWidth);
   }
 }
 
@@ -1420,10 +1568,16 @@ function drawMode2(
   const offsetXPixels = (canvasWidth * adj.offsetX) / 100;
   const offsetYPixels = (canvasHeight * adj.offsetY) / 100;
   const opacity = settings.opacity;
+  const [pr, pg, pb] = getSpectrumPrimaryRgb(settings);
+  const r = pr / 255;
+  const g = pg / 255;
+  const b = pb / 255;
+  const circleRotationRpm = settings.circleRotationRpm ?? 0;
+  const rotationOffsetRad = ((circleRotationRpm * 2 * Math.PI) / 60) * (performance.now() / 1000);
 
   for (let i = 0; i < 256; i++) {
     const value = bufferData[i];
-    const angle = i * ((180 / 128) * Math.PI / 180);
+    const angle = i * ((180 / 128) * Math.PI / 180) + rotationOffsetRad;
 
     // Canvas.ts draws bars at (0, radius) with rotation
     // After rotation by angle: point (0, radius) becomes (-radius*sin(angle), radius*cos(angle))
@@ -1433,15 +1587,16 @@ function drawMode2(
     const localY2 = (radius - value) * Math.cos(angle);
 
     // Apply full Canvas.ts transformation:
-    // After user adjustments + scale(0.5,0.5) + translate(canvasWidth, canvasHeight):
-    // screen_x = local_x * scaleX * 0.5 + canvasWidth/2 + scaleX * offsetXPixels
-    // screen_y = local_y * scaleY * 0.5 + canvasHeight/2 + scaleY * offsetYPixels
-    const tx1 = localX1 * adj.scaleX * 0.5 + canvasWidth / 2 + adj.scaleX * offsetXPixels;
-    const ty1 = localY1 * adj.scaleY * 0.5 + canvasHeight / 2 + adj.scaleY * offsetYPixels;
-    const tx2 = localX2 * adj.scaleX * 0.5 + canvasWidth / 2 + adj.scaleX * offsetXPixels;
-    const ty2 = localY2 * adj.scaleY * 0.5 + canvasHeight / 2 + adj.scaleY * offsetYPixels;
+    // User adjustments are applied first, then mode-specific scale(0.5, 0.5)
+    // The offset is also scaled by the mode's 0.5 factor
+    // screen_x = local_x * scaleX * 0.5 + canvasWidth/2 + offsetXPixels * 0.5
+    // screen_y = local_y * scaleY * 0.5 + canvasHeight/2 + offsetYPixels * 0.5
+    const tx1 = localX1 * adj.scaleX * 0.5 + canvasWidth / 2 + offsetXPixels * 0.5;
+    const ty1 = localY1 * adj.scaleY * 0.5 + canvasHeight / 2 + offsetYPixels * 0.5;
+    const tx2 = localX2 * adj.scaleX * 0.5 + canvasWidth / 2 + offsetXPixels * 0.5;
+    const ty2 = localY2 * adj.scaleY * 0.5 + canvasHeight / 2 + offsetYPixels * 0.5;
 
-    drawLine(ctx, tx1, ty1, tx2, ty2, 1.0, 1.0, 1.0, opacity, barWidth);
+    drawLine(ctx, tx1, ty1, tx2, ty2, r, g, b, opacity, barWidth);
   }
 }
 
@@ -1458,14 +1613,30 @@ function drawMode3(
   const barWidth = canvasWidth / barsLength;
   const centerY = canvasHeight / 2;
   const opacity = settings.opacity;
+  const useRainbow = settings.spectrumRainbowColorful !== false;
+  const [pr, pg, pb] = getSpectrumPrimaryRgb(settings);
+  const [sr, sg, sb] = getSpectrumSecondaryRgb(settings);
 
   for (let i = 0; i < barsLength; i++) {
-    const barHeight = bufferData[i] * 2;
-    const hue = (i / barsLength) * 360;
-
-    // Canvas.tsと同じグラデーション: 上側と下側で色を変える
-    const [r1, g1, b1] = hslToRgb(hue, 1.0, 0.5);
-    const [r2, g2, b2] = hslToRgb(hue + 60, 1.0, 0.7);
+    const barHeight = glycoBarRawEnergy(i, barsLength, bufferData.length, bufferData) * 2;
+    let r1: number;
+    let g1: number;
+    let b1: number;
+    let r2: number;
+    let g2: number;
+    let b2: number;
+    if (useRainbow) {
+      const hue = (i / barsLength) * 360;
+      [r1, g1, b1] = hslToRgb(hue, 1.0, 0.5);
+      [r2, g2, b2] = hslToRgb(hue + 60, 1.0, 0.7);
+    } else {
+      r1 = pr / 255;
+      g1 = pg / 255;
+      b1 = pb / 255;
+      r2 = sr / 255;
+      g2 = sg / 255;
+      b2 = sb / 255;
+    }
 
     const x = i * barWidth;
     const y = centerY - barHeight / 2;
@@ -1497,16 +1668,28 @@ function drawMode4(
   const dotSizeY = canvasHeight / dotsPerCol;
   const dotRadius = Math.min(dotSizeX, dotSizeY) / 3;
   const baseOpacity = settings.opacity;
+  const useRainbow = settings.spectrumRainbowColorful !== false;
+  const [pr, pg, pb] = getSpectrumPrimaryRgb(settings);
+  const [sr, sg, sb] = getSpectrumSecondaryRgb(settings);
 
   for (let col = 0; col < dotsPerRow; col++) {
-    const freqIndex = Math.floor((col / dotsPerRow) * bufferLength);
-    const value = bufferData[freqIndex];
+    const value = glycoBarRawEnergy(col, dotsPerRow, bufferLength, bufferData);
+    const tcol = col / dotsPerRow;
 
     for (let row = 0; row < dotsPerCol; row++) {
       const threshold = (255 / dotsPerCol) * (dotsPerCol - row);
       const opacity = (value > threshold ? 0.8 : 0.2) * baseOpacity;
-      const hue = (col / dotsPerRow) * 360;
-      const [r, g, b] = hslToRgb(hue, 1.0, 0.5);
+      let r: number;
+      let g: number;
+      let b: number;
+      if (useRainbow) {
+        const hue = tcol * 360;
+        [r, g, b] = hslToRgb(hue, 1.0, 0.5);
+      } else {
+        r = (pr + (sr - pr) * tcol) / 255;
+        g = (pg + (sg - pg) * tcol) / 255;
+        b = (pb + (sb - pb) * tcol) / 255;
+      }
 
       const x = col * dotSizeX + dotSizeX / 2;
       const y = row * dotSizeY + dotSizeY / 2;
@@ -1537,6 +1720,10 @@ function drawMode5(
   const opacity = settings.opacity;
   // Canvas.ts mode5 と同様に lineWidthSymWave を直接使用
   const lineWidth = settings.lineWidthSymWave;
+  const [pr, pg, pb] = getSpectrumPrimaryRgb(settings);
+  const r = pr / 255;
+  const g = pg / 255;
+  const b = pb / 255;
 
   for (let i = 0; i < bufferLength - 1; i++) {
     const x1 = (i / bufferLength) * canvasWidth;
@@ -1547,14 +1734,14 @@ function drawMode5(
     // 上側（通常）の変換
     const [tx1, ty1] = applyTransform(x1, y1, canvasWidth, canvasHeight, adj);
     const [tx2, ty2] = applyTransform(x2, y2, canvasWidth, canvasHeight, adj);
-    drawLine(ctx, tx1, ty1, tx2, ty2, 1.0, 1.0, 1.0, opacity, lineWidth);
+    drawLine(ctx, tx1, ty1, tx2, ty2, r, g, b, opacity, lineWidth);
 
     // 下側（反転）の変換
     const y1Mirror = canvasHeight - y1;
     const y2Mirror = canvasHeight - y2;
     const [tx1m, ty1m] = applyTransform(x1, y1Mirror, canvasWidth, canvasHeight, adj);
     const [tx2m, ty2m] = applyTransform(x2, y2Mirror, canvasWidth, canvasHeight, adj);
-    drawLine(ctx, tx1m, ty1m, tx2m, ty2m, 1.0, 1.0, 1.0, opacity, lineWidth);
+    drawLine(ctx, tx1m, ty1m, tx2m, ty2m, r, g, b, opacity, lineWidth);
   }
 }
 
@@ -1601,7 +1788,7 @@ function drawMode6Glyco(
   const bufferLength = bufferData.length;
   const barsLength = 64;
   const barWidth = canvasWidth / barsLength;
-  const scale = (canvasHeight / 255) * 1.2;
+  const scale = (canvasHeight / 255) * GLYCO_BAR_VERTICAL_SCALE;
   const holdMs = 350;
   const decayPerFrame = 2.5;
   const now = performance.now();
@@ -1610,12 +1797,6 @@ function drawMode6Glyco(
   const useVerticalGradient = colorSet === "verticalEQ";
   const useVerticalGradientFixed = colorSet === "verticalEQFixed";
   const peakLineWidth = 5; // ピーク「-」を太く
-
-  const getAdjustedValue = (i: number, rawValue: number) => {
-    const t = i / barsLength;
-    const gain = 1 + t * 0.25; // 高音域で最大1.25倍
-    return Math.min(255, rawValue * gain);
-  };
 
   const effAdj: ModeAdjustments = { ...adj, scaleY: adj.scaleY / 3, scaleX: adj.scaleX };
 
@@ -1640,8 +1821,8 @@ function drawMode6Glyco(
   };
 
   for (let i = 0; i < barsLength; i++) {
-    const rawValue = bufferData[Math.floor((i / barsLength) * bufferLength)];
-    const value = getAdjustedValue(i, rawValue);
+    const rawValue = glycoBarRawEnergy(i, barsLength, bufferLength, bufferData);
+    const value = glycoAdjustedLevel(rawValue);
     const barHeight = Math.min(value * scale, canvasHeight);
     const x = i * barWidth;
 
@@ -1705,6 +1886,479 @@ function drawMode6Glyco(
       const { dash } = getColor(i);
       drawLine(ctx, dx1, dy1, dx2, dy2, dash[0] / 255, dash[1] / 255, dash[2] / 255, dashOpacity, peakLineWidth);
     }
+  }
+}
+
+/** モード7: 周波数スペクトラム面（縦帯の積み上げ＋上縁ライン） */
+function drawMode7Area(
+  ctx: WebGLRendererContext,
+  bufferData: Uint8Array,
+  canvasWidth: number,
+  canvasHeight: number,
+  adj: ModeAdjustments,
+  settings: SpectrumSettings
+): void {
+  const bufferLength = bufferData.length;
+  const barsLength = 128;
+  const barWidth = canvasWidth / barsLength;
+  const op = getVisualOpacity(settings.opacity);
+  const [pr, pg, pb] = getSpectrumPrimaryRgb(settings);
+  const [sr, sg, sb] = getSpectrumSecondaryRgb(settings);
+  for (let i = 0; i < barsLength; i++) {
+    const h = bufferData[Math.floor((i / barsLength) * bufferLength)];
+    const yTop = canvasHeight - h;
+    const x0 = i * barWidth;
+    const t = barsLength <= 1 ? 0 : i / (barsLength - 1);
+    const r = (pr + (sr - pr) * t) / 255;
+    const gCol = (pg + (sg - pg) * t) / 255;
+    const bCol = (pb + (sb - pb) * t) / 255;
+    const [x1, y1] = applyTransform(x0, yTop, canvasWidth, canvasHeight, adj);
+    const [x2, y2] = applyTransform(x0 + barWidth, canvasHeight, canvasWidth, canvasHeight, adj);
+    const rx = Math.min(x1, x2);
+    const ry = Math.min(y1, y2);
+    drawRect(ctx, rx, ry, Math.abs(x2 - x1), Math.abs(y2 - y1), r, gCol, bCol, 0.78 * op);
+  }
+  const lineW = Math.max(1, BASE_LINE_WIDTH_WAVEFORM * 0.55);
+  for (let i = 0; i < barsLength - 1; i++) {
+    const h0 = bufferData[Math.floor((i / barsLength) * bufferLength)];
+    const h1 = bufferData[Math.floor(((i + 1) / barsLength) * bufferLength)];
+    const x0 = i * barWidth + barWidth / 2;
+    const x1 = (i + 1) * barWidth + barWidth / 2;
+    const y0 = canvasHeight - h0;
+    const y1 = canvasHeight - h1;
+    const [tx0, ty0] = applyTransform(x0, y0, canvasWidth, canvasHeight, adj);
+    const [tx1, ty1] = applyTransform(x1, y1, canvasWidth, canvasHeight, adj);
+    drawLine(ctx, tx0, ty0, tx1, ty1, sr / 255, sg / 255, sb / 255, 0.92 * op, lineW);
+  }
+}
+
+/** モード8: 音圧パルス（全帯域平均音圧で中心オーブ/リングを脈動） */
+function drawMode8LoudnessPulse(
+  ctx: WebGLRendererContext,
+  bufferData: Uint8Array,
+  canvasWidth: number,
+  canvasHeight: number,
+  adj: ModeAdjustments,
+  settings: SpectrumSettings
+): void {
+  const lp = settings.loudnessParams ?? { gain: 1.35, gamma: 0.82, attack: 0.22, release: 0.08 };
+  const target = getLoudnessLevel(bufferData, lp.gamma, lp.gain);
+
+  const pulseState = (drawMode8LoudnessPulse as any)._pulse ?? { level: 0 };
+  pulseState.level = smoothAR(pulseState.level, target, lp.attack, lp.release);
+  (drawMode8LoudnessPulse as any)._pulse = pulseState;
+  const level = pulseState.level;
+
+  const cx = canvasWidth / 2;
+  const cy = canvasHeight / 2;
+  const baseR = Math.min(canvasWidth, canvasHeight) * 0.16;
+  const pulseR = baseR * (1 + level * 1.15);
+  const op = getVisualOpacity(settings.opacity);
+  const [pr, pg, pb] = getSpectrumPrimaryRgb(settings);
+  const [sr, sg, sb] = getSpectrumSecondaryRgb(settings);
+  const coreOpacity = (0.28 + 0.25 * level) * op;
+  const glowOpacity = (0.1 + 0.35 * level) * op;
+
+  const [tcx, tcy] = applyTransform(cx, cy, canvasWidth, canvasHeight, adj);
+  const radiusScale = Math.max(0.1, Math.min(adj.scaleX, adj.scaleY));
+  const coreR = pulseR * radiusScale;
+  const glowR = coreR * (1.6 + level * 0.75);
+
+  // 外側グロー: 同心円を重ねて疑似グラデーション化
+  const steps = 10;
+  for (let i = steps; i >= 1; i--) {
+    const t = i / steps;
+    const r = glowR * t;
+    const a = glowOpacity * (1 - t) * 0.55;
+    drawCircle(ctx, tcx, tcy, r, sr / 255, sg / 255, sb / 255, a);
+  }
+  drawCircle(ctx, tcx, tcy, coreR, pr / 255, pg / 255, pb / 255, coreOpacity);
+  drawCircle(ctx, tcx, tcy, coreR * 1.03, sr / 255, sg / 255, sb / 255, Math.min(1, 0.75 * op));
+}
+
+function clamp01(x: number): number {
+  return Math.min(1, Math.max(0, x));
+}
+
+function getLoudnessLevel(bufferData: Uint8Array, gamma = 0.85, boost = 1.3): number {
+  let sum = 0;
+  for (let i = 0; i < bufferData.length; i++) sum += bufferData[i];
+  const volume = sum / (bufferData.length * 255);
+  return clamp01(Math.pow(volume, gamma) * boost);
+}
+
+function smoothAR(prev: number, target: number, attack: number, release: number): number {
+  const a = target > prev ? attack : release;
+  return prev + (target - prev) * a;
+}
+
+function getVisualOpacity(opacity: number): number {
+  return Math.min(0.92, 0.12 + opacity * 0.8);
+}
+
+function getParticlePerfScale(): number {
+  if (typeof navigator === "undefined") return 0.7;
+  const hc = (navigator as any).hardwareConcurrency ?? 4;
+  const dm = (navigator as any).deviceMemory ?? 4;
+  if (hc <= 4 || dm <= 4) return 0.45;
+  if (hc <= 8 || dm <= 8) return 0.7;
+  return 1.0;
+}
+
+function trailFade(age: number, trailDecay: number): number {
+  const exp = Math.max(0.5, 6.0 * (1 - trailDecay) + 0.6);
+  return Math.pow(age, exp);
+}
+
+function drawMode9Vu(
+  ctx: WebGLRendererContext,
+  bufferData: Uint8Array,
+  canvasWidth: number,
+  canvasHeight: number,
+  adj: ModeAdjustments,
+  settings: SpectrumSettings
+): void {
+  const lp = settings.loudnessParams ?? { gain: 1.25, gamma: 0.85, attack: 0.28, release: 0.12 };
+  const half = Math.max(1, Math.floor(bufferData.length / 2));
+  let leftSum = 0;
+  let rightSum = 0;
+  for (let i = 0; i < half; i++) leftSum += bufferData[i];
+  for (let i = half; i < bufferData.length; i++) rightSum += bufferData[i];
+  const rawL = clamp01(Math.pow(leftSum / (half * 255), lp.gamma) * lp.gain);
+  const rawR = clamp01(Math.pow(rightSum / (Math.max(1, bufferData.length - half) * 255), lp.gamma) * lp.gain);
+  const s = (drawMode9Vu as any)._state ?? { levelL: 0, levelR: 0, peakL: 0, peakR: 0, lastMs: performance.now() };
+  const now = performance.now();
+  const dt = Math.min(60, now - s.lastMs);
+  s.lastMs = now;
+  s.levelL = smoothAR(s.levelL, rawL, lp.attack, lp.release);
+  s.levelR = smoothAR(s.levelR, rawR, lp.attack, lp.release);
+  s.peakL = Math.max(s.levelL, s.peakL - dt * 0.00075);
+  s.peakR = Math.max(s.levelR, s.peakR - dt * 0.00075);
+  (drawMode9Vu as any)._state = s;
+  const barW = canvasWidth * 0.16;
+  const gap = canvasWidth * 0.08;
+  const maxH = canvasHeight * 0.72;
+  const baseY = canvasHeight * 0.9;
+  const [pr, pg, pb] = getSpectrumPrimaryRgb(settings);
+  const op = getVisualOpacity(settings.opacity);
+  const drawOne = (x: number, level: number, peak: number) => {
+    const h = maxH * level;
+    const [x1, y1] = applyTransform(x, baseY - h, canvasWidth, canvasHeight, adj);
+    const [x2, y2] = applyTransform(x + barW, baseY, canvasWidth, canvasHeight, adj);
+    drawRect(ctx, Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1), pr / 255, pg / 255, pb / 255, 0.82 * op);
+    const py = baseY - maxH * peak;
+    const [px1, py1] = applyTransform(x, py - 2, canvasWidth, canvasHeight, adj);
+    const [px2, py2] = applyTransform(x + barW, py + 2, canvasWidth, canvasHeight, adj);
+    drawRect(ctx, Math.min(px1, px2), Math.min(py1, py2), Math.abs(px2 - px1), Math.abs(py2 - py1), 1, 0.94, 0.47, 0.95 * op);
+  };
+  drawOne(canvasWidth / 2 - gap / 2 - barW, s.levelL, s.peakL);
+  drawOne(canvasWidth / 2 + gap / 2, s.levelR, s.peakR);
+}
+
+function drawMode10Ring(
+  ctx: WebGLRendererContext,
+  bufferData: Uint8Array,
+  canvasWidth: number,
+  canvasHeight: number,
+  adj: ModeAdjustments,
+  settings: SpectrumSettings
+): void {
+  const lp = settings.loudnessParams ?? { gain: 1.35, gamma: 0.82, attack: 0.22, release: 0.08 };
+  const target = getLoudnessLevel(bufferData, lp.gamma, lp.gain);
+  const st = (drawMode10Ring as any)._state ?? { level: 0 };
+  st.level = smoothAR(st.level, target, lp.attack, lp.release);
+  (drawMode10Ring as any)._state = st;
+  const level = st.level;
+  const [pr, pg, pb] = getSpectrumPrimaryRgb(settings);
+  const [sr, sg, sb] = getSpectrumSecondaryRgb(settings);
+  const [cx, cy] = applyTransform(canvasWidth / 2, canvasHeight / 2, canvasWidth, canvasHeight, adj);
+  const scale = Math.max(0.1, Math.min(adj.scaleX, adj.scaleY));
+  const r = Math.min(canvasWidth, canvasHeight) * 0.2 * (1 + level * 0.42) * scale;
+  const op = getVisualOpacity(settings.opacity);
+  for (let i = 10; i >= 1; i--) {
+    const t = i / 10;
+    drawCircle(ctx, cx, cy, r * (1 + (1 - t) * 0.9), sr / 255, sg / 255, sb / 255, (0.2 + 0.4 * level) * (1 - t) * 0.25 * op);
+  }
+  drawCircle(ctx, cx, cy, r, pr / 255, pg / 255, pb / 255, 0.16 * op);
+  drawCircle(ctx, cx, cy, r * 1.02, sr / 255, sg / 255, sb / 255, 0.92 * op);
+}
+
+function drawMode11Orb(
+  ctx: WebGLRendererContext,
+  bufferData: Uint8Array,
+  canvasWidth: number,
+  canvasHeight: number,
+  adj: ModeAdjustments,
+  settings: SpectrumSettings
+): void {
+  const lp = settings.loudnessParams ?? { gain: 1.4, gamma: 0.8, attack: 0.22, release: 0.08 };
+  const target = getLoudnessLevel(bufferData, lp.gamma, lp.gain);
+  const st = (drawMode11Orb as any)._state ?? { level: 0 };
+  st.level = smoothAR(st.level, target, lp.attack, lp.release);
+  (drawMode11Orb as any)._state = st;
+  const level = st.level;
+  const [pr, pg, pb] = getSpectrumPrimaryRgb(settings);
+  const [sr, sg, sb] = getSpectrumSecondaryRgb(settings);
+  const [cx, cy] = applyTransform(canvasWidth / 2, canvasHeight / 2, canvasWidth, canvasHeight, adj);
+  const scale = Math.max(0.1, Math.min(adj.scaleX, adj.scaleY));
+  const r = Math.min(canvasWidth, canvasHeight) * (0.1 + level * 0.24) * scale;
+  const op = getVisualOpacity(settings.opacity);
+  for (let i = 12; i >= 1; i--) {
+    const t = i / 12;
+    drawCircle(ctx, cx, cy, r * (0.5 + t * 2.0), sr / 255, sg / 255, sb / 255, (1 - t) * 0.18 * op);
+  }
+  drawCircle(ctx, cx, cy, r, pr / 255, pg / 255, pb / 255, (0.35 + 0.4 * level) * op);
+}
+
+function drawMode12Breathing(
+  ctx: WebGLRendererContext,
+  bufferData: Uint8Array,
+  canvasWidth: number,
+  canvasHeight: number,
+  adj: ModeAdjustments,
+  settings: SpectrumSettings
+): void {
+  const lp = settings.loudnessParams ?? { gain: 1.15, gamma: 0.9, attack: 0.18, release: 0.08 };
+  const target = getLoudnessLevel(bufferData, lp.gamma, lp.gain);
+  const st = (drawMode12Breathing as any)._state ?? { level: 0 };
+  st.level = smoothAR(st.level, target, lp.attack, lp.release);
+  (drawMode12Breathing as any)._state = st;
+  const level = st.level;
+  const [pr, pg, pb] = getSpectrumPrimaryRgb(settings);
+  const [sr, sg, sb] = getSpectrumSecondaryRgb(settings);
+  const breathe = 0.5 + 0.5 * Math.sin((performance.now() / 1000) * 1.7);
+  const alpha = (0.1 + 0.35 * level) * (0.75 + 0.25 * breathe) * getVisualOpacity(settings.opacity);
+  const [x1, y1] = applyTransform(0, 0, canvasWidth, canvasHeight, adj);
+  const [x2, y2] = applyTransform(canvasWidth, canvasHeight, canvasWidth, canvasHeight, adj);
+  drawRectGradient(ctx, Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1), pr / 255, pg / 255, pb / 255, alpha, sr / 255, sg / 255, sb / 255, alpha * 0.65);
+}
+
+function drawMode13Particles(
+  ctx: WebGLRendererContext,
+  bufferData: Uint8Array,
+  canvasWidth: number,
+  canvasHeight: number,
+  adj: ModeAdjustments,
+  settings: SpectrumSettings
+): void {
+  const lp = settings.loudnessParams ?? { gain: 1.3, gamma: 0.85, attack: 0.22, release: 0.1 };
+  const target = getLoudnessLevel(bufferData, lp.gamma, lp.gain);
+  const st = (drawMode13Particles as any)._level ?? { level: 0 };
+  st.level = smoothAR(st.level, target, lp.attack, lp.release);
+  (drawMode13Particles as any)._level = st;
+  const level = st.level;
+  const state = (drawMode13Particles as any)._state ?? { arr: [] as any[], lastMs: performance.now() };
+  const now = performance.now();
+  const dt = Math.min(40, now - state.lastMs);
+  state.lastMs = now;
+  const perfScale = getParticlePerfScale();
+  const targetCount = Math.floor((20 + level * 120) * perfScale);
+  const trailLen = perfScale <= 0.5 ? 35 : perfScale <= 0.75 ? 45 : 60;
+  while (state.arr.length < targetCount) {
+    state.arr.push({
+      x: Math.random() * canvasWidth,
+      y: canvasHeight + Math.random() * 40,
+      vx: (Math.random() - 0.5) * (0.04 + level * 0.25),
+      vy: -(0.08 + Math.random() * (0.18 + level * 0.55)),
+      life: 1,
+    });
+  }
+  if (state.arr.length > targetCount) state.arr.length = targetCount;
+  const [sr, sg, sb] = getSpectrumSecondaryRgb(settings);
+  for (const p of state.arr) {
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.life -= dt * (0.0006 + 0.0007 * (1 - level));
+    if (p.y < -30 || p.life <= 0) {
+      p.x = Math.random() * canvasWidth;
+      p.y = canvasHeight + Math.random() * 30;
+      p.life = 1;
+    }
+    const alpha = Math.max(0, p.life) * (0.25 + 0.65 * level) * getVisualOpacity(settings.opacity);
+    const [x1, y1] = applyTransform(p.x, p.y, canvasWidth, canvasHeight, adj);
+    const [x2, y2] = applyTransform(p.x - p.vx * trailLen, p.y - p.vy * trailLen, canvasWidth, canvasHeight, adj);
+    drawLine(ctx, x1, y1, x2, y2, sr / 255, sg / 255, sb / 255, alpha, (1 + level * 2) * Math.max(0.7, perfScale));
+  }
+  (drawMode13Particles as any)._state = state;
+}
+
+function drawMode14Morph(
+  ctx: WebGLRendererContext,
+  bufferData: Uint8Array,
+  canvasWidth: number,
+  canvasHeight: number,
+  adj: ModeAdjustments,
+  settings: SpectrumSettings
+): void {
+  const lp = settings.loudnessParams ?? { gain: 1.25, gamma: 0.86, attack: 0.22, release: 0.1 };
+  const target = getLoudnessLevel(bufferData, lp.gamma, lp.gain);
+  const st = (drawMode14Morph as any)._state ?? { level: 0 };
+  st.level = smoothAR(st.level, target, lp.attack, lp.release);
+  (drawMode14Morph as any)._state = st;
+  const level = st.level;
+  const [pr, pg, pb] = getSpectrumPrimaryRgb(settings);
+  const [sr, sg, sb] = getSpectrumSecondaryRgb(settings);
+  const cx = canvasWidth / 2;
+  const cy = canvasHeight / 2;
+  const baseR = Math.min(canvasWidth, canvasHeight) * 0.22;
+  const points = 96;
+  const spikes = 3 + Math.floor(level * 8);
+  const op = getVisualOpacity(settings.opacity);
+  let px = 0;
+  let py = 0;
+  for (let i = 0; i <= points; i++) {
+    const t = i / points;
+    const a = t * Math.PI * 2;
+    const wave = Math.sin(a * spikes);
+    const morph = (0.15 + 0.55 * level) * wave;
+    const r = baseR * (1 + morph);
+    const x = cx + Math.cos(a) * r;
+    const y = cy + Math.sin(a) * r;
+    const [tx, ty] = applyTransform(x, y, canvasWidth, canvasHeight, adj);
+    if (i > 0) {
+      drawLine(ctx, px, py, tx, ty, sr / 255, sg / 255, sb / 255, 0.95 * op, 2 + level * 4);
+    }
+    px = tx;
+    py = ty;
+  }
+  const [tcx, tcy] = applyTransform(cx, cy, canvasWidth, canvasHeight, adj);
+  drawCircle(ctx, tcx, tcy, baseR * 0.7 * Math.max(0.1, Math.min(adj.scaleX, adj.scaleY)), pr / 255, pg / 255, pb / 255, 0.2 * op);
+}
+
+function drawMode15Oscilloscope(
+  ctx: WebGLRendererContext,
+  bufferData: Uint8Array,
+  canvasWidth: number,
+  canvasHeight: number,
+  adj: ModeAdjustments,
+  settings: SpectrumSettings
+): void {
+  const lp = settings.loudnessParams ?? { gain: 1.6, gamma: 0.75, attack: 0.28, release: 0.12 };
+  // WebGL側は timeDomain しか渡されないので、timeDomain から擬似音圧（平均偏差）を作る
+  let sum = 0;
+  for (let i = 0; i < bufferData.length; i++) sum += Math.abs(bufferData[i] - 128);
+  const v = sum / (bufferData.length * 128);
+  const target = clamp01(Math.pow(v, lp.gamma) * lp.gain);
+  const st = (drawMode15Oscilloscope as any)._state ?? { level: 0 };
+  st.level = smoothAR(st.level, target, lp.attack, lp.release);
+  (drawMode15Oscilloscope as any)._state = st;
+  const level = st.level;
+
+  const op = getVisualOpacity(settings.opacity);
+  const [pr, pg, pb] = getSpectrumPrimaryRgb(settings);
+  const [sr, sg, sb] = getSpectrumSecondaryRgb(settings);
+  const centerY = canvasHeight / 2;
+  const amp = (canvasHeight * 0.18) * (0.55 + 1.35 * level);
+  const lineW = Math.max(1.5, (BASE_LINE_WIDTH_WAVEFORM * 0.9 + level * 3.2));
+  const wmp = settings.wmpTrailParams ?? { trailLength: 8, trailDecay: 0.86, additive: 1.0 };
+
+  const trail = (drawMode15Oscilloscope as any)._trail ?? { frames: [] as Uint8Array[] };
+  trail.frames.push(new Uint8Array(bufferData));
+  const maxTrail = Math.max(2, Math.floor(wmp.trailLength));
+  while (trail.frames.length > maxTrail) trail.frames.shift();
+  (drawMode15Oscilloscope as any)._trail = trail;
+
+  // glow + trail pass
+  for (let f = 0; f < trail.frames.length; f++) {
+    const frame = trail.frames[f];
+    const age = (f + 1) / trail.frames.length;
+    const fade = trailFade(age, wmp.trailDecay);
+    const add = Math.max(0.2, wmp.additive);
+    for (let pass = 0; pass < 2; pass++) {
+      const alpha = (pass === 0 ? 0.16 : 0.07) * op * fade * add;
+      const lw = lineW * (pass === 0 ? (2.2 + 1.1 * level) : (4 + 1.5 * level)) * fade;
+      for (let i = 0; i < frame.length - 1; i++) {
+        const x1 = (i / (frame.length - 1)) * canvasWidth;
+        const x2 = ((i + 1) / (frame.length - 1)) * canvasWidth;
+        const y1 = centerY + ((frame[i] - 128) / 128) * amp;
+        const y2 = centerY + ((frame[i + 1] - 128) / 128) * amp;
+        const [tx1, ty1] = applyTransform(x1, y1, canvasWidth, canvasHeight, adj);
+        const [tx2, ty2] = applyTransform(x2, y2, canvasWidth, canvasHeight, adj);
+        drawLine(ctx, tx1, ty1, tx2, ty2, sr / 255, sg / 255, sb / 255, alpha, lw);
+      }
+    }
+  }
+
+  // main line (simple gradient-ish by segment)
+  for (let i = 0; i < bufferData.length - 1; i++) {
+    const t = i / (bufferData.length - 1);
+    const r = (pr + (sr - pr) * t) / 255;
+    const g = (pg + (sg - pg) * t) / 255;
+    const b = (pb + (sb - pb) * t) / 255;
+      const x1 = (i / (bufferData.length - 1)) * canvasWidth;
+      const x2 = ((i + 1) / (bufferData.length - 1)) * canvasWidth;
+      const y1 = centerY + ((bufferData[i] - 128) / 128) * amp;
+      const y2 = centerY + ((bufferData[i + 1] - 128) / 128) * amp;
+      const [tx1, ty1] = applyTransform(x1, y1, canvasWidth, canvasHeight, adj);
+      const [tx2, ty2] = applyTransform(x2, y2, canvasWidth, canvasHeight, adj);
+    drawLine(ctx, tx1, ty1, tx2, ty2, r, g, b, 0.72 * op, lineW);
+  }
+}
+
+function drawMode16Lissajous(
+  ctx: WebGLRendererContext,
+  bufferData: Uint8Array,
+  canvasWidth: number,
+  canvasHeight: number,
+  adj: ModeAdjustments,
+  settings: SpectrumSettings
+): void {
+  const lp = settings.loudnessParams ?? { gain: 1.45, gamma: 0.78, attack: 0.26, release: 0.1 };
+  let sum = 0;
+  for (let i = 0; i < bufferData.length; i++) sum += Math.abs(bufferData[i] - 128);
+  const v = sum / (bufferData.length * 128);
+  const target = clamp01(Math.pow(v, lp.gamma) * lp.gain);
+  const st = (drawMode16Lissajous as any)._state ?? { level: 0 };
+  st.level = smoothAR(st.level, target, lp.attack, lp.release);
+  (drawMode16Lissajous as any)._state = st;
+  const level = st.level;
+
+  const op = getVisualOpacity(settings.opacity);
+  const [pr, pg, pb] = getSpectrumPrimaryRgb(settings);
+  const [sr, sg, sb] = getSpectrumSecondaryRgb(settings);
+  const cx = canvasWidth / 2;
+  const cy = canvasHeight / 2;
+  const scale = Math.max(0.1, Math.min(adj.scaleX, adj.scaleY));
+  const baseR = Math.min(canvasWidth, canvasHeight) * (0.22 + 0.18 * level) * scale;
+  const n = bufferData.length;
+  const offset = Math.max(1, Math.floor(n * (0.17 + 0.08 * Math.sin(performance.now() / 1200))));
+  const wmp = settings.wmpTrailParams ?? { trailLength: 8, trailDecay: 0.86, additive: 1.0 };
+
+  const trail = (drawMode16Lissajous as any)._trail ?? { frames: [] as { offset: number; level: number }[] };
+  trail.frames.push({ offset, level });
+  const maxTrail = Math.max(2, Math.floor(wmp.trailLength));
+  while (trail.frames.length > maxTrail) trail.frames.shift();
+  (drawMode16Lissajous as any)._trail = trail;
+
+  const [tcx, tcy] = applyTransform(cx, cy, canvasWidth, canvasHeight, adj);
+  const steps = 240;
+  for (let h = 0; h < trail.frames.length; h++) {
+    const fr = trail.frames[h];
+    const age = (h + 1) / trail.frames.length;
+    const fade = trailFade(age, wmp.trailDecay);
+    const add = Math.max(0.2, wmp.additive);
+    for (let i = 0; i < steps; i++) {
+      const t = i / steps;
+      const idx = Math.floor(t * (n - 1));
+      const x0 = (bufferData[idx] - 128) / 128;
+      const y0 = (bufferData[(idx + fr.offset) % n] - 128) / 128;
+      const x = tcx + x0 * baseR;
+      const y = tcy + y0 * baseR;
+      drawCircle(ctx, x, y, (1.4 + 2.0 * fr.level) * fade, sr / 255, sg / 255, sb / 255, 0.12 * op * fade * add);
+    }
+  }
+  // core dots (current frame)
+  for (let i = 0; i < steps; i++) {
+    const t = i / steps;
+    const idx = Math.floor(t * (n - 1));
+    const x0 = (bufferData[idx] - 128) / 128;
+    const y0 = (bufferData[(idx + offset) % n] - 128) / 128;
+    const x = tcx + x0 * baseR;
+    const y = tcy + y0 * baseR;
+    const rr = (pr + (sr - pr) * t) / 255;
+    const gg = (pg + (sg - pg) * t) / 255;
+    const bb = (pb + (sb - pb) * t) / 255;
+    drawCircle(ctx, x, y, 1.1 + 1.7 * level, rr, gg, bb, 0.55 * op);
   }
 }
 

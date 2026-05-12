@@ -4,9 +4,9 @@ This document summarizes **hardening choices** in this fork. It is not a formal 
 
 ## HTTP headers
 
-- **Next.js (standalone)** (`next.config.js`): `Cross-Origin-Opener-Policy`, `Cross-Origin-Embedder-Policy` (required for SharedArrayBuffer / FFmpeg WASM), plus `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`.
-- **nginx** (`nginx-static-https.conf`): same set for static HTTPS deployment.
+- **Next.js** (`next.config.js`): `Cross-Origin-Opener-Policy`, `Cross-Origin-Embedder-Policy` (required for SharedArrayBuffer / FFmpeg WASM), plus `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`.
 - **Apache** (`htaccess-for-export` → copied to `visualizer/.htaccess`): same when `mod_headers` is enabled.
+- **Other static servers**: configure the same headers if you serve `visualizer/` from nginx or another web server.
 
 A **Content Security Policy (CSP)** is not enabled globally yet because it must be tuned around any third-party assets you add.
 
@@ -18,11 +18,6 @@ A **Content Security Policy (CSP)** is not enabled globally yet because it must 
 - **MIME type checks** in addition to extension checks (with pragmatic allowances for empty or `application/octet-stream` types).
 
 Settings JSON import is limited to **2 MB**.
-
-## Docker
-
-- **`Dockerfile`**: `NEXT_PUBLIC_DEVELOPER_MODE` defaults to **`false`** via `ARG`. Pass `--build-arg NEXT_PUBLIC_DEVELOPER_MODE=true` only for intentional dev builds.
-- **`npm ci --legacy-peer-deps`**: required for consistent installs (peer dependency constraints).
 
 ## Dependencies
 
@@ -42,7 +37,6 @@ Use **GitHub Issues** on this fork for fork-specific security or hardening quest
 
 ## 日本語（要約）
 
-- **ヘッダー**: COOP/COEP に加え、nosniff・フレーム制限・Referrer を nginx / Apache / Next 本番に設定
+- **ヘッダー**: COOP/COEP に加え、nosniff・フレーム制限・Referrer を Next / Apache / 任意の静的サーバーで設定
 - **ファイル**: サイズ上限・MIME 補助・設定 JSON のサイズ上限
-- **Docker**: 本番イメージでは開発者モード既定 OFF（`ARG`）
 - **依存関係**: `npm audit` は定期実行。Next の重大指摘はメジャーアップでしか解消しない場合あり

@@ -1,7 +1,7 @@
 {
   "private": "true",
   "name": "mwv",
-  "version": "1.0.1",
+  "version": "1.0.3",
   "description": "Music Waves Visualizer is a web page to create audio waveforms and movie by loading image and music.",
   "license": "MIT",
   "author": "komura-c",
@@ -11,7 +11,7 @@
     "dev": "next dev",
     "build": "next build",
     "build:html": "node scripts/copy-ffmpeg-core.cjs && mv pages/api .api.bak 2>/dev/null; BUILD_HTML=1 npx next build && npx next export -o out && mv .api.bak pages/api 2>/dev/null; rm -rf visualizer && mkdir -p visualizer && cp -r out/* visualizer && cp htaccess-for-export visualizer/.htaccess && cp html-deploy-README.txt visualizer/README.txt",
-    "deploy:https": "bash scripts/deploy-https-notify.sh",
+    "build:html:lil-la": "NEXT_PUBLIC_SITE_URL=https://lil.la npm run build:html",
     "release:zip": "bash scripts/make-release-zip.sh",
     "start": "next start",
     "lint": "next lint"
@@ -19,8 +19,8 @@
   "dependencies": {
     "@emotion/react": "^11.10.5",
     "@emotion/styled": "^11.10.5",
-    "@ffmpeg/core": "0.10.0",
-    "@ffmpeg/ffmpeg": "^0.10.1",
+    "@ffmpeg/core": "0.12.10",
+    "@ffmpeg/ffmpeg": "^0.12.15",
     "@mui/icons-material": "^5.11.0",
     "@mui/material": "^5.11.4",
     "i18next": "^22.5.1",
@@ -30,12 +30,16 @@
     "react-i18next": "^13.5.0"
   },
   "devDependencies": {
+    "@tailwindcss/postcss": "^4.2.4",
     "@types/node": "17.0.21",
     "@types/react": "^17.0.40",
     "@types/react-dom": "^17.0.13",
+    "autoprefixer": "^10.5.0",
     "eslint": "8.11.0",
     "eslint-config-next": "^13.5.11",
+    "postcss": "^8.5.10",
     "sass": "^1.57.1",
+    "tailwindcss": "^4.2.4",
     "typescript": "4.6.2"
   }
 }

@@ -14,7 +14,7 @@
 |------|---------|
 | `visualizer/` | **Complete static site** — `index.html`, `_next/`, `ffmpeg-core/`, `.htaccess`, `README.txt`. This is the same output as `npm run build:html` in the full repository. |
 | `INSTALL_LOCAL_STATIC.md` | This guide (copy at ZIP root). |
-| `docs-bundled/` | License, changelog, hosting notes, FFmpeg/headers, nginx sample, build hints, terms/privacy (copies for offline reading). |
+| `docs-bundled/` | License, changelog, hosting notes, FFmpeg/headers, build hints, terms/privacy (copies for offline reading). |
 
 **You do not need Node.js on the machine that only hosts the static files** — any static file server (or Apache/nginx) is enough.
 
@@ -65,7 +65,7 @@ Then open: **`http://127.0.0.1:8080/visualizer/`**
 
 Without these, **SharedArrayBuffer** may be unavailable and **MP4 export (FFmpeg.wasm) can fail**, even if the waveform **preview** seems fine.
 
-For full functionality locally, use **Apache** (with `.htaccess` + `mod_headers`), **nginx** with the same headers, or the project’s **Docker HTTPS** setup (clone the full repo). See `docs-bundled/nginx-static-https.conf` and `docs-bundled/docs/FFMPEG.md`.
+For full functionality locally, use **Apache** (with `.htaccess` + `mod_headers`) or any web server configured with the same COOP/COEP headers. See `docs-bundled/docs/FFMPEG.md`.
 
 ### 5. Apache (shared hosting)
 
@@ -74,20 +74,7 @@ Upload **everything inside** `visualizer/` to e.g. `public_html/visualizer/`.
 - `.htaccess` sets COOP/COEP **when `mod_headers` is enabled**.
 - If MP4 fails, ask your host to enable `mod_headers` or set the same headers in the control panel.
 
-### 6. nginx / Docker HTTPS (recommended for LAN testing)
-
-From a **full clone** of the repository (not only this ZIP):
-
-```bash
-./generate-ssl-cert.sh <server-IP>    # first time only
-docker compose -f docker-compose.https.yml up -d --build
-```
-
-Access: `https://<server-IP>:8443/visualizer/`
-
-Self-signed certificate: use the browser “Advanced” → proceed once.
-
-### 7. Common mistakes
+### 6. Common mistakes
 
 | Symptom | Likely cause |
 |---------|----------------|
@@ -95,7 +82,7 @@ Self-signed certificate: use the browser “Advanced” → proceed once.
 | Preview OK, MP4 fails | Missing COOP/COEP headers (see §4) |
 | Works on HTTPS but not HTTP on remote host | Some browsers require **secure context** for certain APIs; prefer HTTPS for remote access |
 
-### 8. Rebuild from source
+### 7. Rebuild from source
 
 To regenerate `visualizer/` yourself:
 
@@ -116,7 +103,7 @@ See `docs-bundled/docs/BUILD.md`.
 |------|------|
 | `visualizer/` | **静的サイト一式**（`npm run build:html` の出力と同じ）。レンタルサーバやローカル配信用。 |
 | `INSTALL_LOCAL_STATIC.md` | 本手順書（ZIP ルートに配置）。 |
-| `docs-bundled/` | ライセンス、変更履歴、ホスティング・FFmpeg・nginx サンプル、ビルド手順、利用規約・プライバシーなどのコピー。 |
+| `docs-bundled/` | ライセンス、変更履歴、ホスティング・FFmpeg、ビルド手順、利用規約・プライバシーなどのコピー。 |
 
 **静的配信だけなら Node.js は不要**です。
 
@@ -133,7 +120,7 @@ See `docs-bundled/docs/BUILD.md`.
 
 `visualizer` の**ひとつ上**のディレクトリをドキュメントルートにして HTTP サーバを立て、`http://127.0.0.1:ポート/visualizer/` を開きます。
 
-**注意:** `python3 -m http.server` だけでは **COOP/COEP ヘッダが付きません**。プレビューは動いても **MP4 出力が失敗することがあります**。本番同等の動作には Apache（`.htaccess` + `mod_headers`）、nginx、またはリポジトリの Docker HTTPS を推奨します。
+**注意:** `python3 -m http.server` だけでは **COOP/COEP ヘッダが付きません**。プレビューは動いても **MP4 出力が失敗することがあります**。本番同等の動作には Apache（`.htaccess` + `mod_headers`）や、同等ヘッダを返す静的サーバーを使ってください。
 
 ### 4. よくあるつまずき
 

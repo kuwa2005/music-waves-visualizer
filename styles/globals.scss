@@ -1,3 +1,7 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
 *,
 *:before,
 *:after {
@@ -14,6 +18,12 @@ body {
   color: #34343c;
   margin: 0;
   background: radial-gradient(circle at top left, #fef3e8 0, #f7f7fb 35%, #eef1f8 70%, #e5ecff 100%);
+  min-height: 100vh;
+}
+
+html.dark body {
+  color: #e2e8f0;
+  background: radial-gradient(circle at top left, #0f172a 0%, #1e293b 40%, #0f172a 70%, #020617 100%);
 }
 
 p {

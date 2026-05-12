@@ -2,7 +2,7 @@
 
 ## Requirements
 
-- **Node.js 18+** (aligned with `Dockerfile` / `Dockerfile.static`)
+- **Node.js 20+**
 - **npm** 9+ recommended
 
 ## Install
@@ -12,8 +12,6 @@ This repo pins versions that can conflict on **peer dependencies** (`i18next` vs
 ```bash
 npm install --legacy-peer-deps
 ```
-
-**Docker**: the `Dockerfile` (Next.js standalone) and `Dockerfile.static` use `npm ci --legacy-peer-deps --ignore-scripts` on the layer that only has `package.json` / lockfile (so `postinstall` does not run before `scripts/` is copied). FFmpeg copy runs later via `prebuild` / `build:html` / `npm run build` after the full tree is in the image.
 
 ## FFmpeg core assets (postinstall)
 
@@ -33,7 +31,7 @@ node scripts/copy-ffmpeg-core.cjs
 | Command | Purpose |
 |---------|---------|
 | `npm run dev` | Next.js dev server (localhost) |
-| `npm run build` | Production build (standalone layout for Docker) |
+| `npm run build` | Production build check |
 | `npm run build:html` | Static export → `visualizer/` for Apache/nginx hosting |
 | `npm run start` | Run production server after `npm run build` |
 | `npm run lint` | ESLint |
@@ -45,17 +43,6 @@ node scripts/copy-ffmpeg-core.cjs
 | `BUILD_HTML=1` | Enables `/visualizer` base path (see `next.config.js`) |
 | `NEXT_PUBLIC_DEVELOPER_MODE` / `NEXT_PUBLIC_DEV_MODE` | Enables FPS panel etc. (see [DEVELOPER_MODE.md](../DEVELOPER_MODE.md)) |
 | `NEXT_PUBLIC_DOMAIN` | Optional absolute site URL for OG meta in `_app.tsx` |
-
-## Docker images
-
-- **`Dockerfile.static` + `docker-compose.https.yml`**: nginx serves static `visualizer/` on HTTPS (port 8443).
-- **`Dockerfile` + `docker-compose.yml`**: Next.js **standalone** on port 3000.
-
-Production standalone image: developer mode defaults **off**; enable only with:
-
-```bash
-docker build --build-arg NEXT_PUBLIC_DEVELOPER_MODE=true -t mwv:dev .
-```
 
 ---
 
@@ -74,4 +61,4 @@ npm install --legacy-peer-deps
 ### ビルド
 
 - 静的配信: `npm run build:html` → `visualizer/` をサーバーに配置
-- Docker 本番（Next standalone）: ルートの `Dockerfile` を参照。開発者モードはビルド引数でのみ有効化
+- 本番確認: `npm run build`

@@ -1,0 +1,6 @@
+# https://www.robotstxt.org/robotstxt.html
+User-agent: *
+Allow: /
+
+# 静的書き出し（/visualizer/）配下も同一オリジンでホストする場合は、
+# デプロイ先のベースURLに合わせて Sitemap を別途設定するとよいです。

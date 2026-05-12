@@ -22,7 +22,6 @@ const nextConfig = isHtmlExport
     }
   : {
       reactStrictMode: true,
-      output: 'standalone', // Docker用
       publicRuntimeConfig: { assetBasePath: '' },
       async headers() {
         return [

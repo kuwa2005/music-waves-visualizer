@@ -32,32 +32,18 @@ https://lil.la/visualizer/
 
 ## Quick Start
 
-### Docker HTTPS (recommended for testing)
+### WSL / Local development (recommended)
 
 ```bash
-./generate-ssl-cert.sh <server-IP>   # First time only
-docker compose -f docker-compose.https.yml up -d --build
+npm install --legacy-peer-deps
+npm run dev
 ```
 
-Access: `https://<server-IP>:8443/visualizer/`
+Open: `http://localhost:3000`
 
-- HTTPS is required for remote access and SharedArrayBuffer (FFmpeg video conversion)
-- Self-signed certificate: In browser, choose "Advanced" → "Proceed to site"
-
-### Other run methods
-
-```bash
-# Production (Next.js standalone)
-docker-compose up --build
-
-# Development
-docker-compose -f docker-compose.dev.yml up --build
-
-# Local development (localhost only)
-npm install --legacy-peer-deps && npm run dev
-```
-
-See [README_DOCKER.md](./README_DOCKER.md) for details.
+- Standard development environment: **Windows + Cursor + WSL2 + Node.js**
+- Use Git and npm inside WSL
+- Use `npm run build` for production build checks
 
 ### Static HTML for shared hosting
 
@@ -87,12 +73,10 @@ See [SPECIFICATION.md](./SPECIFICATION.md) for details.
 
 - **[docs/README.md](./docs/README.md)**: Documentation hub (build, security, FFmpeg)
 - **[docs/BUILD.md](./docs/BUILD.md)**: Install (`--legacy-peer-deps`), FFmpeg copy, env vars, scripts
-- **[docs/SECURITY.md](./docs/SECURITY.md)**: Headers, file limits, Docker, audits
+- **[docs/SECURITY.md](./docs/SECURITY.md)**: Headers, file limits, dependency audits
 - **[docs/FFMPEG.md](./docs/FFMPEG.md)**: Self-hosted core, COOP/COEP, vs upstream PR #23
 - **[SPECIFICATION.md](./SPECIFICATION.md)**: Technical spec and feature details
-- **[README_DOCKER.md](./README_DOCKER.md)**: Docker usage
 - **[SERVER_REQUIREMENTS.md](./SERVER_REQUIREMENTS.md)**: Shared hosting requirements
-- **[SERVER_REQUIREMENTS_DOCKER.md](./SERVER_REQUIREMENTS_DOCKER.md)**: Local/Docker requirements
 - **[DEVELOPER_MODE.md](./DEVELOPER_MODE.md)**: Developer mode
 - **[CHANGELOG.md](./CHANGELOG.md)**: Changelog
 - **[USER_TERMS.md](./USER_TERMS.md)**: Terms of Service (EN + 日本語)
@@ -102,7 +86,7 @@ See [SPECIFICATION.md](./SPECIFICATION.md) for details.
 
 ## GitHub Releases
 
-[Releases](https://github.com/kuwa2005/music-waves-visualizer/releases) ship a **static ZIP** (no Node.js needed on the host): `visualizer/` plus **`INSTALL_LOCAL_STATIC.md`** and **`docs-bundled/`** (license, changelog, hosting, FFmpeg, nginx sample, terms/privacy). Maintainer: `npm run release:zip` (runs `npm run build:html` when `visualizer/` is missing).
+[Releases](https://github.com/kuwa2005/music-waves-visualizer/releases) ship a **static ZIP** (no Node.js needed on the host): `visualizer/` plus **`INSTALL_LOCAL_STATIC.md`** and **`docs-bundled/`** (license, changelog, hosting, FFmpeg, terms/privacy). Maintainer: `npm run release:zip` (runs `npm run build:html` when `visualizer/` is missing).
 
 ## Credits
 
@@ -140,10 +124,10 @@ MIT License. See [LICENSE](./LICENSE). Dependencies: [NOTICE](./NOTICE).
 ### クイックスタート
 
 ```bash
-# Docker HTTPS版（推奨）
-./generate-ssl-cert.sh <サーバーIP>
-docker compose -f docker-compose.https.yml up -d --build
-# アクセス: https://<サーバーIP>:8443/visualizer/
+# WSL2 / ローカル開発（標準）
+npm install --legacy-peer-deps
+npm run dev
+# アクセス: http://localhost:3000
 
 # 静的HTML版（レンタルサーバー用）
 npm run build:html
@@ -154,9 +138,7 @@ npm run build:html
 
 - [docs/README.md](./docs/README.md): ドキュメント索引（ビルド・セキュリティ・FFmpeg）
 - [仕様書.md](./仕様書.md): 技術仕様と機能詳細
-- [README_DOCKER.md](./README_DOCKER.md): Dockerの使い方
 - [サーバー要件.md](./サーバー要件.md): レンタルサーバー用要件
-- [サーバー要件(local docker)用.md](./サーバー要件(local%20docker)用.md): ローカル・Docker用
 - [DEVELOPER_MODE.md](./DEVELOPER_MODE.md): 開発者モード
 - [CHANGELOG.md](./CHANGELOG.md): 変更履歴
 - [USER_TERMS.md](./USER_TERMS.md): 利用規約
@@ -166,4 +148,4 @@ npm run build:html
 
 ### GitHub Releases
 
-[Releases](https://github.com/kuwa2005/music-waves-visualizer/releases) に **静的版 ZIP** を添付しています（配信先に Node.js は不要）。中身は `visualizer/` と **`INSTALL_LOCAL_STATIC.md`**、および **`docs-bundled/`**（ライセンス・変更履歴・ホスティング・FFmpeg・nginx サンプル・規約類）。メンテ用: `npm run release:zip`（`visualizer/` が無いときは `build:html` を実行）。
+[Releases](https://github.com/kuwa2005/music-waves-visualizer/releases) に **静的版 ZIP** を添付しています（配信先に Node.js は不要）。中身は `visualizer/` と **`INSTALL_LOCAL_STATIC.md`**、および **`docs-bundled/`**（ライセンス・変更履歴・ホスティング・FFmpeg・規約類）。メンテ用: `npm run release:zip`（`visualizer/` が無いときは `build:html` を実行）。

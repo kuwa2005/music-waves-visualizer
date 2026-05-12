@@ -15,9 +15,13 @@ export type EffectType =
   | "sparkle"
   | "dust"
   | "rain"
-  | "snow";
+  | "snow"
+  | "scanlines";
 
 export type EffectDensity = 1 | 2 | 3;
+export type AtmosphereVariant = "dust" | "sparks" | "fireflies";
+export type SparkleVariant = "normal" | "heart" | "star";
+export type SpaceDirection = "forward" | "backward";
 
 export interface EffectParams {
   type: EffectType;
@@ -28,6 +32,18 @@ export interface EffectParams {
   weatherAmount?: number;
   /** 雨・雪: 色 #RRGGBB */
   weatherColor?: string;
+  /** 宇宙・きらきら・空気感: トーン色 #RRGGBB */
+  effectTintColor?: string;
+  /** 宇宙空間: 前進/後退 */
+  spaceDirection?: SpaceDirection;
+  /** 宇宙空間: 進行速度 0.2〜3.0 */
+  spaceSpeed?: number;
+  /** きらきら: 種類 */
+  sparkleVariant?: SparkleVariant;
+  /** 空気感: 種類 */
+  atmosphereVariant?: AtmosphereVariant;
+  /** 空気感: 強度スケール 0.05〜1.0 */
+  effectStrengthScale?: number;
 }
 
 /** 音源連動用メトリクス（0〜1正規化） */
@@ -125,7 +141,10 @@ export function updateAndGetSpaceParticles(
   density: EffectDensity,
   deltaTime: number,
   variant: SpaceVariant = "space",
-  audio?: AudioReactiveData
+  direction: SpaceDirection = "forward",
+  speedScale: number = 1,
+  audio?: AudioReactiveData,
+  tintHex?: string
 ): Array<{ x: number; y: number; size: number; alpha: number; r: number; g: number; b: number }> {
   const maxRadius = Math.sqrt(width * width + height * height) / 2 + 150;
   const centerX = width / 2;
@@ -163,20 +182,26 @@ export function updateAndGetSpaceParticles(
 
     // 速度: 等速版は一定、それ以外は中央に近いほど速く
     const speedFactor = variant === "spaceConstant" ? 1.0 : 1.5 - normalizedDist * 0.8;
-    const effectiveSpeed = Math.max(0.3, p.speed * speedFactor) * (deltaTime / 16);
-    p.distance += effectiveSpeed;
+    const effectiveSpeed = Math.max(0.3, p.speed * speedFactor) * (deltaTime / 16) * Math.max(0.2, Math.min(3, speedScale));
+    const dir = direction === "backward" ? -1 : 1;
+    p.distance += effectiveSpeed * dir;
 
     // キラキラ位相を更新
     p.twinklePhase += p.twinkleSpeed * (deltaTime / 1000);
 
     // リセット判定: 画面端に到達、または内側の星は手前で消える
     const innerStarFadeDist = maxRadius * 0.65;  // 内側で出現した星は65%で消える
-    const shouldReset =
+    const shouldResetForward =
       p.distance > maxRadius ||
       (normalizedSpawn < 0.15 && p.distance > innerStarFadeDist);
+    const shouldResetBackward = p.distance < minSpawnRadius * 0.7;
+    const shouldReset = direction === "backward" ? shouldResetBackward : shouldResetForward;
 
     if (shouldReset) {
-      p.distance = minSpawnRadius + Math.random() * (maxSpawnRadius - minSpawnRadius);
+      p.distance =
+        direction === "backward"
+          ? maxRadius * (0.75 + Math.random() * 0.22)
+          : minSpawnRadius + Math.random() * (maxSpawnRadius - minSpawnRadius);
       p.spawnDistance = p.distance;
       p.angle = Math.random() * Math.PI * 2;
       p.colorIndex = Math.floor(Math.random() * STAR_COLORS.length);
@@ -193,14 +218,19 @@ export function updateAndGetSpaceParticles(
     alpha *= twinkle;
 
     const color = STAR_COLORS[p.colorIndex];
+    const [tr, tg, tb] = parseWeatherColorHex(tintHex, [255, 255, 255]);
+    const mix = tintHex ? 0.52 : 0;
+    const r = Math.round(color.r * (1 - mix) + tr * mix);
+    const g = Math.round(color.g * (1 - mix) + tg * mix);
+    const b = Math.round(color.b * (1 - mix) + tb * mix);
     result.push({
       x,
       y,
       size: p.size,
       alpha: Math.min(1, alpha),
-      r: color.r,
-      g: color.g,
-      b: color.b,
+      r,
+      g,
+      b,
     });
   }
 
@@ -222,13 +252,16 @@ export function drawSpaceEffectCanvas(
   height: number,
   density: EffectDensity,
   variant: SpaceVariant = "space",
-  audio?: AudioReactiveData
+  direction: SpaceDirection = "forward",
+  speedScale: number = 1,
+  audio?: AudioReactiveData,
+  tintHex?: string
 ): void {
   const now = performance.now();
   const deltaTime = Math.min(now - lastTime, 50);
   lastTime = now;
 
-  const particles = updateAndGetSpaceParticles(width, height, density, deltaTime, variant, audio);
+  const particles = updateAndGetSpaceParticles(width, height, density, deltaTime, variant, direction, speedScale, audio, tintHex);
 
   ctx.save();
   for (const p of particles) {
@@ -383,6 +416,8 @@ interface SparkleParticle {
   brightDuration: number;
   /** 0: ＋ / 1: X / 2: ＊（8方向） */
   starKind: 0 | 1 | 2;
+  /** star variant 用: true=★ false=☆ */
+  starFilled: boolean;
   /** ランダム回転（ラジアン） */
   rotation: number;
   /**
@@ -392,7 +427,7 @@ interface SparkleParticle {
 }
 
 let sparkleParticles: SparkleParticle[] = [];
-let lastSparkleParams: { density: EffectDensity; width: number; height: number } | null = null;
+let lastSparkleParams: { density: EffectDensity; width: number; height: number; tint: string } | null = null;
 
 /** 弱≒従来の「強」、中間、強≒従来の強の約3倍 */
 const SPARKLE_COUNTS: Record<EffectDensity, number> = { 1: 220, 2: 440, 3: 660 };
@@ -444,6 +479,7 @@ function spawnSparkleParticle(width: number, height: number, rLo: number, rHi: n
     phaseTimeLeft: randomSparkleDarkWait(),
     brightDuration: 0,
     starKind: Math.floor(Math.random() * 3) as 0 | 1 | 2,
+    starFilled: Math.random() < 0.5,
     rotation: Math.random() * Math.PI * 2,
   };
 }
@@ -467,6 +503,8 @@ export type SparkleParticleDraw = {
   b: number;
   alpha: number;
   starKind: 0 | 1 | 2;
+  starFilled: boolean;
+  sparkleVariant: SparkleVariant;
   rotation: number;
 };
 
@@ -478,16 +516,20 @@ export function updateAndGetSparkleParticles(
   height: number,
   density: EffectDensity,
   deltaTime: number,
-  audio?: AudioReactiveData
+  sparkleVariant: SparkleVariant = "normal",
+  audio?: AudioReactiveData,
+  tintHex?: string
 ): SparkleParticleDraw[] {
+  const tintKey = (tintHex && /^#?[0-9a-fA-F]{6}$/.test(tintHex.trim()) ? tintHex.trim() : "") || "__default__";
   if (
     !lastSparkleParams ||
     lastSparkleParams.density !== density ||
     lastSparkleParams.width !== width ||
-    lastSparkleParams.height !== height
+    lastSparkleParams.height !== height ||
+    lastSparkleParams.tint !== tintKey
   ) {
     initSparkleParticles(width, height, density);
-    lastSparkleParams = { density, width, height };
+    lastSparkleParams = { density, width, height, tint: tintKey };
   }
   const a = audio ?? SILENT_AUDIO_REACTIVE;
   const strength = DENSITY_STRENGTH[density];
@@ -525,6 +567,7 @@ export function updateAndGetSparkleParticles(
         p.phaseTimeLeft = p.brightDuration;
         p.twinklePhase = Math.random() * Math.PI * 2;
         p.starKind = Math.floor(Math.random() * 3) as 0 | 1 | 2;
+        p.starFilled = Math.random() < 0.5;
         p.rotation = Math.random() * Math.PI * 2;
       }
     }
@@ -562,19 +605,72 @@ export function updateAndGetSparkleParticles(
     );
     if (alpha < 0.02) continue;
 
+    const [tr, tg, tb] = parseWeatherColorHex(tintHex, [255, 255, 255]);
     out.push({
       x: p.x,
       y: p.y,
       radius: rad,
-      r: 255,
-      g: 255,
-      b: 255,
+      r: tr,
+      g: tg,
+      b: tb,
       alpha,
       starKind: p.starKind,
+      starFilled: p.starFilled,
+      sparkleVariant,
       rotation: p.rotation,
     });
   }
   return out;
+}
+
+function drawSparkleHeartShape(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  radius: number,
+  r: number,
+  g: number,
+  b: number,
+  a: number,
+  rotation: number
+): void {
+  const s = Math.max(2.2, radius * 1.1);
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(rotation);
+  ctx.scale(s / 16, s / 16);
+  ctx.beginPath();
+  ctx.moveTo(0, 6);
+  ctx.bezierCurveTo(-8, -1, -11, -8, -4, -12);
+  ctx.bezierCurveTo(0, -14, 4, -11, 4, -7);
+  ctx.bezierCurveTo(4, -11, 8, -14, 12, -12);
+  ctx.bezierCurveTo(19, -8, 16, -1, 8, 6);
+  ctx.bezierCurveTo(5, 9, 3, 11, 0, 14);
+  ctx.bezierCurveTo(-3, 11, -5, 9, -8, 6);
+  ctx.closePath();
+  ctx.fillStyle = `rgba(${r},${g},${b},${Math.min(1, a * 0.92)})`;
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawSparkleStarGlyph(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  radius: number,
+  r: number,
+  g: number,
+  b: number,
+  a: number,
+  starFilled: boolean
+): void {
+  ctx.save();
+  ctx.fillStyle = `rgba(${r},${g},${b},${Math.min(1, a)})`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.font = `${Math.max(11, Math.round(radius * 3.2))}px sans-serif`;
+  ctx.fillText(starFilled ? "★" : "☆", x, y);
+  ctx.restore();
 }
 
 /** ＋ / X / ＊（8方向）＋中心の白い芯（すべて rgba(255,255,255,a)） */
@@ -641,24 +737,32 @@ function drawSparkleCanvas(
   height: number,
   density: EffectDensity,
   deltaTime: number,
-  audio: AudioReactiveData
+  audio: AudioReactiveData,
+  sparkleVariant: SparkleVariant,
+  tintHex?: string
 ): void {
-  const list = updateAndGetSparkleParticles(width, height, density, deltaTime, audio);
+  const list = updateAndGetSparkleParticles(width, height, density, deltaTime, sparkleVariant, audio, tintHex);
   ctx.save();
   ctx.globalCompositeOperation = "source-over";
   for (const p of list) {
-    drawSparkleStarShape(
-      ctx,
-      p.x,
-      p.y,
-      p.radius,
-      p.r,
-      p.g,
-      p.b,
-      p.alpha,
-      p.starKind,
-      p.rotation
-    );
+    if (p.sparkleVariant === "heart") {
+      drawSparkleHeartShape(ctx, p.x, p.y, p.radius, p.r, p.g, p.b, p.alpha, p.rotation);
+    } else if (p.sparkleVariant === "star") {
+      drawSparkleStarGlyph(ctx, p.x, p.y, p.radius, p.r, p.g, p.b, p.alpha, p.starFilled);
+    } else {
+      drawSparkleStarShape(
+        ctx,
+        p.x,
+        p.y,
+        p.radius,
+        p.r,
+        p.g,
+        p.b,
+        p.alpha,
+        p.starKind,
+        p.rotation
+      );
+    }
   }
   ctx.restore();
 }
@@ -672,10 +776,11 @@ interface DustParticle {
   size: number;
   baseAlpha: number;
   phase: number;
+  variant: AtmosphereVariant;
 }
 
 let dustParticles: DustParticle[] = [];
-let lastDustParams: { density: EffectDensity; width: number; height: number } | null = null;
+let lastDustParams: { density: EffectDensity; width: number; height: number; variant: AtmosphereVariant } | null = null;
 
 /**
  * 空気感の見え方を一括で調整する係数（確認用にやや強め）。
@@ -701,7 +806,7 @@ function randomDustParticleSize(sLo: number, sHi: number): number {
   return sLo + t * (sHi - sLo);
 }
 
-function initDustParticles(width: number, height: number, density: EffectDensity): void {
+function initDustParticles(width: number, height: number, density: EffectDensity, variant: AtmosphereVariant): void {
   const minDim = Math.min(width, height);
   const sizeBoost = 1.45 * Math.pow(DUST_INTENSITY_MUL, 0.25);
   const sLo =
@@ -714,11 +819,17 @@ function initDustParticles(width: number, height: number, density: EffectDensity
     dustParticles.push({
       x: Math.random() * width,
       y: Math.random() * height,
-      vx: (Math.random() - 0.5) * 0.55,
-      vy: (Math.random() - 0.25) * 0.42,
+      vx: (Math.random() - 0.5) * (variant === "sparks" ? 0.9 : 0.55),
+      vy: (Math.random() - 0.25) * (variant === "fireflies" ? 0.24 : variant === "sparks" ? 0.78 : 0.42),
       size: randomDustParticleSize(sLo, sHi),
-      baseAlpha: 0.22 + Math.random() * 0.2,
+      baseAlpha:
+        variant === "fireflies"
+          ? 0.36 + Math.random() * 0.3
+          : variant === "sparks"
+            ? 0.3 + Math.random() * 0.34
+            : 0.22 + Math.random() * 0.2,
       phase: Math.random() * Math.PI * 2,
+      variant,
     });
   }
 }
@@ -726,31 +837,49 @@ function initDustParticles(width: number, height: number, density: EffectDensity
 /**
  * WebGL 用: ほこり粒子を更新して描画用リストを返す
  */
+let lastDustTintKey = "";
+
 export function updateAndGetDustParticles(
   width: number,
   height: number,
   density: EffectDensity,
   deltaTime: number,
-  audio?: AudioReactiveData
+  variant: AtmosphereVariant = "dust",
+  strengthScale: number = 1,
+  audio?: AudioReactiveData,
+  tintHex?: string
 ): Array<{ x: number; y: number; radius: number; r: number; g: number; b: number; alpha: number }> {
+  const tintKey = (tintHex && /^#?[0-9a-fA-F]{6}$/.test(tintHex.trim()) ? tintHex.trim() : "") || "__default__";
   if (
     !lastDustParams ||
     lastDustParams.density !== density ||
     lastDustParams.width !== width ||
-    lastDustParams.height !== height
+    lastDustParams.height !== height ||
+    lastDustParams.variant !== variant ||
+    lastDustTintKey !== tintKey
   ) {
-    initDustParticles(width, height, density);
-    lastDustParams = { density, width, height };
+    initDustParticles(width, height, density, variant);
+    lastDustParams = { density, width, height, variant };
+    lastDustTintKey = tintKey;
   }
   const a = audio ?? SILENT_AUDIO_REACTIVE;
-  const strength = DENSITY_STRENGTH[density];
+  const strength = DENSITY_STRENGTH[density] * (0.15 + 0.85 * Math.pow(Math.max(0.05, Math.min(1, strengthScale)), 1.8));
   const flow = 0.5 + 0.5 * a.volume;
   const out: Array<{ x: number; y: number; radius: number; r: number; g: number; b: number; alpha: number }> = [];
 
   for (const p of dustParticles) {
     p.phase += 1.05 * (deltaTime / 1000);
-    p.x += p.vx * (deltaTime / 16) * flow * (1 + 0.4 * a.bass);
-    p.y += p.vy * (deltaTime / 16) * flow;
+    const localFlow =
+      variant === "sparks"
+        ? 1.2 + 0.8 * a.highFreq
+        : variant === "fireflies"
+          ? 0.45 + 0.3 * a.volume
+          : flow;
+    p.x += p.vx * (deltaTime / 16) * localFlow * (1 + 0.4 * a.bass);
+    p.y += p.vy * (deltaTime / 16) * localFlow;
+    if (variant === "fireflies") {
+      p.y += Math.sin(p.phase * 0.7) * 0.35;
+    }
     if (p.x < -30) p.x += width + 60;
     if (p.x > width + 30) p.x -= width + 60;
     if (p.y < -30) p.y += height + 60;
@@ -758,17 +887,37 @@ export function updateAndGetDustParticles(
 
     const flicker = 0.5 + 0.5 * Math.sin(p.phase);
     const rawAlpha =
-      p.baseAlpha * flicker * strength * (1.2 + 0.45 * a.volume);
+      p.baseAlpha * flicker * strength * (variant === "sparks" ? 1.55 : variant === "fireflies" ? 1.1 : (1.2 + 0.45 * a.volume));
     const alpha = Math.min(1, rawAlpha * DUST_INTENSITY_MUL);
-    const gray = 210 + Math.floor(Math.sin(p.phase * 0.7) * 40);
-    const blueLift = Math.floor(Math.sin(p.phase * 1.1) * 18);
+    let r = 210 + Math.floor(Math.sin(p.phase * 0.7) * 40);
+    let g = 216 + Math.floor(Math.sin(p.phase * 0.8) * 24);
+    let b = 228 + Math.floor(Math.sin(p.phase * 1.1) * 18);
+    if (variant === "sparks") {
+      r = 255;
+      g = 180 + Math.floor(Math.sin(p.phase * 1.3) * 40);
+      b = 90 + Math.floor(Math.sin(p.phase * 1.7) * 32);
+    } else if (variant === "fireflies") {
+      r = 185 + Math.floor(Math.sin(p.phase * 0.9) * 30);
+      g = 255;
+      b = 125 + Math.floor(Math.sin(p.phase * 1.1) * 22);
+    }
+    r = Math.min(255, Math.max(0, r));
+    g = Math.min(255, Math.max(0, g));
+    b = Math.min(255, Math.max(0, b));
+    if (tintHex) {
+      const [tr, tg, tb] = parseWeatherColorHex(tintHex, [r, g, b]);
+      const mix = 0.58;
+      r = Math.round(r * (1 - mix) + tr * mix);
+      g = Math.round(g * (1 - mix) + tg * mix);
+      b = Math.round(b * (1 - mix) + tb * mix);
+    }
     out.push({
       x: p.x,
       y: p.y,
-      radius: p.size * (1.05 + 0.08 * Math.min(DUST_INTENSITY_MUL, 4)),
-      r: Math.min(255, gray + blueLift),
-      g: Math.min(255, gray + 6),
-      b: Math.min(255, gray + 18 + blueLift),
+      radius: p.size * (variant === "sparks" ? 0.8 : variant === "fireflies" ? 1.25 : (1.05 + 0.08 * Math.min(DUST_INTENSITY_MUL, 4))),
+      r,
+      g,
+      b,
       alpha,
     });
   }
@@ -781,9 +930,12 @@ function drawDustCanvas(
   height: number,
   density: EffectDensity,
   deltaTime: number,
-  audio: AudioReactiveData
+  variant: AtmosphereVariant,
+  strengthScale: number,
+  audio: AudioReactiveData,
+  tintHex?: string
 ): void {
-  const list = updateAndGetDustParticles(width, height, density, deltaTime, audio);
+  const list = updateAndGetDustParticles(width, height, density, deltaTime, variant, strengthScale, audio, tintHex);
   ctx.save();
   // WebGL 側（SRC_ALPHA + ONE の単色円）に合わせ、ラジアルグロウは使わない
   ctx.globalCompositeOperation = "lighter";
@@ -1086,6 +1238,33 @@ function drawGlitchCanvas(
   ctx.restore();
 }
 
+/** CRT風の水平スキャンライン（密度で間隔、音量で強度がわずかに変化） */
+function drawScanlinesCanvas(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  density: EffectDensity,
+  audio: AudioReactiveData
+): void {
+  const strength = DENSITY_STRENGTH[density];
+  const spacing = density === 3 ? 2 : density === 2 ? 3 : 4;
+  const base = 0.14 + 0.22 * strength;
+  const pulse = 0.78 + 0.22 * Math.min(1, audio.volume * 0.7 + audio.bass * 0.35);
+  const alpha = Math.min(0.42, base * pulse);
+  const lineH = density === 3 ? 2 : 1;
+  ctx.save();
+  ctx.fillStyle = `rgba(0,0,0,${alpha})`;
+  for (let y = 0; y < height; y += spacing) {
+    ctx.fillRect(0, y, width, lineH);
+    if (lineH === 2 && y + 1 < height) {
+      ctx.fillStyle = `rgba(0,0,0,${alpha * 0.35})`;
+      ctx.fillRect(0, y + 1, width, 1);
+      ctx.fillStyle = `rgba(0,0,0,${alpha})`;
+    }
+  }
+  ctx.restore();
+}
+
 /** 音声データなし時のデフォルト（無音・プレビュー停止中のエフェクト用） */
 export const SILENT_AUDIO_REACTIVE: AudioReactiveData = { bass: 0.2, volume: 0.2, highFreq: 0.1 };
 
@@ -1106,15 +1285,45 @@ export function drawEffectOverlayCanvas(
   lastOverlayDrawTime = nowOverlay;
   try {
     if (effect.type === "space") {
-      drawSpaceEffectCanvas(ctx, width, height, effect.density, "space");
+      drawSpaceEffectCanvas(
+        ctx,
+        width,
+        height,
+        effect.density,
+        "space",
+        effect.spaceDirection ?? "forward",
+        effect.spaceSpeed ?? 1,
+        undefined,
+        effect.effectTintColor
+      );
       return;
     }
     if (effect.type === "spaceConstant") {
-      drawSpaceEffectCanvas(ctx, width, height, effect.density, "spaceConstant");
+      drawSpaceEffectCanvas(
+        ctx,
+        width,
+        height,
+        effect.density,
+        "spaceConstant",
+        effect.spaceDirection ?? "forward",
+        effect.spaceSpeed ?? 1,
+        undefined,
+        effect.effectTintColor
+      );
       return;
     }
     if (effect.type === "spaceAudio") {
-      drawSpaceEffectCanvas(ctx, width, height, effect.density, "spaceAudio", a);
+      drawSpaceEffectCanvas(
+        ctx,
+        width,
+        height,
+        effect.density,
+        "spaceAudio",
+        effect.spaceDirection ?? "forward",
+        effect.spaceSpeed ?? 1,
+        a,
+        effect.effectTintColor
+      );
       return;
     }
     switch (effect.type) {
@@ -1134,16 +1343,38 @@ export function drawEffectOverlayCanvas(
         drawGlitchCanvas(ctx, width, height, effect.density, a);
         break;
       case "sparkle":
-        drawSparkleCanvas(ctx, width, height, effect.density, overlayDelta, a);
+        drawSparkleCanvas(
+          ctx,
+          width,
+          height,
+          effect.density,
+          overlayDelta,
+          a,
+          effect.sparkleVariant ?? "normal",
+          effect.effectTintColor
+        );
         break;
       case "dust":
-        drawDustCanvas(ctx, width, height, effect.density, overlayDelta, a);
+        drawDustCanvas(
+          ctx,
+          width,
+          height,
+          effect.density,
+          overlayDelta,
+          effect.atmosphereVariant ?? "dust",
+          effect.effectStrengthScale ?? 1,
+          a,
+          effect.effectTintColor
+        );
         break;
       case "rain":
         drawRainCanvas(ctx, width, height, effect.density, overlayDelta, a, effect);
         break;
       case "snow":
         drawSnowCanvas(ctx, width, height, effect.density, overlayDelta, a, effect);
+        break;
+      case "scanlines":
+        drawScanlinesCanvas(ctx, width, height, effect.density, a);
         break;
       default:
         break;

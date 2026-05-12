@@ -21,7 +21,16 @@ import {
   LinearProgress,
   Tabs,
   Tab,
+  Switch,
+  FormControlLabel,
+  IconButton,
+  Tooltip,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
 } from "@mui/material";
+import { ThemeProvider, createTheme } from "@mui/material/styles";
 import {
   FiberManualRecord,
   ExpandMore,
@@ -30,15 +39,46 @@ import {
   VideoLibrary,
   DeleteSweep,
   Warning,
+  NavigateBefore,
+  NavigateNext,
+  Undo,
+  Lightbulb,
+  LightbulbOutlined,
+  Speed,
+  Cancel,
 } from "@mui/icons-material";
 import i18n from "i18next";
 import { CustomSnackbar } from "../components/CustomSnackbar";
-import { drawBars, clearImageCache, getFPS, stopCanvas2DAnimation, GLYCO_COLOR_SETS, GLYCO_GRADIENT_SETS } from "../lib/Canvas";
+import {
+  drawBars,
+  clearImageCache,
+  getFPS,
+  stopCanvas2DAnimation,
+  GLYCO_COLOR_SETS,
+  GLYCO_GRADIENT_SETS,
+  legacySpectrumPresetToHex,
+} from "../lib/Canvas";
+import { DEFAULT_COLOR_PALETTE_20 } from "../lib/colorPalette";
+import {
+  startGalleryImageTransition,
+  clearGalleryImageTransition,
+  GALLERY_TRANSITION_RANDOM_POOL,
+  GALLERY_TRANSITION_SELECT_OPTIONS,
+  isValidGalleryTransitionUserMode,
+  type GalleryTransitionUserMode,
+} from "../lib/galleryImageTransition";
 import { drawBarsWebGL, getFPSWebGL, cleanupWebGL, stopWebGLAnimation, clearWebGLImageCache } from "../lib/WebGLRenderer";
 import type { EffectType, EffectDensity, EffectParams } from "../lib/Effects";
-import { getGpuInfo, getGpuDisplayName, benchmarkRenderers, type GpuInfo } from "../lib/GpuDetector";
+import { getGpuInfo, getGpuDisplayName, type GpuInfo } from "../lib/GpuDetector";
+import {
+  QuickVideoEncoder,
+  analyzeAudioRealtime,
+  type QuickEncoderProgress,
+  type QuickEncoderConfig
+} from "../lib/QuickVideoEncoder";
 import { isWebCodecsSupported, checkHardwareEncoderSupport, getBestEncodingMethod } from "../lib/WebCodecsEncoder";
 import { generateMp4Video } from "../lib/Ffmpeg";
+import { mwvError, mwvLog, mwvMilestone } from "../lib/mwvConsole";
 import {
   gateImageFile,
   gateAudioFile,
@@ -52,29 +92,35 @@ import {
   type FileGate,
   isFileGateFailure,
 } from "../lib/fileValidation";
+import {
+  parseLyricsLinesFromSuno,
+  getPlaybackWindowBounds,
+  evenSplitCuesInWindow,
+  formatSrtFromCues,
+  shiftCuesBySeconds,
+} from "../lib/srtAuthoring";
+import {
+  parseSrt,
+  DEFAULT_SUBTITLE_STYLE,
+  DEFAULT_TITLE_STYLE,
+  type SubtitleCue,
+  type SubtitleStyle,
+  type TitleStyle,
+} from "../lib/subtitles";
+import { mwvGetItem, mwvSetItem, mwvRemoveItem } from "../lib/mwvCookieStorage";
 
 type ShortOutputPreset = "all" | "tiktok" | "youtube" | "niconico";
 type ResolvedClip = { full: true } | { full: false; start: number; duration: number };
 const MODE_COOKIE_KEY = "mwv_mode";
-const BASIC_COLOR_PALETTE_16 = [
-  "#000000",
-  "#ffffff",
-  "#ff0000",
-  "#00ff00",
-  "#0000ff",
-  "#ffff00",
-  "#00ffff",
-  "#ff00ff",
-  "#808080",
-  "#800000",
-  "#808000",
-  "#008000",
-  "#800080",
-  "#008080",
-  "#000080",
-  "#ffa500",
-] as const;
-
+/** ライト／ダーク UI 切替（`light` | `dark`）。電球点灯＝ライトモード */
+const UI_SCHEME_COOKIE = "mwv_ui_scheme";
+/** Cookie 上で targetLufs === null（正規化オフ）を表す */
+const TARGET_LUFS_NONE_COOKIE = "__none__";
+const JP_DEFAULT_FONT_FAMILY = "'Noto Sans JP', sans-serif";
+const isJapaneseLang = (lng: string | undefined | null): boolean => {
+  const s = (lng ?? "").toLowerCase();
+  return s === "ja" || s.startsWith("ja-");
+};
 function normalizeHexColorInput(input: string): string {
   const raw = input.trim();
   if (!raw) return "";
@@ -83,6 +129,38 @@ function normalizeHexColorInput(input: string): string {
 
 function isHexColorCode(value: string): boolean {
   return /^#[0-9A-F]{6}$/.test(value);
+}
+
+function isSrtFileByName(name: string): boolean {
+  return /\.srt$/i.test(name);
+}
+
+function isLyricsTextFileByName(name: string): boolean {
+  return /\.(txt|lrc)$/i.test(name);
+}
+
+/** 字幕タブの「SRT 作成支援」パネル。公開時は false のまま（再有効化は true に変更） */
+const ENABLE_SRT_AUTHOR_UI = false;
+
+type CanvasLayoutKey = "1920x1080" | "1080x1920" | "1920x1920";
+
+function detectLayoutFromAspectRatio(ratio: number): CanvasLayoutKey {
+  const candidates: Array<{ layout: CanvasLayoutKey; ratio: number }> = [
+    { layout: "1920x1080", ratio: 16 / 9 },
+    { layout: "1080x1920", ratio: 9 / 16 },
+    { layout: "1920x1920", ratio: 1 },
+  ];
+  let best = candidates[0];
+  let bestDiff = Math.abs(ratio - best.ratio);
+  for (let i = 1; i < candidates.length; i++) {
+    const c = candidates[i];
+    const d = Math.abs(ratio - c.ratio);
+    if (d < bestDiff) {
+      best = c;
+      bestDiff = d;
+    }
+  }
+  return best.layout;
 }
 
 function getCookieValue(name: string): string | null {
@@ -98,14 +176,26 @@ function setCookieValue(name: string, value: string, maxAgeSec: number): void {
   document.cookie = `${name}=${encodeURIComponent(value)}; path=/; max-age=${maxAgeSec}; samesite=lax`;
 }
 
-function getShortPlatformMaxSec(p: ShortOutputPreset): number {
-  if (p === "tiktok" || p === "youtube") return 60;
-  if (p === "niconico") return 300;
-  return Infinity;
+function buildDownloadMp4Name(audioName: string, fallbackBaseName: string): string {
+  const trimmed = (audioName ?? "").trim();
+  const withoutExt = trimmed.replace(/\.[^.]+$/, "");
+  const safeBase = withoutExt
+    .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "_")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/[. ]+$/g, "");
+  const base = safeBase !== "" ? safeBase : fallbackBaseName;
+  return `${base}.mp4`;
 }
 
 const hasWindow = () => {
   return typeof window === "object";
+};
+
+type GalleryImageEntry = {
+  img: HTMLImageElement;
+  name: string;
+  objectUrl: string;
 };
 
 const Home: NextPage = () => {
@@ -125,17 +215,44 @@ const Home: NextPage = () => {
   }
 
   // UI State
+  /** ライト／ダーク。初期は固定でハイドレーション一致（Cookie は useLayoutEffect で適用） */
+  const [uiScheme, setUiScheme] = useState<"light" | "dark">("light");
   const [isPlaySound, setIsPlaySound] = useState<boolean>(false);
   const [playSoundDisabled, setPlaySoundDisabled] = useState<boolean>(true);
   const [recordMovieDisabled, setRecordMovieDisabled] = useState<boolean>(true);
-  const [imageFileName, setImageFileName] = useState<string>("");
   const [audioFileName, setAudioFileName] = useState<string>("");
+  const [subtitleFileName, setSubtitleFileName] = useState<string>("");
+  const [subtitleEnabled, setSubtitleEnabled] = useState<boolean>(true);
+  const [subtitleCues, setSubtitleCues] = useState<SubtitleCue[]>([]);
+  const [subtitleStyle, setSubtitleStyle] = useState<SubtitleStyle>(DEFAULT_SUBTITLE_STYLE);
+  /** SRT 作成支援（歌詞貼り付け〜タイミング〜書き出し） */
+  const [srtAuthorLyricsRaw, setSrtAuthorLyricsRaw] = useState<string>("");
+  const [srtAuthorCues, setSrtAuthorCues] = useState<SubtitleCue[]>([]);
+  const [srtAuthorRecordActive, setSrtAuthorRecordActive] = useState<boolean>(false);
+  const [srtAuthorPhase, setSrtAuthorPhase] = useState<"wait_start" | "inside_line">("wait_start");
+  const [srtAuthorLineIndex, setSrtAuthorLineIndex] = useState<number>(0);
+  const [srtAuthorGlobalOffsetMs, setSrtAuthorGlobalOffsetMs] = useState<number>(0);
+  const srtAuthorUndoRef = useRef<Array<{ cues: SubtitleCue[]; lineIdx: number; phase: "wait_start" | "inside_line" }>>(
+    []
+  );
+  const srtAuthorLineIndexRef = useRef(0);
+  const srtAuthorPhaseRef = useRef<"wait_start" | "inside_line">("wait_start");
+  const srtRecordPanelRef = useRef<HTMLDivElement | null>(null);
+  const srtAuthorCuesRef = useRef<SubtitleCue[]>([]);
+  const [titleText, setTitleText] = useState<string>("");
+  const [titleEnabled, setTitleEnabled] = useState<boolean>(true);
+  const [titleStyle, setTitleStyle] = useState<TitleStyle>(DEFAULT_TITLE_STYLE);
   const [fps, setFps] = useState<number>(0);
   const [isRecording, setIsRecording] = useState<boolean>(false);
 
   // エンコード進捗
   const [encodeStatus, setEncodeStatus] = useState<"idle" | "loading" | "converting">("idle");
   const [encodeProgress, setEncodeProgress] = useState<number>(0);
+  // 高速エンコード関連State
+  const [isQuickEncoding, setIsQuickEncoding] = useState<boolean>(false);
+  const [quickEncodingProgress, setQuickEncodingProgress] = useState<QuickEncoderProgress | null>(null);
+  const quickEncoderRef = useRef<QuickVideoEncoder | null>(null);
+  const quickEncodeCancelRef = useRef(false);
 
   // GPU関連State
   const [gpuInfo, setGpuInfo] = useState<GpuInfo | null>(null);
@@ -166,6 +283,27 @@ const Home: NextPage = () => {
     },
     []
   );
+
+  const muiTheme = useMemo(
+    () =>
+      createTheme({
+        palette: {
+          mode: uiScheme === "dark" ? "dark" : "light",
+        },
+      }),
+    [uiScheme]
+  );
+
+  const toggleUiScheme = useCallback(() => {
+    setUiScheme((prev) => {
+      const next = prev === "light" ? "dark" : "light";
+      setCookieValue(UI_SCHEME_COOKIE, next, 60 * 60 * 24 * 365);
+      if (typeof document !== "undefined") {
+        document.documentElement.classList.toggle("dark", next === "dark");
+      }
+      return next;
+    });
+  }, []);
 
   const snackbarFileGate = useCallback(
     (gate: FileGate, kind: "image" | "audio" | "video") => {
@@ -223,57 +361,93 @@ const Home: NextPage = () => {
     const steamDest = audioCtxRef.current.createMediaStreamDestination();
     streamDestinationRef.current = steamDest;
   }, []);
+
+  // ブラウザ言語が日本語なら、日本語フォントをデフォルトに寄せる（保存済みは上書きしない）
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!isJapaneseLang(i18n.language)) return;
+    const hasSavedSubtitleStyle = mwvGetItem("common_subtitleStyle") != null;
+    const hasSavedTitleStyle = mwvGetItem("common_titleStyle") != null;
+    if (!hasSavedSubtitleStyle && subtitleStyle.fontFamily === DEFAULT_SUBTITLE_STYLE.fontFamily) {
+      const next = { ...subtitleStyle, fontFamily: JP_DEFAULT_FONT_FAMILY };
+      setSubtitleStyle(next);
+      mwvSetItem("common_subtitleStyle", JSON.stringify(next));
+    }
+    if (!hasSavedTitleStyle && titleStyle.fontFamily === DEFAULT_TITLE_STYLE.fontFamily) {
+      const next = { ...titleStyle, fontFamily: JP_DEFAULT_FONT_FAMILY };
+      setTitleStyle(next);
+      mwvSetItem("common_titleStyle", JSON.stringify(next));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const audioBufferSrcRef = useRef<AudioBufferSourceNode>(null);
   const decodedAudioBufferRef = useRef<AudioBuffer>(null);
+  const audioPlaybackStartCtxTimeRef = useRef<number | null>(null);
+  const audioPlaybackOffsetSecRef = useRef<number>(0);
   const videoElementRef = useRef<HTMLVideoElement>(null);
+  /** 音声が AudioBuffer のとき、映像のみ別 MP4 を背景にする用 */
+  const backgroundOnlyVideoRef = useRef<HTMLVideoElement | null>(null);
   const mediaElementSourceRef = useRef<MediaElementAudioSourceNode | null>(null);
   const playbackWindowTimerRef = useRef<number | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
 
-  const loadVideoAsAudioSource = useCallback(
-    (file: File) => {
-      const g = gateVideoAsMediaFile(file);
-      if (snackbarFileGate(g, "video")) {
-        return;
+  const getCurrentPlaybackTimeSec = useCallback((): number => {
+    if (!isPlaySound && !isRecording) return 0;
+    const v = videoElementRef.current;
+    if (v && !v.paused && Number.isFinite(v.currentTime)) {
+      return Math.max(0, v.currentTime);
+    }
+    if (audioPlaybackStartCtxTimeRef.current != null && audioCtxRef.current) {
+      const elapsed = audioCtxRef.current.currentTime - audioPlaybackStartCtxTimeRef.current;
+      return Math.max(0, audioPlaybackOffsetSecRef.current + elapsed);
+    }
+    return 0;
+  }, [isPlaySound, isRecording]);
+
+  const syncBackgroundOnlyVideo = useCallback(() => {
+    const v = backgroundOnlyVideoRef.current;
+    if (!v || !(v.duration > 0)) return;
+    const t = getCurrentPlaybackTimeSec();
+    const end = Math.max(0, v.duration - 0.04);
+    const clamped = Math.min(Math.max(0, t), end);
+    const drift = Math.abs(v.currentTime - clamped);
+    // シークを詰めすぎるとフレームがちらつくため、ある程度のズレまで許容
+    if (drift > 0.12) {
+      try {
+        v.currentTime = clamped;
+      } catch {
+        /* ignore */
       }
-      const video = document.createElement("video");
-      video.preload = "auto";
-      video.crossOrigin = "anonymous";
-      video.src = URL.createObjectURL(file);
-      videoElementRef.current = video;
+    }
+  }, [getCurrentPlaybackTimeSec]);
 
-      video.onloadedmetadata = () => {
-        try {
-          mediaElementSourceRef.current?.disconnect();
-          const source = audioCtxRef.current.createMediaElementSource(video);
-          mediaElementSourceRef.current = source;
-          source.connect(analyserRef.current);
-          analyserRef.current.connect(audioCtxRef.current.destination);
-          analyserRef.current.connect(streamDestinationRef.current);
+  const disposeStandaloneBackgroundVideo = useCallback(() => {
+    const v = backgroundOnlyVideoRef.current;
+    if (!v) return;
+    v.onerror = null;
+    v.onloadedmetadata = null;
+    v.onended = null;
+    try {
+      v.pause();
+    } catch {
+      /* ignore */
+    }
+    if (v.src?.startsWith("blob:")) {
+      URL.revokeObjectURL(v.src);
+    }
+    v.src = "";
+    backgroundOnlyVideoRef.current = null;
+  }, []);
 
-          video.onended = () => {
-            setIsPlaySound(false);
-            stopCanvas2DAnimation();
-            stopWebGLAnimation();
-          };
-
-          setPlaySoundDisabled(false);
-          setRecordMovieDisabled(false);
-          setAudioFileName(file.name);
-          exitConfirmRef.current = true;
-          openSnackBar(t("snackbar.videoAudioLoaded"));
-        } catch (error) {
-          openSnackBar(t("snackbar.videoAudioFailed", { error }));
-          videoElementRef.current = null;
-        }
-      };
-      video.onerror = () => {
-        openSnackBar(t("snackbar.videoLoadFailed"));
-        videoElementRef.current = null;
-      };
-    },
-    [t, openSnackBar, snackbarFileGate]
-  );
+  useEffect(() => {
+    srtAuthorLineIndexRef.current = srtAuthorLineIndex;
+  }, [srtAuthorLineIndex]);
+  useEffect(() => {
+    srtAuthorPhaseRef.current = srtAuthorPhase;
+  }, [srtAuthorPhase]);
+  useEffect(() => {
+    srtAuthorCuesRef.current = srtAuthorCues;
+  }, [srtAuthorCues]);
 
   // 開発者モードフラグ（環境変数で制御）
   const isDeveloperMode =
@@ -281,7 +455,7 @@ const Home: NextPage = () => {
     process.env.NEXT_PUBLIC_DEV_MODE === "true";
 
   // Mode（セッション用、エクスポート対象外）
-  // 初期値は固定でハイドレーション一致（localStorageはuseEffectで読み込み）
+  // 初期値は固定でハイドレーション一致（Cookie は useLayoutEffect で読み込み）
   const [mode, setMode] = useState<number>(0);
 
   // Canvas Size（セッション用、エクスポート対象外）
@@ -359,6 +533,64 @@ const Home: NextPage = () => {
   const [snowColorInput, setSnowColorInput] = useState<string>(DEFAULT_SNOW_WEATHER.color.toUpperCase());
   const isSpaceEffect = effectType === "space" || effectType === "spaceConstant" || effectType === "spaceAudio";
 
+  // スペクトラム調整
+  const [spectrumOpacityPercent, setSpectrumOpacityPercent] = useState<number>(10);  // 透過率0-100%、0=完全表示
+  const [lineWidthWaveform, setLineWidthWaveform] = useState<number>(3.2);  // mode1
+  const [lineWidthCircle, setLineWidthCircle] = useState<number>(3.2);      // mode2
+  const [lineWidthSymWave, setLineWidthSymWave] = useState<number>(3.6);    // mode5
+  const [circleRotationRpm, setCircleRotationRpm] = useState<number | null>(null); // mode2: null=OFF, 0=停止
+  type LoudnessParams = { gain: number; gamma: number; attack: number; release: number };
+  type WmpTrailParams = { trailLength: number; trailDecay: number; additive: number };
+  const DEFAULT_LOUDNESS_PARAMS: LoudnessParams = { gain: 1.35, gamma: 0.82, attack: 0.22, release: 0.08 };
+  const DEFAULT_WMP_TRAIL_PARAMS: WmpTrailParams = { trailLength: 8, trailDecay: 0.86, additive: 1.0 };
+  const defaultLoudnessParamsRef = useRef<LoudnessParams>(DEFAULT_LOUDNESS_PARAMS);
+  const WMP_TRAIL_DEFAULTS_BY_MODE: Record<15 | 16, WmpTrailParams> = {
+    // mode15: クラシックWMP風に長め残像
+    15: { trailLength: 12, trailDecay: 0.92, additive: 1.4 },
+    // mode16: 幾何学が潰れにくいよう少し抑えめ
+    16: { trailLength: 9, trailDecay: 0.88, additive: 1.2 },
+  };
+  const WMP_TRAIL_PRESETS: Record<"classic" | "modern", Record<15 | 16, WmpTrailParams>> = {
+    classic: {
+      15: { trailLength: 14, trailDecay: 0.94, additive: 1.65 },
+      16: { trailLength: 11, trailDecay: 0.90, additive: 1.35 },
+    },
+    modern: {
+      15: { trailLength: 8, trailDecay: 0.84, additive: 1.1 },
+      16: { trailLength: 6, trailDecay: 0.80, additive: 0.95 },
+    },
+  };
+  const defaultWmpTrailParamsForMode: WmpTrailParams =
+    mode === 15 || mode === 16 ? WMP_TRAIL_DEFAULTS_BY_MODE[mode] : DEFAULT_WMP_TRAIL_PARAMS;
+  const [loudnessParamsByMode, setLoudnessParamsByMode] = useState<Record<number, LoudnessParams>>({});
+  const [wmpTrailParamsByMode, setWmpTrailParamsByMode] = useState<Record<number, WmpTrailParams>>({});
+  const LOUDNESS_PRESETS: Record<"natural" | "strong" | "edm", LoudnessParams> = {
+    natural: { gain: 1.2, gamma: 0.9, attack: 0.18, release: 0.1 },
+    strong: { gain: 1.5, gamma: 0.8, attack: 0.26, release: 0.1 },
+    edm: { gain: 1.9, gamma: 0.7, attack: 0.34, release: 0.06 },
+  };
+  const [glycoColorSet, setGlycoColorSet] = useState<string>("amber");
+  const DEFAULT_SPECTRUM_HEX = "#FFFFFF";
+  const DEFAULT_SPACE_PARTICLE = "#E0EEFF";
+  const DEFAULT_SPARKLE_PARTICLE = "#FFFFFF";
+  const DEFAULT_DUST_PARTICLE = "#D8E8FF";
+  const [spectrumColorHex, setSpectrumColorHex] = useState<string>(DEFAULT_SPECTRUM_HEX);
+  const [spectrumColorInput, setSpectrumColorInput] = useState<string>(DEFAULT_SPECTRUM_HEX);
+  const [galleryTransitionMode, setGalleryTransitionMode] =
+    useState<GalleryTransitionUserMode>("crossfade");
+  const [spaceParticleColor, setSpaceParticleColor] = useState<string>(DEFAULT_SPACE_PARTICLE);
+  const [sparkleParticleColor, setSparkleParticleColor] = useState<string>(DEFAULT_SPARKLE_PARTICLE);
+  const [dustParticleColor, setDustParticleColor] = useState<string>(DEFAULT_DUST_PARTICLE);
+  const [spaceColorInput, setSpaceColorInput] = useState<string>(DEFAULT_SPACE_PARTICLE.toUpperCase());
+  const [sparkleColorInput, setSparkleColorInput] = useState<string>(DEFAULT_SPARKLE_PARTICLE.toUpperCase());
+  const [dustColorInput, setDustColorInput] = useState<string>(DEFAULT_DUST_PARTICLE.toUpperCase());
+  const [spaceDirection, setSpaceDirection] = useState<"forward" | "backward">("forward");
+  const [spaceSpeed, setSpaceSpeed] = useState<number>(1);
+  const [sparkleVariant, setSparkleVariant] = useState<"normal" | "heart" | "star">("normal");
+  const [atmosphereVariant, setAtmosphereVariant] = useState<"dust" | "sparks" | "fireflies">("dust");
+  const [atmosphereStrength, setAtmosphereStrength] = useState<number>(45);
+  const [spectrumRainbowColorful, setSpectrumRainbowColorful] = useState<boolean>(true);
+
   const effectForCanvas = useMemo((): EffectParams | undefined => {
     if (effectType === "none") return undefined;
     const base: EffectParams = { type: effectType, density: effectDensity };
@@ -370,45 +602,136 @@ const Home: NextPage = () => {
       base.weatherAngleDeg = snowWeather.angleDeg;
       base.weatherAmount = snowWeather.amount;
       base.weatherColor = snowWeather.color;
+    } else if (effectType === "space" || effectType === "spaceConstant" || effectType === "spaceAudio") {
+      base.effectTintColor = spaceParticleColor;
+      base.spaceDirection = spaceDirection;
+      base.spaceSpeed = spaceSpeed;
+    } else if (effectType === "sparkle") {
+      base.effectTintColor = sparkleParticleColor;
+      base.sparkleVariant = sparkleVariant;
+    } else if (effectType === "dust") {
+      base.effectTintColor = dustParticleColor;
+      base.atmosphereVariant = atmosphereVariant;
+      base.effectStrengthScale = Math.max(0.05, Math.min(1, atmosphereStrength / 100));
     }
     return base;
-  }, [effectType, effectDensity, rainWeather, snowWeather]);
+  }, [
+    effectType,
+    effectDensity,
+    rainWeather,
+    snowWeather,
+    spaceParticleColor,
+    spaceDirection,
+    spaceSpeed,
+    sparkleParticleColor,
+    sparkleVariant,
+    dustParticleColor,
+    atmosphereVariant,
+    atmosphereStrength,
+  ]);
 
-  // スペクトラム調整
-  const [spectrumOpacityPercent, setSpectrumOpacityPercent] = useState<number>(10);  // 透過率0-100%、0=完全表示
-  const [spectrumFps, setSpectrumFps] = useState<number>(30);               // 1〜60
-  const [lineWidthWaveform, setLineWidthWaveform] = useState<number>(3.2);  // mode1
-  const [lineWidthCircle, setLineWidthCircle] = useState<number>(3.2);      // mode2
-  const [lineWidthSymWave, setLineWidthSymWave] = useState<number>(3.6);    // mode5
-  const [glycoColorSet, setGlycoColorSet] = useState<string>("amber");
+  const [recordVideoBitrateMbps, setRecordVideoBitrateMbps] = useState<number>(8);
+  const [exportAudioBitrateKbps, setExportAudioBitrateKbps] = useState<128 | 192 | 256>(192);
 
   // 音量設定（共通設定: 目標LUFS、null=正規化なし）
   const [targetLufs, setTargetLufs] = useState<number | null>(-14);
   const [targetLufsCustom, setTargetLufsCustom] = useState<string>("-14");
   useEffect(() => {
     if (typeof window === "undefined") return;
-    if (targetLufs != null) localStorage.setItem("common_targetLufs", String(targetLufs));
-    else localStorage.removeItem("common_targetLufs");
+    if (targetLufs != null) mwvSetItem("common_targetLufs", String(targetLufs));
+    else mwvSetItem("common_targetLufs", TARGET_LUFS_NONE_COOKIE);
   }, [targetLufs]);
 
   // 共通設定の保存（音量・エフェクト種類・各エフェクト強度・グライコ色・透過率）
   useEffect(() => {
     if (typeof window === "undefined") return;
-    localStorage.setItem("common_effectType", effectType);
-    localStorage.setItem("common_effectDensities", JSON.stringify(effectDensities));
-    localStorage.setItem("common_glycoColorSet", glycoColorSet);
-    localStorage.setItem("common_spectrumOpacityPercent", String(spectrumOpacityPercent));
-  }, [effectType, effectDensities, glycoColorSet, spectrumOpacityPercent]);
+    mwvSetItem("common_effectType", effectType);
+    mwvSetItem("common_effectDensities", JSON.stringify(effectDensities));
+    mwvSetItem("common_glycoColorSet", glycoColorSet);
+    mwvSetItem("common_spectrumOpacityPercent", String(spectrumOpacityPercent));
+    mwvSetItem("common_spectrumColorHex", spectrumColorHex);
+    mwvSetItem("common_galleryTransitionMode", galleryTransitionMode);
+    mwvSetItem("common_spaceParticleColor", spaceParticleColor);
+    mwvSetItem("common_spaceDirection", spaceDirection);
+    mwvSetItem("common_spaceSpeed", String(spaceSpeed));
+    mwvSetItem("common_sparkleParticleColor", sparkleParticleColor);
+    mwvSetItem("common_sparkleVariant", sparkleVariant);
+    mwvSetItem("common_dustParticleColor", dustParticleColor);
+    mwvSetItem("common_atmosphereVariant", atmosphereVariant);
+    mwvSetItem("common_atmosphereStrength", String(atmosphereStrength));
+    mwvSetItem("common_spectrumRainbowColorful", spectrumRainbowColorful ? "1" : "0");
+    mwvSetItem(
+      "common_circleRotationRpm",
+      circleRotationRpm == null ? "off" : String(Math.max(-10, Math.min(10, Math.round(circleRotationRpm))))
+    );
+    mwvSetItem("common_loudnessParamsByMode", JSON.stringify(loudnessParamsByMode));
+    mwvSetItem("common_wmpTrailParamsByMode", JSON.stringify(wmpTrailParamsByMode));
+    mwvSetItem("common_subtitleEnabled", subtitleEnabled ? "1" : "0");
+    mwvSetItem("common_subtitleStyle", JSON.stringify(subtitleStyle));
+    mwvSetItem("common_titleEnabled", titleEnabled ? "1" : "0");
+    mwvSetItem("common_titleStyle", JSON.stringify(titleStyle));
+    mwvSetItem("common_recordVideoBitrateMbps", String(recordVideoBitrateMbps));
+    mwvSetItem("common_exportAudioBitrateKbps", String(exportAudioBitrateKbps));
+  }, [
+    effectType,
+    effectDensities,
+    glycoColorSet,
+    spectrumOpacityPercent,
+    spectrumColorHex,
+    galleryTransitionMode,
+    spaceParticleColor,
+    spaceDirection,
+    spaceSpeed,
+    sparkleParticleColor,
+    sparkleVariant,
+    dustParticleColor,
+    atmosphereVariant,
+    atmosphereStrength,
+    spectrumRainbowColorful,
+    circleRotationRpm,
+    loudnessParamsByMode,
+    wmpTrailParamsByMode,
+    subtitleEnabled,
+    subtitleStyle,
+    titleEnabled,
+    titleStyle,
+    recordVideoBitrateMbps,
+    exportAudioBitrateKbps,
+  ]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    localStorage.setItem("common_rainWeather", JSON.stringify(rainWeather));
+    mwvSetItem("common_rainWeather", JSON.stringify(rainWeather));
   }, [rainWeather]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    localStorage.setItem("common_snowWeather", JSON.stringify(snowWeather));
+    mwvSetItem("common_snowWeather", JSON.stringify(snowWeather));
   }, [snowWeather]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    mwvSetItem("common_canvasSize", canvasSize);
+  }, [canvasSize]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    mwvSetItem("common_settingsTab", String(settingsTab));
+  }, [settingsTab]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    mwvSetItem("common_lineWidthWaveform", String(lineWidthWaveform));
+    mwvSetItem("common_lineWidthCircle", String(lineWidthCircle));
+    mwvSetItem("common_lineWidthSymWave", String(lineWidthSymWave));
+  }, [lineWidthWaveform, lineWidthCircle, lineWidthSymWave]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    mwvSetItem("common_shortOutputPreset", shortOutputPreset);
+    mwvSetItem("common_shortStartSecStr", shortStartSecStr);
+    mwvSetItem("common_shortDurationSecStr", shortDurationSecStr);
+  }, [shortOutputPreset, shortStartSecStr, shortDurationSecStr]);
 
   const detectCanvasLayoutFromImage = useCallback((image: HTMLImageElement | null): CanvasLayout => {
     if (!image || !(image.naturalWidth > 0) || !(image.naturalHeight > 0)) return "1920x1080";
@@ -447,42 +770,56 @@ const Home: NextPage = () => {
 
   // レイアウト別スペアナ設定のキー（縦/横/正方形 × モード）
   const LAYOUTS: CanvasLayout[] = ["1920x1080", "1080x1920", "1920x1920"];
-  const getSettingsKey = (layout: CanvasLayout, m: number) => {
+  const getSettingsKey = useCallback((layout: CanvasLayout, m: number) => {
     return `spectrumSettings_${layout}_${m}`;
-  };
+  }, []);
 
   // レイアウト×モードの設定を保存
   const saveSettings = (layout: CanvasLayout, m: number, adjustments: ModeAdjustments) => {
     try {
       const key = getSettingsKey(layout, m);
-      localStorage.setItem(key, JSON.stringify(adjustments));
+      mwvSetItem(key, JSON.stringify(adjustments));
     } catch (error) {
       console.error("設定の保存に失敗しました:", error);
     }
   };
 
+  const clampModeAdjustments = useCallback(
+    (adj: ModeAdjustments): ModeAdjustments => ({
+      scaleX: Math.min(5, Math.max(0.1, adj.scaleX)),
+      scaleY: Math.min(5, Math.max(0.1, adj.scaleY)),
+      offsetX: Math.min(150, Math.max(-150, Math.round(adj.offsetX))),
+      offsetY: Math.min(150, Math.max(-150, Math.round(adj.offsetY))),
+    }),
+    []
+  );
+
   // レイアウト×モードの設定を読み込み
-  const loadSettings = (layout: CanvasLayout, m: number): ModeAdjustments | null => {
-    try {
-      const key = getSettingsKey(layout, m);
-      const saved = localStorage.getItem(key);
-      if (saved) {
-        return JSON.parse(saved);
+  const loadSettings = useCallback(
+    (layout: CanvasLayout, m: number): ModeAdjustments | null => {
+      try {
+        const key = getSettingsKey(layout, m);
+        const saved = mwvGetItem(key);
+        if (saved) {
+          return clampModeAdjustments(JSON.parse(saved) as ModeAdjustments);
+        }
+        // 旧形式のキー（mode_size）にも対応
+        const legacyKey = `spectrumSettings_${m}_${layout}`;
+        const legacy = mwvGetItem(legacyKey);
+        if (legacy) {
+          const parsed = JSON.parse(legacy) as ModeAdjustments;
+          const clamped = clampModeAdjustments(parsed);
+          mwvSetItem(key, JSON.stringify(clamped));
+          mwvRemoveItem(legacyKey);
+          return clamped;
+        }
+      } catch (error) {
+        console.error("設定の読み込みに失敗しました:", error);
       }
-      // 旧形式のキー（mode_size）にも対応
-      const legacyKey = `spectrumSettings_${m}_${layout}`;
-      const legacy = localStorage.getItem(legacyKey);
-      if (legacy) {
-        const parsed = JSON.parse(legacy);
-        localStorage.setItem(key, legacy);
-        localStorage.removeItem(legacyKey);
-        return parsed;
-      }
-    } catch (error) {
-      console.error("設定の読み込みに失敗しました:", error);
-    }
-    return null;
-  };
+      return null;
+    },
+    [clampModeAdjustments, getSettingsKey]
+  );
 
   const DEFAULT_ADJUSTMENTS: ModeAdjustments = { scaleX: 1.0, scaleY: 1.0, offsetX: 0, offsetY: 0 };
 
@@ -491,7 +828,7 @@ const Home: NextPage = () => {
     const spectrumSettings: Record<string, Record<string, ModeAdjustments>> = {};
     LAYOUTS.forEach((layout) => {
       const layoutData: Record<string, ModeAdjustments> = {};
-      [0, 1, 2, 3, 4, 5, 6].forEach((m) => {
+      [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16].forEach((m) => {
         const loaded = loadSettings(layout, m);
         layoutData[String(m)] = loaded ?? DEFAULT_ADJUSTMENTS;
       });
@@ -504,9 +841,39 @@ const Home: NextPage = () => {
         effectDensities,
         glycoColorSet,
         spectrumOpacityPercent,
+        spectrumColorHex,
+        spectrumRainbowColorful,
+        circleRotationRpm,
+        loudnessParamsByMode,
+        wmpTrailParamsByMode,
+        subtitleEnabled,
+        subtitleStyle,
+        titleEnabled,
+        titleStyle,
+        recordVideoBitrateMbps,
+        exportAudioBitrateKbps,
         rendererType,
         rainWeather,
         snowWeather,
+        galleryTransitionMode,
+        spaceParticleColor,
+        spaceDirection,
+        spaceSpeed,
+        sparkleParticleColor,
+        sparkleVariant,
+        dustParticleColor,
+        atmosphereVariant,
+        atmosphereStrength,
+        canvasSize,
+        settingsTab,
+        lineWidthWaveform,
+        lineWidthCircle,
+        lineWidthSymWave,
+        shortOutputPreset,
+        shortStartSecStr,
+        shortDurationSecStr,
+        galleryAutoEnabled,
+        galleryAutoSec,
       },
       spectrumSettings,
     };
@@ -516,7 +883,7 @@ const Home: NextPage = () => {
   // 全設定をクリア（インポート前の一括リセット用）
   const clearAllSettings = () => {
     LAYOUTS.forEach((layout) => {
-      [0, 1, 2, 3, 4, 5, 6].forEach((m) => localStorage.removeItem(getSettingsKey(layout, m)));
+      [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16].forEach((m) => mwvRemoveItem(getSettingsKey(layout, m)));
     });
     [
       "common_targetLufs",
@@ -524,33 +891,68 @@ const Home: NextPage = () => {
       "common_effectDensities",
       "common_glycoColorSet",
       "common_spectrumOpacityPercent",
+      "common_spectrumColorPreset",
+      "common_spectrumCustomHex",
+      "common_spectrumColorHex",
+      "common_spectrumRainbowColorful",
+      "common_circleRotationRpm",
+      "common_loudnessParamsByMode",
+      "common_wmpTrailParamsByMode",
+      "common_subtitleEnabled",
+      "common_subtitleStyle",
+      "common_titleEnabled",
+      "common_titleStyle",
+      "common_galleryTransitionMode",
+      "common_spaceParticleColor",
+      "common_spaceDirection",
+      "common_spaceSpeed",
+      "common_sparkleParticleColor",
+      "common_sparkleVariant",
+      "common_dustParticleColor",
+      "common_atmosphereVariant",
+      "common_atmosphereStrength",
+      "common_recordVideoBitrateMbps",
+      "common_exportAudioBitrateKbps",
       "common_rainWeather",
       "common_snowWeather",
-    ].forEach((k) => localStorage.removeItem(k));
+      "common_galleryAutoEnabled",
+      "common_galleryAutoSec",
+      "common_canvasSize",
+      "common_settingsTab",
+      "common_lineWidthWaveform",
+      "common_lineWidthCircle",
+      "common_lineWidthSymWave",
+      "common_shortOutputPreset",
+      "common_shortStartSecStr",
+      "common_shortDurationSecStr",
+      "common_rendererType",
+    ].forEach((k) => mwvRemoveItem(k));
   };
 
   // 存在する項目のみ上書きインポート
   const importAllSettings = (jsonString: string): boolean => {
     try {
       const data = JSON.parse(jsonString);
+      /** common の canvasSize 反映後と同じ基準でスペアナ調整を読む（setState は非同期のため activeCanvasLayout は古いまま） */
+      let effectiveCanvasSizeForAdj: CanvasSize = canvasSize;
 
       // 新形式: common（存在する項目のみ上書き）
       if (data.common) {
         const c = data.common;
         if (c.targetLufs !== undefined) {
           if (c.targetLufs === null) {
-            localStorage.removeItem("common_targetLufs");
+            mwvSetItem("common_targetLufs", TARGET_LUFS_NONE_COOKIE);
             setTargetLufs(null);
             setTargetLufsCustom("");
           } else {
             const v = Number(c.targetLufs);
-            localStorage.setItem("common_targetLufs", String(v));
+            mwvSetItem("common_targetLufs", String(v));
             setTargetLufs(v);
             setTargetLufsCustom(v === -14 || v === -15 ? "" : String(v));
           }
         }
         if (c.effectType && VALID_SAVED_EFFECT_TYPES.includes(c.effectType)) {
-          localStorage.setItem("common_effectType", c.effectType);
+          mwvSetItem("common_effectType", c.effectType);
           setEffectType(c.effectType);
         }
         if (c.effectDensities && typeof c.effectDensities === "object") {
@@ -560,23 +962,197 @@ const Home: NextPage = () => {
               merged[t] = c.effectDensities[t];
             }
           });
-          localStorage.setItem("common_effectDensities", JSON.stringify(merged));
+          mwvSetItem("common_effectDensities", JSON.stringify(merged));
           setEffectDensities(merged);
         }
         if (c.glycoColorSet && (GLYCO_COLOR_SETS[c.glycoColorSet] || GLYCO_GRADIENT_SETS[c.glycoColorSet] || c.glycoColorSet === "verticalEQ" || c.glycoColorSet === "verticalEQFixed")) {
-          localStorage.setItem("common_glycoColorSet", c.glycoColorSet);
+          mwvSetItem("common_glycoColorSet", c.glycoColorSet);
           setGlycoColorSet(c.glycoColorSet);
         }
         if (c.spectrumOpacityPercent !== undefined) {
           const v = Number(c.spectrumOpacityPercent);
           if (!isNaN(v) && v >= 0 && v <= 100) {
-            localStorage.setItem("common_spectrumOpacityPercent", String(v));
+            mwvSetItem("common_spectrumOpacityPercent", String(v));
             setSpectrumOpacityPercent(v);
           }
         }
+        if (typeof c.spectrumColorHex === "string" && /^#[0-9a-fA-F]{6}$/.test(c.spectrumColorHex)) {
+          const hx = c.spectrumColorHex.toUpperCase();
+          mwvSetItem("common_spectrumColorHex", hx);
+          setSpectrumColorHex(hx);
+          setSpectrumColorInput(hx);
+        } else if (c.spectrumColorPreset != null || typeof c.spectrumCustomHex === "string") {
+          const migrated = legacySpectrumPresetToHex(
+            c.spectrumColorPreset != null ? String(c.spectrumColorPreset) : "white",
+            typeof c.spectrumCustomHex === "string" ? c.spectrumCustomHex : undefined
+          );
+          mwvSetItem("common_spectrumColorHex", migrated);
+          setSpectrumColorHex(migrated);
+          setSpectrumColorInput(migrated);
+        }
+        if (
+          c.galleryTransitionMode &&
+          isValidGalleryTransitionUserMode(String(c.galleryTransitionMode))
+        ) {
+          const gm = c.galleryTransitionMode as GalleryTransitionUserMode;
+          mwvSetItem("common_galleryTransitionMode", gm);
+          setGalleryTransitionMode(gm);
+        }
+        const applyParticle = (hex: unknown, storageKey: string, setter: (v: string) => void) => {
+          if (typeof hex === "string" && /^#[0-9a-fA-F]{6}$/.test(hex)) {
+            const u = hex.toUpperCase();
+            mwvSetItem(storageKey, u);
+            setter(u);
+          }
+        };
+        applyParticle(c.spaceParticleColor, "common_spaceParticleColor", setSpaceParticleColor);
+        applyParticle(c.sparkleParticleColor, "common_sparkleParticleColor", setSparkleParticleColor);
+        applyParticle(c.dustParticleColor, "common_dustParticleColor", setDustParticleColor);
+        if (c.spaceDirection === "forward" || c.spaceDirection === "backward") {
+          mwvSetItem("common_spaceDirection", c.spaceDirection);
+          setSpaceDirection(c.spaceDirection);
+        }
+        if (typeof c.spaceSpeed === "number") {
+          const v = Math.max(0.2, Math.min(3, c.spaceSpeed));
+          mwvSetItem("common_spaceSpeed", String(v));
+          setSpaceSpeed(v);
+        }
+        if (c.sparkleVariant === "normal" || c.sparkleVariant === "heart" || c.sparkleVariant === "star") {
+          mwvSetItem("common_sparkleVariant", c.sparkleVariant);
+          setSparkleVariant(c.sparkleVariant);
+        }
+        if (c.atmosphereVariant === "dust" || c.atmosphereVariant === "sparks" || c.atmosphereVariant === "fireflies") {
+          mwvSetItem("common_atmosphereVariant", c.atmosphereVariant);
+          setAtmosphereVariant(c.atmosphereVariant);
+        }
+        if (typeof c.atmosphereStrength === "number") {
+          const v = Math.max(1, Math.min(100, Math.round(c.atmosphereStrength)));
+          mwvSetItem("common_atmosphereStrength", String(v));
+          setAtmosphereStrength(v);
+        }
+        if (c.spectrumRainbowColorful === true || c.spectrumRainbowColorful === false) {
+          mwvSetItem(
+            "common_spectrumRainbowColorful",
+            c.spectrumRainbowColorful ? "1" : "0"
+          );
+          setSpectrumRainbowColorful(c.spectrumRainbowColorful);
+        }
+        if (c.circleRotationRpm !== undefined) {
+          if (c.circleRotationRpm === null || c.circleRotationRpm === "off") {
+            mwvSetItem("common_circleRotationRpm", "off");
+            setCircleRotationRpm(null);
+          } else {
+            const n = Number(c.circleRotationRpm);
+            if (!isNaN(n)) {
+              const clamped = Math.max(-10, Math.min(10, Math.round(n)));
+              mwvSetItem("common_circleRotationRpm", String(clamped));
+              setCircleRotationRpm(clamped);
+            }
+          }
+        }
+        if (c.loudnessParamsByMode && typeof c.loudnessParamsByMode === "object") {
+          const src = c.loudnessParamsByMode as Record<string, LoudnessParams>;
+          const next: Record<number, LoudnessParams> = {};
+          Object.keys(src).forEach((k) => {
+            const m = Number(k);
+            const v = src[k];
+            if (!isNaN(m) && v && typeof v === "object") {
+              const gain = Number((v as any).gain);
+              const gamma = Number((v as any).gamma);
+              const attack = Number((v as any).attack);
+              const release = Number((v as any).release);
+              if ([gain, gamma, attack, release].every((x) => !isNaN(x))) {
+                next[m] = {
+                  gain: Math.max(0.1, Math.min(5, gain)),
+                  gamma: Math.max(0.2, Math.min(3, gamma)),
+                  attack: Math.max(0.01, Math.min(0.9, attack)),
+                  release: Math.max(0.01, Math.min(0.9, release)),
+                };
+              }
+            }
+          });
+          mwvSetItem("common_loudnessParamsByMode", JSON.stringify(next));
+          setLoudnessParamsByMode(next);
+        }
+        if (c.wmpTrailParamsByMode && typeof c.wmpTrailParamsByMode === "object") {
+          const src = c.wmpTrailParamsByMode as Record<string, WmpTrailParams>;
+          const next: Record<number, WmpTrailParams> = {};
+          Object.keys(src).forEach((k) => {
+            const m = Number(k);
+            const v = src[k];
+            if (!isNaN(m) && v && typeof v === "object") {
+              const trailLength = Number((v as any).trailLength);
+              const trailDecay = Number((v as any).trailDecay);
+              const additive = Number((v as any).additive);
+              if ([trailLength, trailDecay, additive].every((x) => !isNaN(x))) {
+                next[m] = {
+                  trailLength: Math.max(2, Math.min(24, Math.round(trailLength))),
+                  trailDecay: Math.max(0.5, Math.min(0.99, trailDecay)),
+                  additive: Math.max(0.2, Math.min(3, additive)),
+                };
+              }
+            }
+          });
+          mwvSetItem("common_wmpTrailParamsByMode", JSON.stringify(next));
+          setWmpTrailParamsByMode(next);
+        }
+        if (c.subtitleEnabled === true || c.subtitleEnabled === false) {
+          mwvSetItem("common_subtitleEnabled", c.subtitleEnabled ? "1" : "0");
+          setSubtitleEnabled(c.subtitleEnabled);
+        }
+        if (c.subtitleStyle && typeof c.subtitleStyle === "object") {
+          const s = c.subtitleStyle as Partial<SubtitleStyle>;
+          const next: SubtitleStyle = {
+            ...DEFAULT_SUBTITLE_STYLE,
+            ...s,
+            positionYPercent: Math.max(5, Math.min(98, Number(s.positionYPercent ?? DEFAULT_SUBTITLE_STYLE.positionYPercent))),
+            fontSize: Math.max(12, Math.min(96, Number(s.fontSize ?? DEFAULT_SUBTITLE_STYLE.fontSize))),
+            strokeWidth: Math.max(0, Math.min(12, Number(s.strokeWidth ?? DEFAULT_SUBTITLE_STYLE.strokeWidth))),
+            shadowBlur: Math.max(0, Math.min(30, Number(s.shadowBlur ?? DEFAULT_SUBTITLE_STYLE.shadowBlur))),
+            boxPadding: Math.max(0, Math.min(40, Number(s.boxPadding ?? DEFAULT_SUBTITLE_STYLE.boxPadding))),
+            animationDurationSec: Math.max(0, Math.min(1.5, Number(s.animationDurationSec ?? DEFAULT_SUBTITLE_STYLE.animationDurationSec))),
+          };
+          mwvSetItem("common_subtitleStyle", JSON.stringify(next));
+          setSubtitleStyle(next);
+        }
+        if (typeof c.titleText === "string") {
+          setTitleText(c.titleText.slice(0, 500));
+        }
+        if (c.titleEnabled === true || c.titleEnabled === false) {
+          mwvSetItem("common_titleEnabled", c.titleEnabled ? "1" : "0");
+          setTitleEnabled(c.titleEnabled);
+        }
+        if (c.titleStyle && typeof c.titleStyle === "object") {
+          const s = c.titleStyle as Partial<TitleStyle>;
+          const next: TitleStyle = {
+            ...DEFAULT_TITLE_STYLE,
+            ...s,
+            positionYPercent: Math.max(5, Math.min(98, Number(s.positionYPercent ?? DEFAULT_TITLE_STYLE.positionYPercent))),
+            fontSize: Math.max(12, Math.min(200, Number(s.fontSize ?? DEFAULT_TITLE_STYLE.fontSize))),
+            strokeWidth: Math.max(0, Math.min(12, Number(s.strokeWidth ?? DEFAULT_TITLE_STYLE.strokeWidth))),
+            shadowBlur: Math.max(0, Math.min(40, Number(s.shadowBlur ?? DEFAULT_TITLE_STYLE.shadowBlur))),
+            boxPadding: Math.max(0, Math.min(40, Number(s.boxPadding ?? DEFAULT_TITLE_STYLE.boxPadding))),
+            animationDurationSec: Math.max(0, Math.min(1.5, Number(s.animationDurationSec ?? DEFAULT_TITLE_STYLE.animationDurationSec))),
+            letterSpacingPx: Math.max(0, Math.min(24, Number(s.letterSpacingPx ?? DEFAULT_TITLE_STYLE.letterSpacingPx))),
+          };
+          mwvSetItem("common_titleStyle", JSON.stringify(next));
+          setTitleStyle(next);
+        }
+        if (c.recordVideoBitrateMbps !== undefined) {
+          const n = Number(c.recordVideoBitrateMbps);
+          if (!isNaN(n) && n >= 1 && n <= 40) {
+            mwvSetItem("common_recordVideoBitrateMbps", String(n));
+            setRecordVideoBitrateMbps(n);
+          }
+        }
+        if (c.exportAudioBitrateKbps === 128 || c.exportAudioBitrateKbps === 192 || c.exportAudioBitrateKbps === 256) {
+          mwvSetItem("common_exportAudioBitrateKbps", String(c.exportAudioBitrateKbps));
+          setExportAudioBitrateKbps(c.exportAudioBitrateKbps);
+        }
         if (c.rendererType === "canvas2d" || c.rendererType === "webgl") {
-          localStorage.setItem("common_rendererType", c.rendererType);
-          setRendererType(c.rendererType);
+          // 今後は Canvas2D 固定運用
+          mwvSetItem("common_rendererType", "canvas2d");
+          setRendererType("canvas2d");
         }
         if (c.rainWeather && typeof c.rainWeather === "object") {
           const rw = c.rainWeather as WeatherAdjust;
@@ -606,6 +1182,67 @@ const Home: NextPage = () => {
             });
           }
         }
+        if (
+          c.canvasSize === "auto" ||
+          c.canvasSize === "1920x1080" ||
+          c.canvasSize === "1080x1920" ||
+          c.canvasSize === "1920x1920"
+        ) {
+          mwvSetItem("common_canvasSize", c.canvasSize);
+          setCanvasSize(c.canvasSize);
+          effectiveCanvasSizeForAdj = c.canvasSize;
+        }
+        if (typeof c.settingsTab === "number" && c.settingsTab >= 0 && c.settingsTab <= 6) {
+          mwvSetItem("common_settingsTab", String(c.settingsTab));
+          setSettingsTab(c.settingsTab);
+        }
+        if (typeof c.lineWidthWaveform === "number") {
+          const n = c.lineWidthWaveform;
+          if (!isNaN(n)) {
+            const v = Math.max(1, Math.min(8, n));
+            mwvSetItem("common_lineWidthWaveform", String(v));
+            setLineWidthWaveform(v);
+          }
+        }
+        if (typeof c.lineWidthCircle === "number") {
+          const n = c.lineWidthCircle;
+          if (!isNaN(n)) {
+            const v = Math.max(1, Math.min(8, n));
+            mwvSetItem("common_lineWidthCircle", String(v));
+            setLineWidthCircle(v);
+          }
+        }
+        if (typeof c.lineWidthSymWave === "number") {
+          const n = c.lineWidthSymWave;
+          if (!isNaN(n)) {
+            const v = Math.max(1, Math.min(8, n));
+            mwvSetItem("common_lineWidthSymWave", String(v));
+            setLineWidthSymWave(v);
+          }
+        }
+        if (c.shortOutputPreset === "all" || c.shortOutputPreset === "tiktok" || c.shortOutputPreset === "youtube" || c.shortOutputPreset === "niconico") {
+          mwvSetItem("common_shortOutputPreset", c.shortOutputPreset);
+          setShortOutputPreset(c.shortOutputPreset);
+        }
+        if (typeof c.shortStartSecStr === "string") {
+          mwvSetItem("common_shortStartSecStr", c.shortStartSecStr);
+          setShortStartSecStr(c.shortStartSecStr);
+        }
+        if (typeof c.shortDurationSecStr === "string") {
+          mwvSetItem("common_shortDurationSecStr", c.shortDurationSecStr);
+          setShortDurationSecStr(c.shortDurationSecStr);
+        }
+        if (c.galleryAutoEnabled === true || c.galleryAutoEnabled === false) {
+          mwvSetItem("common_galleryAutoEnabled", c.galleryAutoEnabled ? "1" : "0");
+          setGalleryAutoEnabled(c.galleryAutoEnabled);
+        }
+        if (typeof c.galleryAutoSec === "number") {
+          const n = c.galleryAutoSec;
+          if (!isNaN(n) && n >= 2 && n <= 60) {
+            mwvSetItem("common_galleryAutoSec", String(n));
+            setGalleryAutoSec(n);
+          }
+        }
       }
 
       // レイアウト別スペアナ設定
@@ -615,10 +1252,10 @@ const Home: NextPage = () => {
           if (layoutData && typeof layoutData === "object") {
             Object.keys(layoutData).forEach((mStr) => {
               const m = parseInt(mStr, 10);
-              if (!isNaN(m) && m >= 0 && m <= 6 && layoutData[mStr]) {
+              if (!isNaN(m) && m >= 0 && m <= 16 && layoutData[mStr]) {
                 const adj = layoutData[mStr];
                 if (adj && typeof adj.scaleX === "number" && typeof adj.scaleY === "number" && typeof adj.offsetX === "number" && typeof adj.offsetY === "number") {
-                  saveSettings(layout, m, adj);
+                  saveSettings(layout, m, clampModeAdjustments(adj as ModeAdjustments));
                 }
               }
             });
@@ -631,10 +1268,12 @@ const Home: NextPage = () => {
         const as = data.appSettings;
         if (as.targetLufs !== undefined) {
           if (as.targetLufs === null) {
+            mwvSetItem("common_targetLufs", TARGET_LUFS_NONE_COOKIE);
             setTargetLufs(null);
             setTargetLufsCustom("");
           } else {
             const v = Number(as.targetLufs);
+            mwvSetItem("common_targetLufs", String(v));
             setTargetLufs(v);
             setTargetLufsCustom(v === -14 || v === -15 ? "" : String(v));
           }
@@ -680,7 +1319,8 @@ const Home: NextPage = () => {
         }
       });
 
-      const loaded = loadSettings(activeCanvasLayout, mode);
+      const layoutForImportAdj = resolveCanvasLayout(effectiveCanvasSizeForAdj, imageCtx);
+      const loaded = loadSettings(layoutForImportAdj, mode);
       setModeAdjustments(loaded ?? DEFAULT_ADJUSTMENTS);
       return true;
     } catch (error) {
@@ -709,6 +1349,74 @@ const Home: NextPage = () => {
     setSnowColorInput(snowWeather.color.toUpperCase());
   }, [snowWeather.color]);
 
+  useEffect(() => {
+    setSpaceColorInput(spaceParticleColor.toUpperCase());
+  }, [spaceParticleColor]);
+
+  useEffect(() => {
+    setSparkleColorInput(sparkleParticleColor.toUpperCase());
+  }, [sparkleParticleColor]);
+
+  useEffect(() => {
+    setDustColorInput(dustParticleColor.toUpperCase());
+  }, [dustParticleColor]);
+
+  const galleryTransitionI18nKey = (mode: GalleryTransitionUserMode): string => {
+    const map: Record<GalleryTransitionUserMode, string> = {
+      none: "gallery.trNone",
+      random: "gallery.trRandom",
+      crossfade: "gallery.trCrossfade",
+      wipeLeft: "gallery.trWipeLeft",
+      wipeRight: "gallery.trWipeRight",
+      wipeUp: "gallery.trWipeUp",
+      wipeDown: "gallery.trWipeDown",
+      iris: "gallery.trIris",
+      slideLeft: "gallery.trSlideLeft",
+      slideRight: "gallery.trSlideRight",
+      slideUp: "gallery.trSlideUp",
+      slideDown: "gallery.trSlideDown",
+      zoomIn: "gallery.trZoomIn",
+      zoomOut: "gallery.trZoomOut",
+      checker: "gallery.trChecker",
+      venetian: "gallery.trVenetian",
+      diagonalWipe: "gallery.trDiagonalWipe",
+      flash: "gallery.trFlash",
+    };
+    return map[mode];
+  };
+
+  const paletteGridSx = {
+    display: "grid",
+    gridTemplateColumns: "repeat(10, 28px)",
+    gap: "6px",
+    justifyContent: "center",
+    mb: 1,
+  } as const;
+
+  const isLoudnessMode = (m: number) => m >= 8 && m <= 14;
+  const isReactiveVisualMode = (m: number) => (m >= 8 && m <= 14) || m === 15 || m === 16;
+  const getModeDescriptionKey = (m: number): string => {
+    const map: Record<number, string> = {
+      [-1]: "spectrum.descOff",
+      0: "spectrum.descFreqBar",
+      2: "spectrum.descCircle",
+      3: "spectrum.descSymBar",
+      4: "spectrum.descDot",
+      6: "spectrum.descGlyco",
+      7: "spectrum.descAreaFill",
+      8: "spectrum.descLoudnessPulse",
+      9: "spectrum.descVuMeter",
+      10: "spectrum.descPulseRing",
+      11: "spectrum.descCenterOrb",
+      12: "spectrum.descBreathingBg",
+      13: "spectrum.descParticleDensity",
+      14: "spectrum.descGeomMorph",
+      15: "spectrum.descOscilloscope",
+      16: "spectrum.descLissajous",
+    };
+    return map[m] ?? "spectrum.descOff";
+  };
+
   const onChangeMode = (event: SelectChangeEvent<string>) => {
     const newMode = Number(event.target.value);
     saveSettings(activeCanvasLayout, mode, modeAdjustments);
@@ -726,7 +1434,7 @@ const Home: NextPage = () => {
     setModeAdjustments(loaded ?? DEFAULT_ADJUSTMENTS);
   };
 
-  const getCanvasDimensions = (size: CanvasLayout): { width: number; height: number } => {
+  const getCanvasDimensions = useCallback((size: CanvasLayout): { width: number; height: number } => {
     switch (size) {
       case "1920x1080":
         return { width: 1920, height: 1080 };
@@ -737,19 +1445,356 @@ const Home: NextPage = () => {
       default:
         return { width: 1920, height: 1080 };
     }
-  };
+  }, []);
 
   // Canvas
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  // Canvas用ImageContext
-  const [imageCtx, setImageCtx] = useState<HTMLImageElement>(null);
-  const activeCanvasLayout = useMemo(
-    () => resolveCanvasLayout(canvasSize, imageCtx),
-    [canvasSize, imageCtx, resolveCanvasLayout]
+  const [imageGallery, setImageGallery] = useState<GalleryImageEntry[]>([]);
+  const [galleryIndex, setGalleryIndex] = useState(0);
+  const [galleryAutoEnabled, setGalleryAutoEnabled] = useState(false);
+  const [galleryAutoSec, setGalleryAutoSec] = useState(5);
+
+  /** 背景: なし / 静止画ギャラリー / 単体 MP4 動画 */
+  type BackgroundMediaMode = "none" | "stills" | "video";
+  const [backgroundMediaMode, setBackgroundMediaMode] = useState<BackgroundMediaMode>("none");
+  const [backgroundVideoFileName, setBackgroundVideoFileName] = useState("");
+  const [reuseAudioVideoForBackground, setReuseAudioVideoForBackground] = useState(false);
+  const [backgroundVideoLayoutCache, setBackgroundVideoLayoutCache] = useState<CanvasLayout | null>(null);
+  const [dialogClearGalleryForVideo, setDialogClearGalleryForVideo] = useState(false);
+  const pendingVideoBackgroundFileRef = useRef<File | null>(null);
+  const [videoBackgroundRepaintNonce, setVideoBackgroundRepaintNonce] = useState(0);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    mwvSetItem("common_galleryAutoEnabled", galleryAutoEnabled ? "1" : "0");
+  }, [galleryAutoEnabled]);
+
+  const galleryAutoTimerRef = useRef<number | null>(null);
+  const galleryAutoPrevLenRef = useRef(0);
+  const imageGalleryLenRef = useRef(0);
+  imageGalleryLenRef.current = imageGallery.length;
+
+  /** 2枚目以降を読み込んだタイミングでのみ自動切替をON。1枚以下に戻したらOFF（手動OFFは枚数が増えても維持） */
+  useEffect(() => {
+    const n = imageGallery.length;
+    const prev = galleryAutoPrevLenRef.current;
+    if (n >= 2 && prev < 2) {
+      setGalleryAutoEnabled(true);
+    } else if (n <= 1) {
+      setGalleryAutoEnabled(false);
+    }
+    galleryAutoPrevLenRef.current = n;
+  }, [imageGallery.length]);
+
+  const activeGalleryIndex =
+    imageGallery.length === 0 ? 0 : Math.min(galleryIndex, imageGallery.length - 1);
+  const imageCtx =
+    imageGallery.length === 0 ? null : imageGallery[activeGalleryIndex].img;
+  const imageFileName =
+    imageGallery.length === 0 ? "" : imageGallery[activeGalleryIndex].name;
+
+  const prevGalleryIndexForTransitionRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (imageGallery.length === 0) {
+      setGalleryIndex(0);
+      return;
+    }
+    setGalleryIndex((i) => Math.min(i, imageGallery.length - 1));
+  }, [imageGallery.length]);
+
+  useEffect(() => {
+    if (imageGallery.length <= 1) {
+      prevGalleryIndexForTransitionRef.current =
+        imageGallery.length === 0 ? null : activeGalleryIndex;
+      clearGalleryImageTransition();
+      return;
+    }
+    const prev = prevGalleryIndexForTransitionRef.current;
+    if (prev === null) {
+      prevGalleryIndexForTransitionRef.current = activeGalleryIndex;
+      return;
+    }
+    if (prev !== activeGalleryIndex) {
+      const from = imageGallery[prev]?.img;
+      const to = imageGallery[activeGalleryIndex]?.img;
+      if (from && to && galleryTransitionMode !== "none") {
+        let kind: (typeof GALLERY_TRANSITION_RANDOM_POOL)[number];
+        if (galleryTransitionMode === "random") {
+          kind =
+            GALLERY_TRANSITION_RANDOM_POOL[
+              Math.floor(Math.random() * GALLERY_TRANSITION_RANDOM_POOL.length)
+            ]!;
+        } else {
+          kind = galleryTransitionMode as (typeof GALLERY_TRANSITION_RANDOM_POOL)[number];
+        }
+        startGalleryImageTransition(from, to, kind);
+      }
+      prevGalleryIndexForTransitionRef.current = activeGalleryIndex;
+    }
+  }, [activeGalleryIndex, imageGallery, galleryTransitionMode]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    mwvSetItem("common_galleryAutoSec", String(galleryAutoSec));
+  }, [galleryAutoSec]);
+
+  useEffect(() => {
+    if (galleryAutoTimerRef.current != null) {
+      window.clearInterval(galleryAutoTimerRef.current);
+      galleryAutoTimerRef.current = null;
+    }
+    if (
+      !galleryAutoEnabled ||
+      imageGallery.length <= 1 ||
+      (!isPlaySound && !isRecording)
+    ) {
+      return;
+    }
+    const ms = Math.round(Math.max(2, Math.min(60, galleryAutoSec)) * 1000);
+    galleryAutoTimerRef.current = window.setInterval(() => {
+      setGalleryIndex((i) => {
+        const len = imageGalleryLenRef.current;
+        if (len <= 1) return i;
+        return (i + 1) % len;
+      });
+    }, ms);
+    return () => {
+      if (galleryAutoTimerRef.current != null) {
+        window.clearInterval(galleryAutoTimerRef.current);
+        galleryAutoTimerRef.current = null;
+      }
+    };
+  }, [
+    galleryAutoEnabled,
+    galleryAutoSec,
+    imageGallery.length,
+    isPlaySound,
+    isRecording,
+  ]);
+
+  const activeCanvasLayout = useMemo(() => {
+    if (canvasSize === "auto" && backgroundMediaMode === "video" && backgroundVideoLayoutCache) {
+      return backgroundVideoLayoutCache;
+    }
+    return resolveCanvasLayout(canvasSize, imageCtx);
+  }, [
+    canvasSize,
+    imageCtx,
+    backgroundMediaMode,
+    backgroundVideoLayoutCache,
+    resolveCanvasLayout,
+  ]);
+
+  const primeCanvasForVideoElement = useCallback(
+    (video: HTMLVideoElement) => {
+      if (!canvasRef.current) return;
+      const w = video.videoWidth || 1;
+      const h = video.videoHeight || 1;
+      const layout =
+        canvasSize === "auto" ? detectLayoutFromAspectRatio(w / h) : (canvasSize as CanvasLayout);
+      const dims = getCanvasDimensions(layout);
+      if (canvasRef.current.width !== dims.width || canvasRef.current.height !== dims.height) {
+        canvasRef.current.width = dims.width;
+        canvasRef.current.height = dims.height;
+      }
+      clearImageCache();
+      clearWebGLImageCache();
+      setBackgroundVideoLayoutCache(canvasSize === "auto" ? layout : null);
+      const immediateCtx = canvasRef.current.getContext("2d", { alpha: true });
+      if (immediateCtx) {
+        immediateCtx.fillStyle = "rgba(34, 34, 34, 1.0)";
+        immediateCtx.fillRect(0, 0, dims.width, dims.height);
+        const scale = Math.max(dims.width / w, dims.height / h);
+        const drawW = Math.round(w * scale);
+        const drawH = Math.round(h * scale);
+        const x = (dims.width - drawW) / 2;
+        const y = (dims.height - drawH) / 2;
+        immediateCtx.drawImage(video, 0, 0, w, h, x, y, drawW, drawH);
+      }
+    },
+    [canvasSize, getCanvasDimensions]
   );
 
-  // マウント後にlocalStorageから設定を読み込み（ハイドレーション一致のためクライアントのみ）
-  useEffect(() => {
+  const loadVideoAsAudioSource = useCallback(
+    (file: File, options?: { visualBackgroundSameElement?: boolean }) => {
+      disposeStandaloneBackgroundVideo();
+      setReuseAudioVideoForBackground(false);
+      setBackgroundVideoLayoutCache(null);
+      const g = gateVideoAsMediaFile(file);
+      if (snackbarFileGate(g, "video")) {
+        return;
+      }
+      const video = document.createElement("video");
+      video.preload = "auto";
+      video.crossOrigin = "anonymous";
+      video.src = URL.createObjectURL(file);
+      videoElementRef.current = video;
+
+      video.onloadedmetadata = () => {
+        try {
+          mediaElementSourceRef.current?.disconnect();
+          const source = audioCtxRef.current.createMediaElementSource(video);
+          mediaElementSourceRef.current = source;
+          source.connect(analyserRef.current);
+          analyserRef.current.connect(audioCtxRef.current.destination);
+          analyserRef.current.connect(streamDestinationRef.current);
+
+          video.onended = () => {
+            setIsPlaySound(false);
+            stopCanvas2DAnimation();
+            stopWebGLAnimation();
+          };
+
+          setPlaySoundDisabled(false);
+          setRecordMovieDisabled(false);
+          setAudioFileName(file.name);
+          exitConfirmRef.current = true;
+          if (options?.visualBackgroundSameElement) {
+            setImageGallery((prev) => {
+              prev.forEach((p) => URL.revokeObjectURL(p.objectUrl));
+              return [];
+            });
+            setGalleryIndex(0);
+            setReuseAudioVideoForBackground(true);
+            setBackgroundMediaMode("video");
+            setBackgroundVideoFileName(file.name);
+            const lay = detectLayoutFromAspectRatio(
+              (video.videoWidth || 1) / (video.videoHeight || 1)
+            );
+            setBackgroundVideoLayoutCache(canvasSize === "auto" ? lay : null);
+            primeCanvasForVideoElement(video);
+            if (canvasSize === "auto") {
+              const loaded = loadSettings(lay, mode);
+              setModeAdjustments(loaded ?? { scaleX: 1.0, scaleY: 1.0, offsetX: 0, offsetY: 0 });
+            }
+          } else {
+            setBackgroundMediaMode("none");
+            setBackgroundVideoFileName("");
+          }
+          setVideoBackgroundRepaintNonce((n) => n + 1);
+          openSnackBar(t("snackbar.videoAudioLoaded"));
+        } catch (error) {
+          openSnackBar(t("snackbar.videoAudioFailed", { error }));
+          videoElementRef.current = null;
+        }
+      };
+      video.onerror = () => {
+        openSnackBar(t("snackbar.videoLoadFailed"));
+        videoElementRef.current = null;
+      };
+    },
+    [
+      canvasSize,
+      disposeStandaloneBackgroundVideo,
+      loadSettings,
+      mode,
+      openSnackBar,
+      primeCanvasForVideoElement,
+      snackbarFileGate,
+      t,
+    ]
+  );
+
+  const applyBackgroundMp4File = useCallback(
+    (file: File) => {
+      const hasBuffer = decodedAudioBufferRef.current != null;
+      const av = videoElementRef.current;
+      const sameName = !!(av && audioFileName === file.name);
+
+      if (hasBuffer || (av && !sameName)) {
+        const g = gateVideoAsMediaFile(file);
+        if (snackbarFileGate(g, "video")) {
+          return;
+        }
+        disposeStandaloneBackgroundVideo();
+        const video = document.createElement("video");
+        video.preload = "auto";
+        video.crossOrigin = "anonymous";
+        video.src = URL.createObjectURL(file);
+        video.onloadedmetadata = () => {
+          try {
+            backgroundOnlyVideoRef.current = video;
+            setReuseAudioVideoForBackground(false);
+            setImageGallery((prev) => {
+              prev.forEach((p) => URL.revokeObjectURL(p.objectUrl));
+              return [];
+            });
+            setGalleryIndex(0);
+            setBackgroundMediaMode("video");
+            setBackgroundVideoFileName(file.name);
+            const lay = detectLayoutFromAspectRatio(
+              (video.videoWidth || 1) / (video.videoHeight || 1)
+            );
+            setBackgroundVideoLayoutCache(canvasSize === "auto" ? lay : null);
+            primeCanvasForVideoElement(video);
+            if (canvasSize === "auto") {
+              const loaded = loadSettings(lay, mode);
+              setModeAdjustments(loaded ?? { scaleX: 1.0, scaleY: 1.0, offsetX: 0, offsetY: 0 });
+            }
+            exitConfirmRef.current = true;
+            setVideoBackgroundRepaintNonce((n) => n + 1);
+            openSnackBar(t("snackbar.videoBackgroundLoaded"));
+          } catch (_e) {
+            openSnackBar(t("snackbar.videoLoadFailed"));
+          }
+        };
+        video.onerror = () => {
+          openSnackBar(t("snackbar.videoLoadFailed"));
+        };
+        return;
+      }
+
+      loadVideoAsAudioSource(file, { visualBackgroundSameElement: true });
+    },
+    [
+      audioFileName,
+      canvasSize,
+      disposeStandaloneBackgroundVideo,
+      loadSettings,
+      loadVideoAsAudioSource,
+      mode,
+      openSnackBar,
+      primeCanvasForVideoElement,
+      snackbarFileGate,
+      t,
+    ]
+  );
+
+  const spectrumVideoBackground = useMemo(() => {
+    void videoBackgroundRepaintNonce;
+    const el =
+      backgroundMediaMode === "video"
+        ? reuseAudioVideoForBackground
+          ? videoElementRef.current
+          : backgroundOnlyVideoRef.current
+        : null;
+    const clearTransparent =
+      backgroundMediaMode === "video" &&
+      el != null &&
+      (el.videoWidth === 0 || el.videoHeight === 0);
+    return {
+      backgroundVideo: el,
+      syncBackgroundVideo:
+        backgroundMediaMode === "video" && !reuseAudioVideoForBackground
+          ? syncBackgroundOnlyVideo
+          : undefined,
+      clearBackgroundTransparent: clearTransparent,
+    };
+  }, [
+    backgroundMediaMode,
+    reuseAudioVideoForBackground,
+    syncBackgroundOnlyVideo,
+    videoBackgroundRepaintNonce,
+  ]);
+
+  // マウント直後に Cookie から設定を読み込み（useLayoutEffect: 永続化用 useEffect より先に state を確定）
+  useLayoutEffect(() => {
+    const cookieScheme = getCookieValue(UI_SCHEME_COOKIE);
+    const initialScheme: "light" | "dark" = cookieScheme === "dark" ? "dark" : "light";
+    setUiScheme(initialScheme);
+    document.documentElement.classList.toggle("dark", initialScheme === "dark");
+
     const savedModeCookie = getCookieValue(MODE_COOKIE_KEY);
     let modeVal = savedModeCookie ? parseInt(savedModeCookie, 10) : 0;
     // UI 非表示のモード（折れ線=1・波形上下対称=5）は周波数バーへ
@@ -757,17 +1802,65 @@ const Home: NextPage = () => {
       modeVal = 0;
       setCookieValue(MODE_COOKIE_KEY, "0", 60 * 60 * 24 * 365);
     }
+    // 音圧系（8〜14）は UI 非表示のため周波数バーへ
+    if (modeVal >= 8 && modeVal <= 14) {
+      modeVal = 0;
+      setCookieValue(MODE_COOKIE_KEY, "0", 60 * 60 * 24 * 365);
+    }
     setMode(modeVal);
-    // リロード時の初期値は常に自動判定ON
-    setCanvasSize("auto");
 
-    const savedEffectType = localStorage.getItem("common_effectType");
+    const savedCanvas = mwvGetItem("common_canvasSize");
+    if (
+      savedCanvas === "auto" ||
+      savedCanvas === "1920x1080" ||
+      savedCanvas === "1080x1920" ||
+      savedCanvas === "1920x1920"
+    ) {
+      setCanvasSize(savedCanvas as CanvasSize);
+    }
+
+    const savedSettingsTab = mwvGetItem("common_settingsTab");
+    if (savedSettingsTab != null) {
+      const n = parseInt(savedSettingsTab, 10);
+      if (!isNaN(n) && n >= 0 && n <= 6) setSettingsTab(n);
+    }
+
+    const lwW = mwvGetItem("common_lineWidthWaveform");
+    if (lwW != null) {
+      const n = parseFloat(lwW);
+      if (!isNaN(n)) setLineWidthWaveform(Math.max(1, Math.min(8, n)));
+    }
+    const lwC = mwvGetItem("common_lineWidthCircle");
+    if (lwC != null) {
+      const n = parseFloat(lwC);
+      if (!isNaN(n)) setLineWidthCircle(Math.max(1, Math.min(8, n)));
+    }
+    const lwS = mwvGetItem("common_lineWidthSymWave");
+    if (lwS != null) {
+      const n = parseFloat(lwS);
+      if (!isNaN(n)) setLineWidthSymWave(Math.max(1, Math.min(8, n)));
+    }
+
+    const sop = mwvGetItem("common_shortOutputPreset");
+    if (sop === "all" || sop === "tiktok" || sop === "youtube" || sop === "niconico") {
+      setShortOutputPreset(sop as ShortOutputPreset);
+    }
+    const ssStart = mwvGetItem("common_shortStartSecStr");
+    if (ssStart != null) setShortStartSecStr(ssStart);
+    const sds = mwvGetItem("common_shortDurationSecStr");
+    if (sds != null) setShortDurationSecStr(sds);
+
+    const gae = mwvGetItem("common_galleryAutoEnabled");
+    if (gae === "0") setGalleryAutoEnabled(false);
+    else if (gae === "1") setGalleryAutoEnabled(true);
+
+    const savedEffectType = mwvGetItem("common_effectType");
     if (savedEffectType && VALID_SAVED_EFFECT_TYPES.includes(savedEffectType as EffectType)) {
       setEffectType(savedEffectType as EffectType);
     }
 
     try {
-      const savedDensities = localStorage.getItem("common_effectDensities");
+      const savedDensities = mwvGetItem("common_effectDensities");
       if (savedDensities) {
         const parsed = JSON.parse(savedDensities) as Partial<Record<EffectType, EffectDensity>>;
         const result = defaultEffectDensities();
@@ -778,34 +1871,222 @@ const Home: NextPage = () => {
       }
     } catch (_e) { /* ignore */ }
 
-    const savedGlyco = localStorage.getItem("common_glycoColorSet");
+    const savedGlyco = mwvGetItem("common_glycoColorSet");
     if (savedGlyco && (GLYCO_COLOR_SETS[savedGlyco] || GLYCO_GRADIENT_SETS[savedGlyco] || savedGlyco === "verticalEQ" || savedGlyco === "verticalEQFixed")) {
       setGlycoColorSet(savedGlyco);
     }
 
-    const savedOpacity = localStorage.getItem("common_spectrumOpacityPercent");
+    const savedOpacity = mwvGetItem("common_spectrumOpacityPercent");
     if (savedOpacity) {
       const n = parseInt(savedOpacity, 10);
       if (!isNaN(n) && n >= 0 && n <= 100) setSpectrumOpacityPercent(n);
     } else {
-      const oldOpacity = localStorage.getItem("common_spectrumOpacity");
+      const oldOpacity = mwvGetItem("common_spectrumOpacity");
       if (oldOpacity) {
         const o = parseFloat(oldOpacity);
         if (!isNaN(o) && o >= 0.1 && o <= 1) setSpectrumOpacityPercent(Math.round((1 - o) * 100));
       }
     }
 
-    // リロード時の初期値は YouTube 推奨（-14 LUFS）
-    setTargetLufs(-14);
-    setTargetLufsCustom("-14");
-
-    const savedRenderer = localStorage.getItem("common_rendererType");
-    if (savedRenderer === "canvas2d" || savedRenderer === "webgl") {
-      setRendererType(savedRenderer);
+    const savedSpectrumHex = mwvGetItem("common_spectrumColorHex");
+    if (savedSpectrumHex && /^#[0-9a-fA-F]{6}$/.test(savedSpectrumHex)) {
+      const u = savedSpectrumHex.toUpperCase();
+      setSpectrumColorHex(u);
+      setSpectrumColorInput(u);
+    } else {
+      const legacyPreset = mwvGetItem("common_spectrumColorPreset");
+      const legacyCustom = mwvGetItem("common_spectrumCustomHex");
+      const migrated = legacySpectrumPresetToHex(legacyPreset ?? undefined, legacyCustom ?? undefined);
+      setSpectrumColorHex(migrated);
+      setSpectrumColorInput(migrated);
+    }
+    const savedGalTransition = mwvGetItem("common_galleryTransitionMode");
+    if (savedGalTransition && isValidGalleryTransitionUserMode(savedGalTransition)) {
+      setGalleryTransitionMode(savedGalTransition as GalleryTransitionUserMode);
+    }
+    const savedSpaceC = mwvGetItem("common_spaceParticleColor");
+    if (savedSpaceC && /^#[0-9a-fA-F]{6}$/.test(savedSpaceC)) {
+      const u = savedSpaceC.toUpperCase();
+      setSpaceParticleColor(u);
+      setSpaceColorInput(u);
+    }
+    const savedSpaceDirection = mwvGetItem("common_spaceDirection");
+    if (savedSpaceDirection === "forward" || savedSpaceDirection === "backward") {
+      setSpaceDirection(savedSpaceDirection);
+    }
+    const savedSpaceSpeed = mwvGetItem("common_spaceSpeed");
+    if (savedSpaceSpeed != null) {
+      const n = parseFloat(savedSpaceSpeed);
+      if (!isNaN(n)) setSpaceSpeed(Math.max(0.2, Math.min(3, n)));
+    }
+    const savedSparkleC = mwvGetItem("common_sparkleParticleColor");
+    if (savedSparkleC && /^#[0-9a-fA-F]{6}$/.test(savedSparkleC)) {
+      const u = savedSparkleC.toUpperCase();
+      setSparkleParticleColor(u);
+      setSparkleColorInput(u);
+    }
+    const savedSparkleVariant = mwvGetItem("common_sparkleVariant");
+    if (savedSparkleVariant === "normal" || savedSparkleVariant === "heart" || savedSparkleVariant === "star") {
+      setSparkleVariant(savedSparkleVariant);
+    }
+    const savedDustC = mwvGetItem("common_dustParticleColor");
+    if (savedDustC && /^#[0-9a-fA-F]{6}$/.test(savedDustC)) {
+      const u = savedDustC.toUpperCase();
+      setDustParticleColor(u);
+      setDustColorInput(u);
+    }
+    const savedAtmosphereVariant = mwvGetItem("common_atmosphereVariant");
+    if (savedAtmosphereVariant === "dust" || savedAtmosphereVariant === "sparks" || savedAtmosphereVariant === "fireflies") {
+      setAtmosphereVariant(savedAtmosphereVariant);
+    }
+    const savedAtmosphereStrength = mwvGetItem("common_atmosphereStrength");
+    if (savedAtmosphereStrength != null) {
+      const n = parseInt(savedAtmosphereStrength, 10);
+      if (!isNaN(n)) setAtmosphereStrength(Math.max(1, Math.min(100, n)));
+    }
+    const savedRainbow = mwvGetItem("common_spectrumRainbowColorful");
+    if (savedRainbow === "0") setSpectrumRainbowColorful(false);
+    else if (savedRainbow === "1") setSpectrumRainbowColorful(true);
+    const savedCircleRotation = mwvGetItem("common_circleRotationRpm");
+    if (savedCircleRotation != null) {
+      if (savedCircleRotation === "off") {
+        setCircleRotationRpm(null);
+      } else {
+        const n = Number(savedCircleRotation);
+        if (!isNaN(n)) {
+          setCircleRotationRpm(Math.max(-10, Math.min(10, Math.round(n))));
+        }
+      }
     }
 
     try {
-      const rw = localStorage.getItem("common_rainWeather");
+      const savedLp = mwvGetItem("common_loudnessParamsByMode");
+      if (savedLp) {
+        const parsed = JSON.parse(savedLp) as Record<string, LoudnessParams>;
+        const next: Record<number, LoudnessParams> = {};
+        Object.keys(parsed).forEach((k) => {
+          const m = Number(k);
+          const v = parsed[k];
+          if (!isNaN(m) && v && typeof v === "object") {
+            const gain = Number(v.gain);
+            const gamma = Number(v.gamma);
+            const attack = Number(v.attack);
+            const release = Number(v.release);
+            if ([gain, gamma, attack, release].every((x) => !isNaN(x))) {
+              next[m] = {
+                gain: Math.max(0.1, Math.min(5, gain)),
+                gamma: Math.max(0.2, Math.min(3, gamma)),
+                attack: Math.max(0.01, Math.min(0.9, attack)),
+                release: Math.max(0.01, Math.min(0.9, release)),
+              };
+            }
+          }
+        });
+        setLoudnessParamsByMode(next);
+      }
+    } catch (_e) { /* ignore */ }
+    try {
+      const savedWmp = mwvGetItem("common_wmpTrailParamsByMode");
+      if (savedWmp) {
+        const parsed = JSON.parse(savedWmp) as Record<string, WmpTrailParams>;
+        const next: Record<number, WmpTrailParams> = {};
+        Object.keys(parsed).forEach((k) => {
+          const m = Number(k);
+          const v = parsed[k];
+          if (!isNaN(m) && v && typeof v === "object") {
+            const trailLength = Number(v.trailLength);
+            const trailDecay = Number(v.trailDecay);
+            const additive = Number(v.additive);
+            if ([trailLength, trailDecay, additive].every((x) => !isNaN(x))) {
+              next[m] = {
+                trailLength: Math.max(2, Math.min(24, Math.round(trailLength))),
+                trailDecay: Math.max(0.5, Math.min(0.99, trailDecay)),
+                additive: Math.max(0.2, Math.min(3, additive)),
+              };
+            }
+          }
+        });
+        setWmpTrailParamsByMode(next);
+      }
+    } catch (_e) { /* ignore */ }
+    const savedSubEnabled = mwvGetItem("common_subtitleEnabled");
+    if (savedSubEnabled === "0") setSubtitleEnabled(false);
+    else if (savedSubEnabled === "1") setSubtitleEnabled(true);
+    try {
+      const savedSubStyle = mwvGetItem("common_subtitleStyle");
+      if (savedSubStyle) {
+        const s = JSON.parse(savedSubStyle) as Partial<SubtitleStyle>;
+        setSubtitleStyle({
+          ...DEFAULT_SUBTITLE_STYLE,
+          ...s,
+          positionYPercent: Math.max(5, Math.min(98, Number(s.positionYPercent ?? DEFAULT_SUBTITLE_STYLE.positionYPercent))),
+          fontSize: Math.max(12, Math.min(96, Number(s.fontSize ?? DEFAULT_SUBTITLE_STYLE.fontSize))),
+          strokeWidth: Math.max(0, Math.min(12, Number(s.strokeWidth ?? DEFAULT_SUBTITLE_STYLE.strokeWidth))),
+          shadowBlur: Math.max(0, Math.min(30, Number(s.shadowBlur ?? DEFAULT_SUBTITLE_STYLE.shadowBlur))),
+          boxPadding: Math.max(0, Math.min(40, Number(s.boxPadding ?? DEFAULT_SUBTITLE_STYLE.boxPadding))),
+          animationDurationSec: Math.max(0, Math.min(1.5, Number(s.animationDurationSec ?? DEFAULT_SUBTITLE_STYLE.animationDurationSec))),
+        });
+      }
+    } catch (_e) { /* ignore */ }
+
+    const savedTitleEnabled = mwvGetItem("common_titleEnabled");
+    if (savedTitleEnabled === "0") setTitleEnabled(false);
+    else if (savedTitleEnabled === "1") setTitleEnabled(true);
+    try {
+      const savedTitleStyle = mwvGetItem("common_titleStyle");
+      if (savedTitleStyle) {
+        const s = JSON.parse(savedTitleStyle) as Partial<TitleStyle>;
+        setTitleStyle({
+          ...DEFAULT_TITLE_STYLE,
+          ...s,
+          positionYPercent: Math.max(5, Math.min(98, Number(s.positionYPercent ?? DEFAULT_TITLE_STYLE.positionYPercent))),
+          fontSize: Math.max(12, Math.min(200, Number(s.fontSize ?? DEFAULT_TITLE_STYLE.fontSize))),
+          strokeWidth: Math.max(0, Math.min(12, Number(s.strokeWidth ?? DEFAULT_TITLE_STYLE.strokeWidth))),
+          shadowBlur: Math.max(0, Math.min(40, Number(s.shadowBlur ?? DEFAULT_TITLE_STYLE.shadowBlur))),
+          boxPadding: Math.max(0, Math.min(40, Number(s.boxPadding ?? DEFAULT_TITLE_STYLE.boxPadding))),
+          animationDurationSec: Math.max(0, Math.min(1.5, Number(s.animationDurationSec ?? DEFAULT_TITLE_STYLE.animationDurationSec))),
+          letterSpacingPx: Math.max(0, Math.min(24, Number(s.letterSpacingPx ?? DEFAULT_TITLE_STYLE.letterSpacingPx))),
+        });
+      }
+    } catch (_e) { /* ignore */ }
+
+    const savedVidBr = mwvGetItem("common_recordVideoBitrateMbps");
+    if (savedVidBr) {
+      const n = parseFloat(savedVidBr);
+      if (!isNaN(n) && n >= 1 && n <= 40) setRecordVideoBitrateMbps(n);
+    }
+    const savedAudBr = mwvGetItem("common_exportAudioBitrateKbps");
+    if (savedAudBr === "128" || savedAudBr === "192" || savedAudBr === "256") {
+      setExportAudioBitrateKbps(Number(savedAudBr) as 128 | 192 | 256);
+    }
+
+    const rawTl = mwvGetItem("common_targetLufs");
+    if (rawTl === TARGET_LUFS_NONE_COOKIE) {
+      setTargetLufs(null);
+      setTargetLufsCustom("");
+    } else if (rawTl != null && rawTl !== "") {
+      const v = Number(rawTl);
+      if (!isNaN(v)) {
+        setTargetLufs(v);
+        setTargetLufsCustom(v === -14 || v === -15 ? "" : String(v));
+      }
+    } else {
+      setTargetLufs(-14);
+      setTargetLufsCustom("-14");
+    }
+
+    const savedGalSec = mwvGetItem("common_galleryAutoSec");
+    if (savedGalSec) {
+      const n = parseFloat(savedGalSec);
+      if (!isNaN(n) && n >= 2 && n <= 60) setGalleryAutoSec(n);
+    }
+
+    // 今後は Canvas2D 固定運用
+    mwvSetItem("common_rendererType", "canvas2d");
+    setRendererType("canvas2d");
+
+    try {
+      const rw = mwvGetItem("common_rainWeather");
       if (rw) {
         const p = JSON.parse(rw) as WeatherAdjust;
         if (
@@ -823,7 +2104,7 @@ const Home: NextPage = () => {
     } catch (_e) { /* ignore */ }
 
     try {
-      const sw = localStorage.getItem("common_snowWeather");
+      const sw = mwvGetItem("common_snowWeather");
       if (sw) {
         const p = JSON.parse(sw) as WeatherAdjust;
         if (
@@ -840,8 +2121,19 @@ const Home: NextPage = () => {
       }
     } catch (_e) { /* ignore */ }
 
-    const adj = loadSettings("1920x1080", modeVal);
+    // スペアナ表示調整はレイアウト×モード別に Cookie 保存。復元は保存済み canvasSize に合わせたレイアウトで行う（1920x1080 固定だと縦/正方形で常にズレる）
+    const canvasForAdj: CanvasSize =
+      savedCanvas === "auto" ||
+      savedCanvas === "1920x1080" ||
+      savedCanvas === "1080x1920" ||
+      savedCanvas === "1920x1920"
+        ? (savedCanvas as CanvasSize)
+        : "auto";
+    const layoutForAdj = resolveCanvasLayout(canvasForAdj, null);
+    const adj = loadSettings(layoutForAdj, modeVal);
     if (adj) setModeAdjustments(adj);
+
+    mwvRemoveItem("common_titleText");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -851,12 +2143,8 @@ const Home: NextPage = () => {
       const info = getGpuInfo();
       setGpuInfo(info);
 
-      const savedRenderer = localStorage.getItem("common_rendererType");
-      if (!savedRenderer && info.isWebGLSupported) {
-        const faster = await benchmarkRenderers();
-        setRendererType(faster);
-        localStorage.setItem("common_rendererType", faster);
-      }
+      mwvSetItem("common_rendererType", "canvas2d");
+      setRendererType("canvas2d");
 
       const webCodecsAvailable = isWebCodecsSupported();
       setWebCodecsSupported(webCodecsAvailable);
@@ -869,6 +2157,26 @@ const Home: NextPage = () => {
 
     initGpu();
   }, []);
+
+  useEffect(() => {
+    if (
+      rendererType === "webgl" &&
+      ((subtitleEnabled && subtitleCues.length > 0) || (titleEnabled && titleText.trim().length > 0))
+    ) {
+      setRendererType("canvas2d");
+      mwvSetItem("common_rendererType", "canvas2d");
+      openSnackBar(t("snackbar.subtitleCanvasFallback"));
+    }
+  }, [rendererType, subtitleEnabled, subtitleCues.length, titleEnabled, titleText, openSnackBar, t]);
+
+  useEffect(() => {
+    if (backgroundMediaMode !== "video" || rendererType !== "webgl") {
+      return;
+    }
+    setRendererType("canvas2d");
+    mwvSetItem("common_rendererType", "canvas2d");
+    openSnackBar(t("snackbar.videoBackgroundCanvasFallback"));
+  }, [backgroundMediaMode, rendererType, openSnackBar, t]);
 
   // Canvas サイズ設定（canvasSize または rendererType が変更されたときに実行）
   // useLayoutEffectを使用してDOM更新直後にサイズを設定
@@ -884,7 +2192,7 @@ const Home: NextPage = () => {
     // キャンバスサイズ変更時に画像キャッシュをクリア（両方のレンダラー）
     clearImageCache();
     clearWebGLImageCache();
-  }, [activeCanvasLayout, rendererType]);
+  }, [activeCanvasLayout, rendererType, getCanvasDimensions]);
 
   // Canvas Animation
   useEffect(() => {
@@ -902,11 +2210,29 @@ const Home: NextPage = () => {
     const isEffectActive = isPlaySound || isRecording;
     const spectrumSettings = {
       opacity: 1 - spectrumOpacityPercent / 100,
-      fps: spectrumFps,
       lineWidthWaveform,
       lineWidthCircle,
       lineWidthSymWave,
+      circleRotationRpm,
+      loudnessParams: loudnessParamsByMode[mode] ?? defaultLoudnessParamsRef.current,
+      wmpTrailParams: wmpTrailParamsByMode[mode] ?? defaultWmpTrailParamsForMode,
       glycoColorSet,
+      spectrumColorHex,
+      spectrumRainbowColorful,
+      subtitleOverlay: {
+        enabled: subtitleEnabled,
+        cues: subtitleCues,
+        getCurrentTimeSec: getCurrentPlaybackTimeSec,
+        style: subtitleStyle,
+      },
+      titleOverlay: {
+        enabled: titleEnabled,
+        text: titleText,
+        style: titleStyle,
+        isPlaying: isPlaySound || isRecording,
+        playbackTimeSec: getCurrentPlaybackTimeSec(),
+      },
+      ...spectrumVideoBackground,
     };
 
     if (rendererType === 'webgl') {
@@ -948,10 +2274,23 @@ const Home: NextPage = () => {
     isRecording,
     glycoColorSet,
     spectrumOpacityPercent,
-    spectrumFps,
     lineWidthWaveform,
     lineWidthCircle,
     lineWidthSymWave,
+    circleRotationRpm,
+    loudnessParamsByMode,
+    defaultWmpTrailParamsForMode,
+    wmpTrailParamsByMode,
+    spectrumColorHex,
+    spectrumRainbowColorful,
+    subtitleEnabled,
+    subtitleCues,
+    subtitleStyle,
+    titleEnabled,
+    titleText,
+    titleStyle,
+    getCurrentPlaybackTimeSec,
+    spectrumVideoBackground,
   ]);
 
   // FPS表示更新（1秒ごとに更新）
@@ -967,55 +2306,125 @@ const Home: NextPage = () => {
     return () => clearInterval(fpsInterval);
   }, [rendererType]);
 
-  // 画像読み込み処理（共通）
-  const loadImageFile = (file: File) => {
-    const gi = gateImageFile(file);
-    if (snackbarFileGate(gi, "image")) {
+  const primeCanvasForImage = (image: HTMLImageElement) => {
+    if (!canvasRef.current) return;
+    const resolvedLayout = resolveCanvasLayout(canvasSize, image);
+    const dims = getCanvasDimensions(resolvedLayout);
+    if (canvasRef.current.width !== dims.width || canvasRef.current.height !== dims.height) {
+      canvasRef.current.width = dims.width;
+      canvasRef.current.height = dims.height;
+    }
+    clearImageCache();
+    clearWebGLImageCache();
+    const immediateCtx = canvasRef.current.getContext("2d", { alpha: true });
+    if (immediateCtx) {
+      immediateCtx.fillStyle = "rgba(34, 34, 34, 1.0)";
+      immediateCtx.fillRect(0, 0, dims.width, dims.height);
+      const rawW = image.naturalWidth || image.width || 1;
+      const rawH = image.naturalHeight || image.height || 1;
+      const scale = Math.max(dims.width / rawW, dims.height / rawH);
+      const drawW = Math.round(rawW * scale);
+      const drawH = Math.round(rawH * scale);
+      const x = (dims.width - drawW) / 2;
+      const y = (dims.height - drawH) / 2;
+      immediateCtx.drawImage(image, 0, 0, rawW, rawH, x, y, drawW, drawH);
+    }
+  };
+
+  /** replaceAll: 一覧を差し替え（複数枚は先頭でキャンバス確定後に連結）。false: 空なら新規、既存があれば追加 */
+  const loadGalleryImagesFromFiles = (files: File[], replaceAll: boolean) => {
+    if (backgroundMediaMode === "video") {
+      openSnackBar(t("snackbar.stillsBlockedInVideoBg"));
       return;
     }
-    const image = new Image();
-    image.onload = () => {
-      if (!canvasRef.current) {
+    setBackgroundMediaMode("stills");
+    const valid: File[] = [];
+    for (const file of files) {
+      if (isVideoFileByName(file.name)) {
+        openSnackBar(t("snackbar.imageVideoNotAllowed"));
+        continue;
+      }
+      if (!isImageFileByName(file.name)) {
+        openSnackBar(t("snackbar.imageTypeNotSupported"));
+        continue;
+      }
+      const gi = gateImageFile(file);
+      if (snackbarFileGate(gi, "image")) continue;
+      valid.push(file);
+    }
+    if (valid.length === 0) return;
+
+    let idx = 0;
+    const loadNext = () => {
+      if (idx >= valid.length) {
+        if (valid.length > 1) {
+          openSnackBar(t("snackbar.imagesLoadedCount", { count: valid.length }));
+        } else {
+          openSnackBar(t("snackbar.imageLoaded"));
+        }
         return;
       }
-      // auto時は画像ロード完了時点で先に解像度を確定し、初期1フレームの崩れを防ぐ
-      const resolvedLayout = resolveCanvasLayout(canvasSize, image);
-      const dims = getCanvasDimensions(resolvedLayout);
-      if (canvasRef.current.width !== dims.width || canvasRef.current.height !== dims.height) {
-        canvasRef.current.width = dims.width;
-        canvasRef.current.height = dims.height;
-      }
-      clearImageCache();
-      clearWebGLImageCache();
-      // 読み込み直後の1フレームは即時に2Dで背景を確定表示して比率崩れを防ぐ
-      const immediateCtx = canvasRef.current.getContext("2d", { alpha: false });
-      if (immediateCtx) {
-        immediateCtx.fillStyle = "rgba(34, 34, 34, 1.0)";
-        immediateCtx.fillRect(0, 0, dims.width, dims.height);
-        const rawW = image.naturalWidth || image.width || 1;
-        const rawH = image.naturalHeight || image.height || 1;
-        const scale = Math.max(dims.width / rawW, dims.height / rawH);
-        const drawW = Math.round(rawW * scale);
-        const drawH = Math.round(rawH * scale);
-        const x = (dims.width - drawW) / 2;
-        const y = (dims.height - drawH) / 2;
-        immediateCtx.drawImage(image, 0, 0, rawW, rawH, x, y, drawW, drawH);
-      }
+      const file = valid[idx];
+      const image = new Image();
+      const objectUrl = URL.createObjectURL(file);
+      image.onload = () => {
+        if (!canvasRef.current) {
+          URL.revokeObjectURL(objectUrl);
+          idx++;
+          loadNext();
+          return;
+        }
+        const entry: GalleryImageEntry = { img: image, name: file.name, objectUrl };
 
-      setImageCtx(image);
-      setImageFileName(file.name);
-      if (canvasSize === "auto") {
-        const loaded = loadSettings(resolvedLayout, mode);
-        setModeAdjustments(loaded ?? DEFAULT_ADJUSTMENTS);
-      }
-      exitConfirmRef.current = true;
-      openSnackBar(t("snackbar.imageLoaded"));
+        if (replaceAll) {
+          if (idx === 0) {
+            primeCanvasForImage(image);
+            setImageGallery((prev) => {
+              prev.forEach((p) => URL.revokeObjectURL(p.objectUrl));
+              return [entry];
+            });
+            setGalleryIndex(0);
+            const resolvedLayout = resolveCanvasLayout(canvasSize, image);
+            if (canvasSize === "auto") {
+              const loaded = loadSettings(resolvedLayout, mode);
+              setModeAdjustments(loaded ?? DEFAULT_ADJUSTMENTS);
+            }
+          } else {
+            setImageGallery((prev) => [...prev, entry]);
+            setGalleryIndex(idx);
+          }
+        } else {
+          setImageGallery((prev) => {
+            if (prev.length === 0) {
+              primeCanvasForImage(image);
+              const resolvedLayout = resolveCanvasLayout(canvasSize, image);
+              if (canvasSize === "auto") {
+                const loaded = loadSettings(resolvedLayout, mode);
+                setModeAdjustments(loaded ?? DEFAULT_ADJUSTMENTS);
+              }
+              setGalleryIndex(0);
+              return [entry];
+            }
+            const next = [...prev, entry];
+            setGalleryIndex(next.length - 1);
+            return next;
+          });
+        }
+
+        exitConfirmRef.current = true;
+        idx++;
+        loadNext();
+      };
+      image.onerror = (e) => {
+        console.error("画像の読み込みに失敗しました:", e);
+        URL.revokeObjectURL(objectUrl);
+        openSnackBar(t("snackbar.imageLoadFailed"));
+        idx++;
+        loadNext();
+      };
+      image.src = objectUrl;
     };
-    image.onerror = (e) => {
-      console.error("画像の読み込みに失敗しました:", e);
-      openSnackBar(t("snackbar.imageLoadFailed"));
-    };
-    image.src = URL.createObjectURL(file);
+    loadNext();
   };
 
   // 音楽読み込み処理（共通）
@@ -1025,6 +2434,28 @@ const Home: NextPage = () => {
       return;
     }
     try {
+      disposeStandaloneBackgroundVideo();
+      if (videoElementRef.current) {
+        videoElementRef.current.onerror = null;
+        videoElementRef.current.onloadedmetadata = null;
+        videoElementRef.current.onended = null;
+        try {
+          videoElementRef.current.pause();
+        } catch {
+          /* ignore */
+        }
+        if (videoElementRef.current.src?.startsWith("blob:")) {
+          URL.revokeObjectURL(videoElementRef.current.src);
+        }
+        videoElementRef.current.src = "";
+        videoElementRef.current = null;
+      }
+      mediaElementSourceRef.current?.disconnect();
+      mediaElementSourceRef.current = null;
+      setReuseAudioVideoForBackground(false);
+      setBackgroundMediaMode("none");
+      setBackgroundVideoFileName("");
+      setBackgroundVideoLayoutCache(null);
       const arraybuffer = await file.arrayBuffer();
       decodedAudioBufferRef.current = await audioCtxRef.current.decodeAudioData(
         arraybuffer
@@ -1039,23 +2470,74 @@ const Home: NextPage = () => {
     }
   };
 
-  // 画像ボタンから読み込み
+  const loadSubtitleFile = async (file: File) => {
+    try {
+      const text = await file.text();
+      const cues = parseSrt(text);
+      if (cues.length === 0) {
+        openSnackBar(t("snackbar.subtitleParseFailed"));
+        return;
+      }
+      setSubtitleCues(cues);
+      setSubtitleFileName(file.name);
+      setSubtitleEnabled(true);
+      openSnackBar(t("snackbar.subtitleLoaded", { count: cues.length }));
+      if (rendererType === "webgl") {
+        setRendererType("canvas2d");
+        mwvSetItem("common_rendererType", "canvas2d");
+        openSnackBar(t("snackbar.subtitleCanvasFallback"));
+      }
+    } catch (_e) {
+      openSnackBar(t("snackbar.subtitleLoadFailed"));
+    }
+  };
+
+  // 画像ボタンから読み込み（複数選択で一括登録・差し替え）
   const imageLoad = (event: { target: HTMLInputElement }) => {
-    const file = event.target.files[0];
-    if (!file) {
-      return;
-    }
-    if (isVideoFileByName(file.name)) {
-      openSnackBar(t("snackbar.imageVideoNotAllowed"));
-      event.target.value = "";
-      return;
-    }
-    if (!isImageFileByName(file.name)) {
+    const raw = Array.from(event.target.files ?? []);
+    event.target.value = "";
+    if (raw.length === 0) return;
+
+    const videos = raw.filter((f) => isVideoFileByName(f.name));
+    const images = raw.filter((f) => isImageFileByName(f.name) && !isVideoFileByName(f.name));
+    if (raw.length !== videos.length + images.length) {
       openSnackBar(t("snackbar.imageTypeNotSupported"));
+      return;
+    }
+    if (videos.length > 0 && images.length > 0) {
+      openSnackBar(t("snackbar.mixedMp4AndImages"));
+      return;
+    }
+    if (videos.length > 1) {
+      openSnackBar(t("snackbar.multipleMp4NotAllowed"));
+      return;
+    }
+    if (videos.length === 1) {
+      const vf = videos[0]!;
+      const g = gateVideoAsMediaFile(vf);
+      if (snackbarFileGate(g, "video")) return;
+      if (imageGallery.length >= 2) {
+        pendingVideoBackgroundFileRef.current = vf;
+        setDialogClearGalleryForVideo(true);
+        return;
+      }
+      applyBackgroundMp4File(vf);
+      return;
+    }
+
+    loadGalleryImagesFromFiles(images, true);
+  };
+
+  const appendImageLoad = (event: { target: HTMLInputElement }) => {
+    if (backgroundMediaMode === "video") {
+      openSnackBar(t("snackbar.stillsBlockedInVideoBg"));
       event.target.value = "";
       return;
     }
-    loadImageFile(file);
+    const raw = Array.from(event.target.files ?? []);
+    if (raw.length === 0) return;
+    loadGalleryImagesFromFiles(raw, false);
+    event.target.value = "";
   };
 
   // 音楽ボタンから読み込み
@@ -1075,34 +2557,59 @@ const Home: NextPage = () => {
     }
   };
 
+  const subtitleLoad = async (event: { target: HTMLInputElement }) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      if (!isSrtFileByName(file.name)) {
+        openSnackBar(t("snackbar.subtitleTypeNotSupported"));
+        return;
+      }
+      await loadSubtitleFile(file);
+    } finally {
+      event.target.value = "";
+    }
+  };
+
   // ドラッグ&ドロップ処理
   const handleDrop = async (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     const files = Array.from(e.dataTransfer.files);
-    
+
     if (files.length === 0) {
       return;
     }
 
-    let imageFile: File | null = null;
-    let audioFile: File | null = null;
+    const imageFiles = files.filter((f) => isImageFileByName(f.name) && !isVideoFileByName(f.name));
+    const videoFiles = files.filter((f) => isVideoFileByName(f.name));
+    const mixedStillsAndVideo = imageFiles.length > 0 && videoFiles.length > 0;
+    if (mixedStillsAndVideo) {
+      openSnackBar(t("snackbar.mixedMp4AndImages"));
+    } else if (videoFiles.length > 1) {
+      openSnackBar(t("snackbar.multipleMp4NotAllowed"));
+    }
 
-    // ファイルを分類
+    let audioFile: File | null = null;
+    let subtitleFile: File | null = null;
+
     for (const file of files) {
-      if (isImageFileByName(file.name) && !imageFile) {
-        imageFile = file;
-      } else if (isAudioFileByName(file.name) && !audioFile) {
-        audioFile = file;
-      } else if (isVideoFileByName(file.name)) {
-        if (!audioFile) {
+      if (isSrtFileByName(file.name) && !subtitleFile) {
+        subtitleFile = file;
+      } else if (!mixedStillsAndVideo && videoFiles.length <= 1) {
+        if (isVideoFileByName(file.name) && !audioFile) {
+          audioFile = file;
+        } else if (isAudioFileByName(file.name) && !isVideoFileByName(file.name) && !audioFile) {
+          audioFile = file;
+        }
+      } else if (mixedStillsAndVideo || videoFiles.length > 1) {
+        if (isAudioFileByName(file.name) && !isVideoFileByName(file.name) && !audioFile) {
           audioFile = file;
         }
       }
     }
 
-    // 画像ファイルを読み込み
-    if (imageFile) {
-      loadImageFile(imageFile);
+    if (!mixedStillsAndVideo && imageFiles.length > 0) {
+      loadGalleryImagesFromFiles(imageFiles, true);
     }
 
     if (audioFile) {
@@ -1111,6 +2618,9 @@ const Home: NextPage = () => {
       } else {
         await loadAudioFile(audioFile);
       }
+    }
+    if (subtitleFile) {
+      await loadSubtitleFile(subtitleFile);
     }
   };
 
@@ -1138,7 +2648,6 @@ const Home: NextPage = () => {
     if (!(mediaDur > 0)) {
       return { full: true };
     }
-    const maxPlat = getShortPlatformMaxSec(shortOutputPreset);
     let start = parseFloat(shortStartSecStr.replace(",", "."));
     if (!Number.isFinite(start)) {
       start = 0;
@@ -1146,12 +2655,12 @@ const Home: NextPage = () => {
     const durationParsed = parseFloat(shortDurationSecStr.replace(",", "."));
     let duration: number;
     if (!shortDurationSecStr.trim() || !Number.isFinite(durationParsed)) {
-      duration = Math.min(maxPlat, Math.max(0, mediaDur - start));
+      duration = Math.max(0, mediaDur - start);
     } else {
       duration = durationParsed;
     }
     start = Math.max(0, Math.min(start, mediaDur));
-    duration = Math.max(0, Math.min(duration, maxPlat, mediaDur - start));
+    duration = Math.max(0, Math.min(duration, mediaDur - start));
     return { full: false, start, duration };
   }, [shortOutputPreset, shortStartSecStr, shortDurationSecStr, getMediaDurationSec]);
 
@@ -1162,6 +2671,262 @@ const Home: NextPage = () => {
     }
   }, []);
 
+  const getAuthoringTimeSec = useCallback((): number => {
+    if (isPlaySound || isRecording) {
+      return getCurrentPlaybackTimeSec();
+    }
+    const v = videoElementRef.current;
+    if (v && Number.isFinite(v.currentTime)) {
+      return Math.max(0, v.currentTime);
+    }
+    return NaN;
+  }, [isPlaySound, isRecording, getCurrentPlaybackTimeSec]);
+
+  const pushSrtAuthorUndoSnapshot = useCallback(() => {
+    srtAuthorUndoRef.current.push({
+      cues: JSON.parse(JSON.stringify(srtAuthorCuesRef.current)) as SubtitleCue[],
+      lineIdx: srtAuthorLineIndexRef.current,
+      phase: srtAuthorPhaseRef.current,
+    });
+    if (srtAuthorUndoRef.current.length > 48) {
+      srtAuthorUndoRef.current.shift();
+    }
+  }, []);
+
+  const popSrtAuthorUndoSnapshot = useCallback(() => {
+    const p = srtAuthorUndoRef.current.pop();
+    if (!p) return false;
+    setSrtAuthorCues(p.cues);
+    setSrtAuthorLineIndex(p.lineIdx);
+    setSrtAuthorPhase(p.phase);
+    return true;
+  }, []);
+
+  const srtAuthorReflectLyrics = useCallback(() => {
+    const mediaDur = getMediaDurationSec();
+    if (!(mediaDur > 0)) {
+      openSnackBar(t("snackbar.subtitleAuthorNeedAudio"));
+      return;
+    }
+    const lines = parseLyricsLinesFromSuno(srtAuthorLyricsRaw);
+    if (lines.length === 0) {
+      openSnackBar(t("snackbar.subtitleAuthorNoLyrics"));
+      return;
+    }
+    pushSrtAuthorUndoSnapshot();
+    const win = getPlaybackWindowBounds(resolvePlaybackWindow(), mediaDur);
+    const cues = evenSplitCuesInWindow(lines, win);
+    setSrtAuthorCues(cues);
+    setSrtAuthorLineIndex(0);
+    setSrtAuthorPhase("wait_start");
+    openSnackBar(t("snackbar.subtitleAuthorReflectDone", { count: cues.length }));
+  }, [
+    getMediaDurationSec,
+    openSnackBar,
+    pushSrtAuthorUndoSnapshot,
+    resolvePlaybackWindow,
+    srtAuthorLyricsRaw,
+    t,
+  ]);
+
+  const srtAuthorEvenSplitAgain = useCallback(() => {
+    const mediaDur = getMediaDurationSec();
+    if (!(mediaDur > 0)) {
+      openSnackBar(t("snackbar.subtitleAuthorNeedAudio"));
+      return;
+    }
+    if (srtAuthorCuesRef.current.length === 0) {
+      openSnackBar(t("snackbar.subtitleAuthorNoCues"));
+      return;
+    }
+    pushSrtAuthorUndoSnapshot();
+    const win = getPlaybackWindowBounds(resolvePlaybackWindow(), mediaDur);
+    const texts = srtAuthorCuesRef.current.map((c) => c.text);
+    setSrtAuthorCues(evenSplitCuesInWindow(texts, win));
+    setSrtAuthorLineIndex(0);
+    setSrtAuthorPhase("wait_start");
+    openSnackBar(t("snackbar.subtitleAuthorEvenSplitDone"));
+  }, [getMediaDurationSec, openSnackBar, pushSrtAuthorUndoSnapshot, resolvePlaybackWindow, t]);
+
+  const srtAuthorMarkStart = useCallback(() => {
+    if (!(isPlaySound || isRecording)) {
+      openSnackBar(t("snackbar.subtitleAuthorMarkWhilePlaying"));
+      return;
+    }
+    if (srtAuthorPhaseRef.current !== "wait_start") {
+      return;
+    }
+    const idx = srtAuthorLineIndexRef.current;
+    const cues = srtAuthorCuesRef.current;
+    if (idx >= cues.length) {
+      return;
+    }
+    const tsec = getAuthoringTimeSec();
+    if (!Number.isFinite(tsec)) {
+      openSnackBar(t("snackbar.subtitleAuthorMarkWhilePlaying"));
+      return;
+    }
+    pushSrtAuthorUndoSnapshot();
+    setSrtAuthorCues((prev) => {
+      const next = [...prev];
+      const cur = next[idx];
+      if (!cur) return prev;
+      const endMin = tsec + 0.05;
+      next[idx] = {
+        ...cur,
+        startSec: tsec,
+        endSec: cur.endSec > endMin ? cur.endSec : endMin,
+      };
+      return next;
+    });
+    setSrtAuthorPhase("inside_line");
+  }, [getAuthoringTimeSec, isPlaySound, isRecording, openSnackBar, pushSrtAuthorUndoSnapshot, t]);
+
+  const srtAuthorMarkEnd = useCallback(() => {
+    if (!(isPlaySound || isRecording)) {
+      openSnackBar(t("snackbar.subtitleAuthorMarkWhilePlaying"));
+      return;
+    }
+    if (srtAuthorPhaseRef.current !== "inside_line") {
+      return;
+    }
+    const idx = srtAuthorLineIndexRef.current;
+    const cues = srtAuthorCuesRef.current;
+    if (idx >= cues.length) {
+      return;
+    }
+    const tsec = getAuthoringTimeSec();
+    if (!Number.isFinite(tsec)) {
+      openSnackBar(t("snackbar.subtitleAuthorMarkWhilePlaying"));
+      return;
+    }
+    pushSrtAuthorUndoSnapshot();
+    setSrtAuthorCues((prev) => {
+      const next = [...prev];
+      const cur = next[idx];
+      if (!cur) return prev;
+      const endSec = Math.max(tsec, cur.startSec + 0.05);
+      next[idx] = { ...cur, endSec };
+      return next;
+    });
+    const nextIdx = idx + 1;
+    if (nextIdx >= cues.length) {
+      setSrtAuthorLineIndex(nextIdx);
+      setSrtAuthorPhase("wait_start");
+      setSrtAuthorRecordActive(false);
+      openSnackBar(t("snackbar.subtitleAuthorRecordComplete"));
+    } else {
+      setSrtAuthorLineIndex(nextIdx);
+      setSrtAuthorPhase("wait_start");
+    }
+  }, [getAuthoringTimeSec, isPlaySound, isRecording, openSnackBar, pushSrtAuthorUndoSnapshot, t]);
+
+  const srtAuthorUndoLast = useCallback(() => {
+    if (popSrtAuthorUndoSnapshot()) {
+      openSnackBar(t("snackbar.subtitleAuthorUndo"));
+    }
+  }, [openSnackBar, popSrtAuthorUndoSnapshot, t]);
+
+  const srtAuthorExportSrt = useCallback(() => {
+    const shifted = shiftCuesBySeconds(srtAuthorCuesRef.current, srtAuthorGlobalOffsetMs / 1000);
+    const body = formatSrtFromCues(shifted);
+    if (!body.trim()) {
+      openSnackBar(t("snackbar.subtitleAuthorExportEmpty"));
+      return;
+    }
+    const blob = new Blob([body], { type: "text/plain;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "subtitles.srt";
+    a.click();
+    URL.revokeObjectURL(a.href);
+    openSnackBar(t("snackbar.subtitleAuthorExported"));
+  }, [openSnackBar, srtAuthorGlobalOffsetMs, t]);
+
+  const srtAuthorApplyToPreview = useCallback(() => {
+    const shifted = shiftCuesBySeconds(srtAuthorCuesRef.current, srtAuthorGlobalOffsetMs / 1000);
+    const body = formatSrtFromCues(shifted);
+    if (!body.trim()) {
+      openSnackBar(t("snackbar.subtitleAuthorExportEmpty"));
+      return;
+    }
+    const cues = parseSrt(body);
+    if (cues.length === 0) {
+      openSnackBar(t("snackbar.subtitleParseFailed"));
+      return;
+    }
+    setSubtitleCues(cues);
+    setSubtitleFileName("authored.srt");
+    setSubtitleEnabled(true);
+    openSnackBar(t("snackbar.subtitleAuthorApplied", { count: cues.length }));
+    if (rendererType === "webgl") {
+      setRendererType("canvas2d");
+      mwvSetItem("common_rendererType", "canvas2d");
+      openSnackBar(t("snackbar.subtitleCanvasFallback"));
+    }
+  }, [openSnackBar, rendererType, srtAuthorGlobalOffsetMs, t]);
+
+  const lyricsTxtLoad = useCallback(
+    async (event: { target: HTMLInputElement }) => {
+      const file = event.target.files?.[0];
+      if (!file) return;
+      try {
+        if (!isLyricsTextFileByName(file.name)) {
+          openSnackBar(t("snackbar.subtitleAuthorTxtOnly"));
+          return;
+        }
+        const text = await file.text();
+        setSrtAuthorLyricsRaw(text);
+        openSnackBar(t("snackbar.subtitleAuthorTxtLoaded"));
+      } catch {
+        openSnackBar(t("snackbar.subtitleAuthorTxtFailed"));
+      } finally {
+        event.target.value = "";
+      }
+    },
+    [openSnackBar, t]
+  );
+
+  useEffect(() => {
+    if (!ENABLE_SRT_AUTHOR_UI || !srtAuthorRecordActive) {
+      return;
+    }
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.code !== "Space" && e.key !== " ") {
+        return;
+      }
+      const el = e.target as HTMLElement | null;
+      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable)) {
+        return;
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      if (srtAuthorPhaseRef.current === "wait_start") {
+        srtAuthorMarkStart();
+      }
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.code !== "Space" && e.key !== " ") {
+        return;
+      }
+      const el = e.target as HTMLElement | null;
+      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable)) {
+        return;
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      if (srtAuthorPhaseRef.current === "inside_line") {
+        srtAuthorMarkEnd();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    window.addEventListener("keyup", onKeyUp, true);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown, true);
+      window.removeEventListener("keyup", onKeyUp, true);
+    };
+  }, [srtAuthorRecordActive, srtAuthorMarkStart, srtAuthorMarkEnd]);
+
   const setupAudioSourceForPlayback = (clip: ResolvedClip) => {
     if (videoElementRef.current) {
       const video = videoElementRef.current;
@@ -1169,10 +2934,19 @@ const Home: NextPage = () => {
         video.pause();
       }
       if (clip.full === false) {
-        video.currentTime = clip.start;
+        const target = clip.start;
+        // 毎回 currentTime を書き換えると先頭付近で微小な停止が出る端末がある
+        if (!Number.isFinite(video.currentTime) || Math.abs(video.currentTime - target) > 0.05) {
+          video.currentTime = target;
+        }
+        audioPlaybackOffsetSecRef.current = target;
       } else {
-        video.currentTime = 0;
+        if (!Number.isFinite(video.currentTime) || Math.abs(video.currentTime) > 0.05) {
+          video.currentTime = 0;
+        }
+        audioPlaybackOffsetSecRef.current = 0;
       }
+      audioPlaybackStartCtxTimeRef.current = null;
       return;
     }
     if (!decodedAudioBufferRef.current) {
@@ -1182,6 +2956,7 @@ const Home: NextPage = () => {
     audioBufferSourceNode.buffer = decodedAudioBufferRef.current;
     audioBufferSourceNode.loop = false;
     audioBufferSourceNode.onended = () => {
+      audioPlaybackStartCtxTimeRef.current = null;
       setIsPlaySound(false);
       stopCanvas2DAnimation();
       stopWebGLAnimation();
@@ -1190,6 +2965,7 @@ const Home: NextPage = () => {
     analyserRef.current.connect(audioCtxRef.current.destination);
     analyserRef.current.connect(streamDestinationRef.current);
     audioBufferSrcRef.current = audioBufferSourceNode;
+    audioPlaybackOffsetSecRef.current = clip.full === false ? clip.start : 0;
   };
 
   const finishVideoWindowPlayback = useCallback(() => {
@@ -1200,6 +2976,7 @@ const Home: NextPage = () => {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
       mediaRecorderRef.current.stop();
     }
+    audioPlaybackStartCtxTimeRef.current = null;
     setIsPlaySound(false);
     stopCanvas2DAnimation();
     stopWebGLAnimation();
@@ -1208,7 +2985,19 @@ const Home: NextPage = () => {
   // PlaySoundEvent
   const onPlaySound = () => {
     if (isPlaySound) {
+      mwvMilestone("preview: 停止（再生オフ）", {
+        hadRecorder: Boolean(mediaRecorderRef.current),
+        recorderState: mediaRecorderRef.current?.state,
+      });
       clearPlaybackWindowTimer();
+      // MediaRecorder を先に止めて partial WebM の stop イベントを発火させる
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
+        try {
+          mediaRecorderRef.current.stop();
+        } catch {
+          /* ignore */
+        }
+      }
       if (audioBufferSrcRef.current) {
         try {
           audioBufferSrcRef.current.stop(0);
@@ -1219,6 +3008,7 @@ const Home: NextPage = () => {
       if (videoElementRef.current) {
         videoElementRef.current.pause();
       }
+      audioPlaybackStartCtxTimeRef.current = null;
       stopCanvas2DAnimation();
       stopWebGLAnimation();
       setIsPlaySound(false);
@@ -1229,9 +3019,15 @@ const Home: NextPage = () => {
       openSnackBar(t("snackbar.shortClipInvalid"));
       return;
     }
+    mwvLog("preview: 再生開始", {
+      clipFull: clip.full,
+      duration: clip.full === false ? clip.duration : "full",
+      hasVideo: Boolean(videoElementRef.current),
+    });
     setupAudioSourceForPlayback(clip);
 
     if (videoElementRef.current) {
+      audioPlaybackStartCtxTimeRef.current = null;
       videoElementRef.current.play().then(() => {
         if (clip.full === false && clip.duration > 0) {
           clearPlaybackWindowTimer();
@@ -1243,6 +3039,7 @@ const Home: NextPage = () => {
         }
       });
     } else if (audioBufferSrcRef.current) {
+      audioPlaybackStartCtxTimeRef.current = audioCtxRef.current.currentTime;
       if (clip.full === false) {
         audioBufferSrcRef.current.start(0, clip.start, clip.duration);
       } else {
@@ -1258,47 +3055,13 @@ const Home: NextPage = () => {
       openSnackBar(t("snackbar.canvasNotReady"));
       return;
     }
-    
-    // 録画開始フラグを先に設定
-    setIsRecording(true);
-    
-    // キャンバスアニメーションを確実に開始（前回ストップで停止している場合に備える）
-    const effect = effectForCanvas;
-    const spectrumSettings = {
-      opacity: 1 - spectrumOpacityPercent / 100,
-      fps: spectrumFps,
-      lineWidthWaveform,
-      lineWidthCircle,
-      lineWidthSymWave,
-      glycoColorSet,
-    };
-    if (canvasRef.current && analyserRef.current) {
-      if (rendererType === "webgl") {
-        drawBarsWebGL(
-          canvasRef.current,
-          imageCtx,
-          mode,
-          analyserRef.current,
-          modeAdjustments,
-          effect,
-          true,  // 録画開始時はエフェクトを有効
-          spectrumSettings
-        );
-      } else {
-        drawBars(
-          canvasRef.current,
-          imageCtx,
-          mode,
-          analyserRef.current,
-          modeAdjustments,
-          effect,
-          true,  // 録画開始時はエフェクトを有効
-          spectrumSettings
-        );
-      }
-    }
-    
-    // 録画用canvasのアニメーションが開始されるまで少し待つ
+    mwvMilestone("record: 動画生成クリック", {
+      hasVideo: Boolean(videoElementRef.current),
+      rendererType,
+      mode,
+      spectrumOpacityPercent,
+    });
+    // 録画セットアップ（MediaRecorder初期化）
     setTimeout(() => {
       const audioStream = streamDestinationRef.current.stream;
       const canvasStream = canvasRef.current.captureStream();
@@ -1308,89 +3071,333 @@ const Home: NextPage = () => {
           outputStream.addTrack(track);
         });
       });
-      //ストリームからMediaRecorderを生成
-      const recorder = new MediaRecorder(outputStream, {
+      const videoBps = Math.round(recordVideoBitrateMbps * 1_000_000);
+      const recorderOptions: MediaRecorderOptions = {
         mimeType: "video/webm;codecs=h264",
-      });
+      };
+      if (videoBps >= 1_000_000 && videoBps <= 80_000_000) {
+        recorderOptions.videoBitsPerSecond = videoBps;
+      }
+      let recorder: MediaRecorder;
+      try {
+        recorder = new MediaRecorder(outputStream, recorderOptions);
+      } catch {
+        recorder = new MediaRecorder(outputStream, { mimeType: "video/webm" });
+      }
       const recordedBlobs: Blob[] = [];
       recorder.addEventListener("dataavailable", (e) => {
         recordedBlobs.push(e.data);
       });
+      const safeStopRecorder = () => {
+        if (recorder.state !== "recording") {
+          mwvLog("record: safeStopRecorder skipped (not recording)", { state: recorder.state });
+          return;
+        }
+        mwvLog("record: safeStopRecorder (requestData + delayed stop)");
+        try {
+          recorder.requestData();
+        } catch {
+          /* ignore */
+        }
+        // 末尾チャンクの flush を待って stop（即 stop だと終端が欠ける環境がある）
+        window.setTimeout(() => {
+          if (recorder.state === "recording") {
+            try {
+              recorder.stop();
+            } catch {
+              /* ignore */
+            }
+          }
+        }, 140);
+      };
       //録画終了時に動画ファイルのダウンロードリンクを生成する処理
       recorder.addEventListener("stop", async () => {
+        const recordedMimeType =
+          recorder.mimeType && recorder.mimeType.length > 0 ? recorder.mimeType : "video/webm";
         mediaRecorderRef.current = null;
         setIsRecording(false);
         const movieName = "movie_" + Math.random().toString(36).slice(-8);
+        const downloadMp4Name = buildDownloadMp4Name(audioFileName, movieName);
         const webmName = movieName + ".webm";
         const mp4Name = movieName + ".mp4";
+        const webmBlob = new Blob(recordedBlobs, { type: recordedMimeType });
+        mwvMilestone("record: MediaRecorder stop", {
+          chunkCount: recordedBlobs.length,
+          webmBytes: webmBlob.size,
+          mimeType: recordedMimeType,
+        });
 
         try {
           setEncodeStatus("loading");
           setEncodeProgress(0);
-          const webmBlob = new Blob(recordedBlobs, { type: "video/webm" });
           const binaryData = new Uint8Array(await webmBlob.arrayBuffer());
-          const video = await generateMp4Video(binaryData, webmName, mp4Name, {
-            onLoadStart: () => setEncodeStatus("loading"),
-            onLoadComplete: () => {
-              setEncodeStatus("converting");
-              setEncodeProgress(0);
+          mwvMilestone("record: ffmpeg へ渡す直前", { bufferBytes: binaryData.byteLength });
+          const video = await generateMp4Video(
+            binaryData,
+            webmName,
+            mp4Name,
+            {
+              onLoadStart: () => setEncodeStatus("loading"),
+              onLoadComplete: () => {
+                setEncodeStatus("converting");
+                setEncodeProgress(0);
+              },
+              onProgress: (ratio) => {
+                if (!Number.isFinite(ratio)) return;
+                const pct = Math.max(0, Math.min(100, Math.round(ratio * 100)));
+                setEncodeProgress(pct);
+              },
             },
-            onProgress: (ratio) => setEncodeProgress(Math.round(ratio * 100)),
-          }, targetLufs);
+            targetLufs,
+            exportAudioBitrateKbps
+          );
+          if (!video || video.length === 0) {
+            throw new Error("empty_mp4");
+          }
+
           setEncodeStatus("idle");
           const mp4Blob = new Blob([video], { type: "video/mp4" });
           const objectURL = URL.createObjectURL(mp4Blob);
 
           const a = document.createElement("a");
           a.href = objectURL;
-          a.download = mp4Name;
+          a.download = downloadMp4Name;
           a.click();
           a.remove();
           exitConfirmRef.current = false;
           openSnackBar(t("snackbar.convertComplete"));
         } catch (error) {
-          openSnackBar(t("snackbar.convertFailed", { error: (error as Error).message }));
+          const msg = (error as Error).message || "unknown_error";
+          mwvError("record: MP4 変換エラー", error);
+          openSnackBar(t("snackbar.convertFailed", { error: msg }));
           setEncodeStatus("idle");
         } finally {
           setRecordMovieDisabled(false);
         }
       });
-      mediaRecorderRef.current = recorder;
-      recorder.start();
-      openSnackBar(t("snackbar.recording"));
-      onPlaySound();
-      setRecordMovieDisabled(true);
-
       const clip = resolvePlaybackWindow();
+      if (clip.full === false && clip.duration <= 0) {
+        setIsRecording(false);
+        setRecordMovieDisabled(false);
+        openSnackBar(t("snackbar.shortClipInvalid"));
+        return;
+      }
 
       // 再生終了時の処理（音声はスライス再生時も onended で区間終了）
       if (videoElementRef.current) {
         if (clip.full !== false) {
           const originalOnEnded = videoElementRef.current.onended;
           videoElementRef.current.onended = () => {
+            mwvMilestone("record: 背景動画再生終了（録画停止へ）");
             if (originalOnEnded) {
               originalOnEnded.call(videoElementRef.current);
             }
-            recorder.stop();
+            safeStopRecorder();
             setIsRecording(false);
             setIsPlaySound(false);
           };
         }
         // ショート区間の動画は onPlaySound 内のタイマーで停止・recorder.stop
-      } else if (audioBufferSrcRef.current) {
-        audioBufferSrcRef.current.onended = () => {
-          recorder.stop();
-          setIsRecording(false);
-          setIsPlaySound(false);
-        };
+      }
+      // 静止画＋音声のみ: setupAudioSourceForPlayback は onPlaySound 内で実行されるため、
+      // ここ（再生前）に onended を付けても旧ノード／null に当たり、録画が終わらない不具合になる。
+      // 録画終了ハンドラは onPlaySound 直後に audioBufferSrcRef へ差し込む（下の else 分岐）。
+
+      const startRecorder = () => {
+        if (recorder.state !== "inactive") return;
+        setIsRecording(true);
+        mediaRecorderRef.current = recorder;
+        recorder.start();
+        mwvMilestone("record: MediaRecorder.start", {
+          mimeType: recorder.mimeType,
+          state: recorder.state,
+        });
+        openSnackBar(t("snackbar.recording"));
+        setRecordMovieDisabled(true);
+      };
+
+      // MP4入力時のみ、recorder.start の負荷が再生中に入ると瞬断しやすい。
+      // 先に recorder を起動してから再生を始め、瞬断を再生中に発生させない。
+      if (videoElementRef.current) {
+        startRecorder();
+        window.setTimeout(() => {
+          onPlaySound();
+        }, 120);
+      } else {
+        onPlaySound();
+        if (audioBufferSrcRef.current) {
+          const node = audioBufferSrcRef.current;
+          const priorOnEnded = node.onended;
+          node.onended = (ev: Event) => {
+            mwvMilestone("record: 音声再生終了（録画停止へ）");
+            try {
+              if (typeof priorOnEnded === "function") {
+                priorOnEnded.call(node, ev);
+              }
+            } catch {
+              /* ignore */
+            }
+            safeStopRecorder();
+            setIsRecording(false);
+            setIsPlaySound(false);
+          };
+        } else {
+          mwvError("record: 音声のみ録画だが audioBufferSrcRef が無い（onPlaySound 後）");
+        }
+        window.setTimeout(startRecorder, 80);
       }
     }, 100); // 100ms待機して録画用canvasのアニメーション開始を保証
+  };
+
+  const onQuickEncodeMovie = async () => {
+    if (!decodedAudioBufferRef.current && !videoElementRef.current) {
+      openSnackBar("音声ファイルが読み込まれていません");
+      return;
+    }
+    if (videoElementRef.current) {
+      openSnackBar("動画ファイルの高速生成は現在サポートされていません");
+      return;
+    }
+    const audioBuffer = decodedAudioBufferRef.current;
+    if (!audioBuffer) {
+      openSnackBar("音声データが読み込まれていません");
+      return;
+    }
+
+    quickEncodeCancelRef.current = false;
+    setIsQuickEncoding(true);
+    setQuickEncodingProgress({
+      stage: "analyzing",
+      progress: 0,
+      message: "音声データを解析中...",
+    });
+
+    try {
+      const analysisResult = await analyzeAudioRealtime(
+        audioBuffer,
+        60,
+        2048,
+        (progress) => {
+          if (!quickEncodeCancelRef.current) {
+            setQuickEncodingProgress(progress);
+          }
+        },
+        () => quickEncodeCancelRef.current || quickEncoderRef.current?.isCancelled() || false
+      );
+
+      if (quickEncodeCancelRef.current) {
+        throw new Error("Cancelled");
+      }
+
+      const { width, height } = getCanvasDimensions(activeCanvasLayout);
+      const encoderConfig: QuickEncoderConfig = {
+        width,
+        height,
+        frameRate: 60,
+        bitrate: Math.round(recordVideoBitrateMbps * 1_000_000),
+        mode,
+        adjustments: modeAdjustments,
+        backgroundImage: imageCtx,
+        rendererType,
+      };
+
+      const encoder = new QuickVideoEncoder(encoderConfig, (progress) => {
+        if (!quickEncodeCancelRef.current) {
+          setQuickEncodingProgress(progress);
+        }
+      });
+      quickEncoderRef.current = encoder;
+
+      const webmBlob = await encoder.encodeWithCanvas2D(analysisResult, imageCtx);
+      if (quickEncodeCancelRef.current || encoder.isCancelled()) {
+        throw new Error("Cancelled");
+      }
+
+      const movieBase = "movie_quick_" + Math.random().toString(36).slice(-8);
+      const downloadMp4Name = buildDownloadMp4Name(audioFileName, movieBase);
+      const webmName = movieBase + ".webm";
+      const mp4Name = movieBase + ".mp4";
+      const binaryData = new Uint8Array(await webmBlob.arrayBuffer());
+
+      const video = await generateMp4Video(
+        binaryData,
+        webmName,
+        mp4Name,
+        {
+          onLoadStart: () =>
+            setQuickEncodingProgress({
+              stage: "finalizing",
+              progress: 72,
+              message: t("encode.loadingFfmpeg"),
+            }),
+          onLoadComplete: () =>
+            setQuickEncodingProgress({
+              stage: "finalizing",
+              progress: 78,
+              message: t("encode.converting", { progress: 78 }),
+            }),
+          onProgress: (ratio) => {
+            if (!Number.isFinite(ratio)) return;
+            const pct = 78 + Math.round(Math.max(0, Math.min(1, ratio)) * 22);
+            setQuickEncodingProgress({
+              stage: "finalizing",
+              progress: pct,
+              message: t("encode.converting", { progress: pct }),
+            });
+          },
+        },
+        targetLufs,
+        exportAudioBitrateKbps
+      );
+
+      if (!video || video.length === 0) {
+        throw new Error("empty_mp4");
+      }
+
+      const mp4Blob = new Blob([video], { type: "video/mp4" });
+      const objectURL = URL.createObjectURL(mp4Blob);
+      const a = document.createElement("a");
+      a.href = objectURL;
+      a.download = downloadMp4Name;
+      a.click();
+      a.remove();
+      openSnackBar("動画の高速生成が完了しました");
+    } catch (error) {
+      if (error instanceof Error && error.message === "Cancelled") {
+        openSnackBar("高速生成をキャンセルしました");
+      } else {
+        mwvError("quick-encode error", error);
+        openSnackBar("動画の高速生成に失敗しました");
+      }
+    } finally {
+      quickEncodeCancelRef.current = false;
+      quickEncoderRef.current = null;
+      setIsQuickEncoding(false);
+      setQuickEncodingProgress(null);
+    }
+  };
+
+  const onCancelQuickEncode = () => {
+    quickEncodeCancelRef.current = true;
+    quickEncoderRef.current?.cancel();
+    openSnackBar("高速生成をキャンセルしています...");
   };
 
   // クリア（ページロード時の状態に戻す）
   const onClear = () => {
     clearPlaybackWindowTimer();
     mediaRecorderRef.current = null;
+    quickEncodeCancelRef.current = true;
+    quickEncoderRef.current?.cancel();
+    quickEncoderRef.current = null;
+    setIsQuickEncoding(false);
+    setQuickEncodingProgress(null);
+    disposeStandaloneBackgroundVideo();
+    setBackgroundMediaMode("none");
+    setBackgroundVideoFileName("");
+    setReuseAudioVideoForBackground(false);
+    setBackgroundVideoLayoutCache(null);
+    setVideoBackgroundRepaintNonce((n) => n + 1);
     // 再生停止
     if (audioBufferSrcRef.current) {
       try {
@@ -1399,6 +3406,9 @@ const Home: NextPage = () => {
       audioBufferSrcRef.current = null;
     }
     if (videoElementRef.current) {
+      videoElementRef.current.onerror = null;
+      videoElementRef.current.onloadedmetadata = null;
+      videoElementRef.current.onended = null;
       videoElementRef.current.pause();
       if (videoElementRef.current.src?.startsWith("blob:")) {
         URL.revokeObjectURL(videoElementRef.current.src);
@@ -1412,7 +3422,7 @@ const Home: NextPage = () => {
     stopCanvas2DAnimation();
     stopWebGLAnimation();
     if (canvasRef.current) {
-      const ctx = canvasRef.current.getContext("2d");
+      const ctx = canvasRef.current.getContext("2d", { alpha: true });
       if (ctx) {
         ctx.fillStyle = "rgba(34, 34, 34, 1.0)";
         ctx.fillRect(0, 0, canvasRef.current.width, canvasRef.current.height);
@@ -1420,12 +3430,19 @@ const Home: NextPage = () => {
     }
     clearImageCache();
     clearWebGLImageCache();
-    if (imageCtx?.src?.startsWith("blob:")) {
-      URL.revokeObjectURL(imageCtx.src);
-    }
-    setImageCtx(null);
-    setImageFileName("");
+    setImageGallery((prev) => {
+      prev.forEach((p) => URL.revokeObjectURL(p.objectUrl));
+      return [];
+    });
+    setGalleryIndex(0);
     setAudioFileName("");
+    setSubtitleFileName("");
+    setSubtitleCues([]);
+    setSubtitleEnabled(true);
+    setSubtitleStyle(DEFAULT_SUBTITLE_STYLE);
+    setTitleText("");
+    setTitleEnabled(true);
+    setTitleStyle(DEFAULT_TITLE_STYLE);
     decodedAudioBufferRef.current = null;
     setIsPlaySound(false);
     setPlaySoundDisabled(true);
@@ -1450,14 +3467,32 @@ const Home: NextPage = () => {
     setSnowWeather(DEFAULT_SNOW_WEATHER);
     setTargetLufs(-14);
     setTargetLufsCustom("-14");
+    setSpectrumColorHex("#FFFFFF");
+    setSpectrumColorInput("#FFFFFF");
+    setGalleryTransitionMode("crossfade");
+    setSpaceParticleColor(DEFAULT_SPACE_PARTICLE);
+    setSparkleParticleColor(DEFAULT_SPARKLE_PARTICLE);
+    setDustParticleColor(DEFAULT_DUST_PARTICLE);
+    setSpaceDirection("forward");
+    setSpaceSpeed(1);
+    setSparkleVariant("normal");
+    setAtmosphereVariant("dust");
+    setAtmosphereStrength(45);
+    setSpaceColorInput(DEFAULT_SPACE_PARTICLE.toUpperCase());
+    setSparkleColorInput(DEFAULT_SPARKLE_PARTICLE.toUpperCase());
+    setDustColorInput(DEFAULT_DUST_PARTICLE.toUpperCase());
+    setSpectrumRainbowColorful(true);
+    setRecordVideoBitrateMbps(8);
+    setExportAudioBitrateKbps(192);
     exitConfirmRef.current = false;
     openSnackBar(t("snackbar.cleared"));
   };
 
   return (
-    <>
-      <div style={{ maxWidth: 900, margin: "0 auto", padding: "0 12px", boxSizing: "border-box" }}>
-      <main>
+    <ThemeProvider theme={muiTheme}>
+      <>
+      <div className="mx-auto box-border w-full max-w-[900px] px-3 pb-8 pt-4 text-slate-900 md:px-4 md:pt-8 dark:text-slate-100">
+      <main className="space-y-5 md:space-y-6">
         {/* 録画・変換中の注意喚起（スクロール追随）。プログレスバーはその直下に表示 */}
         {(isRecording || encodeStatus !== "idle") && (
           <Box
@@ -1497,8 +3532,13 @@ const Home: NextPage = () => {
                 <Typography variant="body2" sx={{ mb: 0.5 }}>
                   {encodeStatus === "loading"
                     ? t("encode.loadingFfmpeg")
-                    : t("encode.converting", { progress: encodeProgress })}
+                    : t("encode.converting", { progress: Math.round(encodeProgress) })}
                 </Typography>
+                {encodeStatus === "converting" && (
+                  <Typography variant="caption" sx={{ display: "block", mb: 0.75, opacity: 0.92 }}>
+                    {t("encode.convertingHint")}
+                  </Typography>
+                )}
                 <LinearProgress
                   variant={encodeStatus === "loading" ? "indeterminate" : "determinate"}
                   value={encodeProgress}
@@ -1515,7 +3555,32 @@ const Home: NextPage = () => {
             )}
           </Box>
         )}
-        <div className={styles.heading}>
+        <div
+          className={`${styles.heading} relative rounded-2xl border border-slate-200/70 bg-white/80 shadow-md backdrop-blur-sm dark:border-slate-600/50 dark:bg-slate-900/85 dark:shadow-lg`}
+        >
+          <Tooltip
+            title={uiScheme === "light" ? t("theme.toggleToDark") : t("theme.toggleToLight")}
+            arrow
+          >
+            <IconButton
+              type="button"
+              size="small"
+              onClick={toggleUiScheme}
+              aria-label={uiScheme === "light" ? t("theme.toggleToDark") : t("theme.toggleToLight")}
+              sx={{
+                position: "absolute",
+                top: 4,
+                right: 6,
+                zIndex: 2,
+              }}
+            >
+              {uiScheme === "light" ? (
+                <Lightbulb sx={{ color: "#f59e0b" }} fontSize="small" />
+              ) : (
+                <LightbulbOutlined sx={{ color: "#94a3b8" }} fontSize="small" />
+              )}
+            </IconButton>
+          </Tooltip>
           <h1 className={styles.heading__title}>{t("heading.title")}</h1>
           <div className={styles.heading__text}>
             <p>{t("heading.description")}</p>
@@ -1532,7 +3597,7 @@ const Home: NextPage = () => {
         </div>
 
         <div
-          className={styles.dropZone}
+          className={`${styles.dropZone} rounded-2xl border border-slate-200/80 bg-white/85 p-4 shadow-sm backdrop-blur-sm md:p-5 dark:border-slate-600/50 dark:bg-slate-900/75 dark:shadow-md`}
           onDrop={handleDrop}
           onDragOver={handleDragOver}
         >
@@ -1540,44 +3605,153 @@ const Home: NextPage = () => {
             {t("dropZone.hint")}
           </Typography>
           <Box sx={{ display: "flex", flexDirection: "column", gap: 0.75, alignItems: "stretch" }}>
-            <Box sx={{ display: "flex", gap: 1.5, alignItems: "center", justifyContent: "center", width: "100%" }}>
+            <Box
+              sx={{
+                display: "flex",
+                gap: 1.5,
+                alignItems: "center",
+                justifyContent: "center",
+                width: "100%",
+                flexWrap: "wrap",
+              }}
+            >
               <Button
                 variant="outlined"
                 component="label"
                 startIcon={<PhotoLibrary />}
                 size="medium"
-                sx={{ flexShrink: 0, minWidth: 210 }}
+                disabled={isQuickEncoding || isRecording || isPlaySound}
+                sx={{ flexShrink: 0, minWidth: 200 }}
               >
                 {t("dropZone.selectImage")}
                 <input
                   type="file"
-                  accept="image/*"
+                  accept="image/*,video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov"
+                  multiple
                   onChange={imageLoad}
                   hidden
                 />
               </Button>
-              <Typography 
-                variant="body2" 
-                color="textSecondary" 
-                sx={{ 
-                  minWidth: 200,
+              <Button variant="outlined" component="label" size="medium" sx={{ flexShrink: 0, minWidth: 130 }}>
+                {t("dropZone.addImage")}
+                <input type="file" accept="image/*" multiple onChange={appendImageLoad} hidden />
+              </Button>
+              <Typography
+                variant="body2"
+                color="textSecondary"
+                sx={{
+                  minWidth: 160,
                   maxWidth: "100%",
-                  overflow: "hidden", 
-                  textOverflow: "ellipsis", 
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
                   whiteSpace: "nowrap",
                   flex: 1,
-                  textAlign: "left"
+                  textAlign: "left",
                 }}
               >
-                {imageFileName || t("dropZone.unselected")}
+                {imageGallery.length === 0
+                  ? t("dropZone.unselected")
+                  : imageGallery.length === 1
+                    ? imageFileName
+                    : t("gallery.currentName", { name: imageFileName, total: imageGallery.length })}
               </Typography>
             </Box>
+            {imageGallery.length > 0 && (
+              <>
+                <Box
+                  sx={{
+                    display: "flex",
+                    flexWrap: "wrap",
+                    gap: 1,
+                    alignItems: "center",
+                    justifyContent: "center",
+                    width: "100%",
+                  }}
+                >
+                  <IconButton
+                    size="small"
+                    disabled={imageGallery.length <= 1}
+                    onClick={() =>
+                      setGalleryIndex(
+                        (i) => (i - 1 + imageGallery.length) % imageGallery.length
+                      )
+                    }
+                    aria-label="gallery-prev"
+                  >
+                    <NavigateBefore />
+                  </IconButton>
+                  <Typography variant="caption" color="textSecondary">
+                    {t("gallery.counter", {
+                      current: activeGalleryIndex + 1,
+                      total: imageGallery.length,
+                    })}
+                  </Typography>
+                  <IconButton
+                    size="small"
+                    disabled={imageGallery.length <= 1}
+                    onClick={() =>
+                      setGalleryIndex((i) => (i + 1) % imageGallery.length)
+                    }
+                    aria-label="gallery-next"
+                  >
+                    <NavigateNext />
+                  </IconButton>
+                  <FormControlLabel
+                    control={
+                      <Switch
+                        size="small"
+                        checked={galleryAutoEnabled}
+                        onChange={(_, c) => setGalleryAutoEnabled(c)}
+                        disabled={imageGallery.length <= 1}
+                      />
+                    }
+                    label={t("gallery.autoSwitch")}
+                    sx={{ ml: 0.5 }}
+                  />
+                  <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, minWidth: 140 }}>
+                    <Typography variant="caption" color="textSecondary" sx={{ whiteSpace: "nowrap" }}>
+                      {t("gallery.autoInterval", { sec: galleryAutoSec })}
+                    </Typography>
+                    <Slider
+                      size="small"
+                      value={galleryAutoSec}
+                      min={2}
+                      max={30}
+                      step={1}
+                      disabled={imageGallery.length <= 1 || !galleryAutoEnabled}
+                      onChange={(_, v) => setGalleryAutoSec(v as number)}
+                      sx={{ width: 100 }}
+                    />
+                  </Box>
+                </Box>
+                {imageGallery.length > 1 && (
+                  <FormControl size="small" sx={{ width: "100%", maxWidth: 440, mt: 1.5, mx: "auto" }}>
+                    <InputLabel id="gallery-transition-label">{t("gallery.imageTransition")}</InputLabel>
+                    <Select
+                      labelId="gallery-transition-label"
+                      value={galleryTransitionMode}
+                      label={t("gallery.imageTransition")}
+                      onChange={(e) =>
+                        setGalleryTransitionMode(e.target.value as GalleryTransitionUserMode)
+                      }
+                    >
+                      {GALLERY_TRANSITION_SELECT_OPTIONS.map((m) => (
+                        <MenuItem key={m} value={m}>
+                          {t(galleryTransitionI18nKey(m))}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                )}
+              </>
+            )}
             <Box sx={{ display: "flex", gap: 1.5, alignItems: "center", justifyContent: "center", width: "100%" }}>
               <Button
                 variant="outlined"
                 component="label"
                 startIcon={<LibraryMusic />}
                 size="medium"
+                disabled={isQuickEncoding || isRecording || isPlaySound}
                 sx={{ flexShrink: 0, minWidth: 210 }}
               >
                 {t("dropZone.selectAudio")}
@@ -1610,7 +3784,7 @@ const Home: NextPage = () => {
           </Typography>
         </div>
 
-        <div className={styles.menu}>
+        <div className={`${styles.menu} rounded-2xl border border-slate-200/80 bg-white/90 shadow-sm backdrop-blur-sm dark:border-slate-600/50 dark:bg-slate-900/80 dark:shadow-md`}>
           <Box sx={{ borderBottom: 1, borderColor: "divider", width: "100%" }}>
             <Tabs
               value={settingsTab}
@@ -1621,6 +3795,8 @@ const Home: NextPage = () => {
             >
               <Tab label={t("tabs.spectrum")} />
               <Tab label={t("tabs.effects")} />
+              <Tab label={t("tabs.title")} />
+              <Tab label={t("tabs.subtitle")} />
               <Tab label={t("tabs.audio")} />
               <Tab label={t("tabs.clipLength")} />
               <Tab label={t("tabs.settings")} />
@@ -1632,23 +3808,28 @@ const Home: NextPage = () => {
                 <Typography variant="body2" sx={{ mb: 1, textAlign: "center", fontWeight: 500 }}>
                   {t("spectrum.title")}
                 </Typography>
+                <Typography variant="caption" color="textSecondary" sx={{ display: "block", mb: 0.5, textAlign: "center" }}>
+                  {t("spectrum.groupFrequency")}
+                </Typography>
                 <Box sx={{ display: "flex", gap: 1, justifyContent: "center", flexWrap: "wrap", mb: 2 }}>
                   {[
-                    { value: -1, label: t("spectrum.off") },
-                    { value: 0, label: t("spectrum.freqBar") },
-                    { value: 2, label: t("spectrum.circle") },
-                    { value: 3, label: t("spectrum.symBar") },
-                    { value: 4, label: t("spectrum.dot") },
-                    { value: 6, label: t("spectrum.glyco") },
+                    { value: -1, label: t("spectrum.shortOff") },
+                    { value: 0, label: t("spectrum.shortFreqBar") },
+                    { value: 2, label: t("spectrum.shortCircle") },
+                    { value: 3, label: t("spectrum.shortSymBar") },
+                    { value: 4, label: t("spectrum.shortDot") },
+                    { value: 7, label: t("spectrum.shortAreaFill") },
+                    { value: 6, label: t("spectrum.shortGlyco") },
                   ].map((item) => (
-                    <Button
-                      key={item.value}
-                      variant={mode === item.value ? "contained" : "outlined"}
-                      onClick={() => onChangeMode({ target: { value: item.value.toString() } } as SelectChangeEvent<string>)}
-                      size="small"
-                    >
-                      {item.label}
-                    </Button>
+                    <Tooltip key={item.value} title={t(getModeDescriptionKey(item.value))} arrow>
+                      <Button
+                        variant={mode === item.value ? "contained" : "outlined"}
+                        onClick={() => onChangeMode({ target: { value: item.value.toString() } } as SelectChangeEvent<string>)}
+                        size="small"
+                      >
+                        {item.label}
+                      </Button>
+                    </Tooltip>
                   ))}
                 </Box>
                 <Accordion sx={{ mt: 2 }}>
@@ -1671,16 +3852,72 @@ const Home: NextPage = () => {
                         onChange={(_, v) => setSpectrumOpacityPercent(v as number)}
                       />
                     </Box>
-                    <Box sx={{ mb: 2 }}>
-                      <Typography gutterBottom>{t("displayVolume.fps", { value: spectrumFps })}</Typography>
-                      <Slider
-                        value={spectrumFps}
-                        min={1}
-                        max={60}
-                        step={1}
-                        onChange={(_, v) => setSpectrumFps(v as number)}
-                      />
+                    <Divider sx={{ my: 2 }} />
+                    <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600 }}>
+                      {t("spectrumWave.title")}
+                    </Typography>
+                    <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 0.5 }}>
+                      {t("effect.weatherColor")}
+                    </Typography>
+                    <Box sx={paletteGridSx}>
+                      {DEFAULT_COLOR_PALETTE_20.map((c) => (
+                        <Box
+                          key={`spec-${c}`}
+                          component="button"
+                          type="button"
+                          aria-label={`${t("spectrumWave.title")} ${c}`}
+                          onClick={() => {
+                            const u = c.toUpperCase();
+                            setSpectrumColorHex(u);
+                            setSpectrumColorInput(u);
+                          }}
+                          sx={{
+                            width: 28,
+                            height: 28,
+                            borderRadius: 0.75,
+                            border:
+                              spectrumColorHex.toUpperCase() === c.toUpperCase()
+                                ? "2px solid #111"
+                                : "1px solid #999",
+                            backgroundColor: c,
+                            cursor: "pointer",
+                            p: 0,
+                          }}
+                        />
+                      ))}
                     </Box>
+                    <TextField
+                      size="small"
+                      fullWidth
+                      label={t("effect.weatherColorCode")}
+                      value={spectrumColorInput}
+                      onChange={(e) => {
+                        const next = normalizeHexColorInput(e.target.value);
+                        setSpectrumColorInput(next);
+                        if (isHexColorCode(next)) {
+                          setSpectrumColorHex(next);
+                        }
+                      }}
+                      error={spectrumColorInput.length > 0 && !isHexColorCode(spectrumColorInput)}
+                      helperText={
+                        spectrumColorInput.length > 0 && !isHexColorCode(spectrumColorInput)
+                          ? t("effect.weatherColorCodeInvalid")
+                          : " "
+                      }
+                      inputProps={{ inputMode: "text", pattern: "#?[0-9a-fA-F]{6}" }}
+                      sx={{ mb: 2 }}
+                    />
+                    <FormControlLabel
+                      control={
+                        <Switch
+                          checked={spectrumRainbowColorful}
+                          onChange={(_, c) => setSpectrumRainbowColorful(c)}
+                          size="small"
+                        />
+                      }
+                      label={t("spectrumWave.rainbowSymDot")}
+                      sx={{ mb: 2, display: "flex", alignItems: "center" }}
+                    />
                     {mode === 1 && (
                       <Box sx={{ mb: 3 }}>
                         <Typography gutterBottom>{t("displayVolume.lineWidthWaveform", { value: lineWidthWaveform.toFixed(1) })}</Typography>
@@ -1695,6 +3932,35 @@ const Home: NextPage = () => {
                     )}
                     {mode === 2 && (
                       <Box sx={{ mb: 3 }}>
+                        <Typography gutterBottom>
+                          {t("displayVolume.circleRotation", {
+                            value:
+                              circleRotationRpm == null
+                                ? t("spectrum.off")
+                                : `${circleRotationRpm} rpm`,
+                          })}
+                        </Typography>
+                        <FormControl size="small" fullWidth sx={{ mb: 2 }}>
+                          <Select
+                            value={circleRotationRpm == null ? "off" : String(circleRotationRpm)}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              if (v === "off") {
+                                setCircleRotationRpm(null);
+                              } else {
+                                const n = Number(v);
+                                setCircleRotationRpm(isNaN(n) ? 0 : Math.max(-10, Math.min(10, Math.round(n))));
+                              }
+                            }}
+                          >
+                            <MenuItem value="off">{t("spectrum.off")}</MenuItem>
+                            {Array.from({ length: 21 }, (_, idx) => idx - 10).map((rpm) => (
+                              <MenuItem key={rpm} value={String(rpm)}>
+                                {rpm}
+                              </MenuItem>
+                            ))}
+                          </Select>
+                        </FormControl>
                         <Typography gutterBottom>{t("displayVolume.lineWidthCircle", { value: lineWidthCircle.toFixed(1) })}</Typography>
                         <Slider
                           value={lineWidthCircle}
@@ -1702,6 +3968,179 @@ const Home: NextPage = () => {
                           max={8}
                           step={0.1}
                           onChange={(_, v) => setLineWidthCircle(v as number)}
+                        />
+                      </Box>
+                    )}
+                    {isReactiveVisualMode(mode) && (
+                      <Box sx={{ mb: 3 }}>
+                        <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600 }}>
+                          {t("displayVolume.loudnessTuning")}
+                        </Typography>
+                        <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap", mb: 1 }}>
+                          {(["natural", "strong", "edm"] as const).map((k) => (
+                            <Button
+                              key={k}
+                              size="small"
+                              variant="outlined"
+                              onClick={() =>
+                                setLoudnessParamsByMode((prev) => ({ ...prev, [mode]: { ...LOUDNESS_PRESETS[k] } }))
+                              }
+                            >
+                              {t(`displayVolume.preset${k === "natural" ? "Natural" : k === "strong" ? "Strong" : "Edm"}`)}
+                            </Button>
+                          ))}
+                        </Box>
+                        <Typography gutterBottom>
+                          {t("displayVolume.loudnessGain", {
+                            value: (loudnessParamsByMode[mode]?.gain ?? DEFAULT_LOUDNESS_PARAMS.gain).toFixed(2),
+                          })}
+                        </Typography>
+                        <Slider
+                          value={loudnessParamsByMode[mode]?.gain ?? DEFAULT_LOUDNESS_PARAMS.gain}
+                          min={0.1}
+                          max={5}
+                          step={0.05}
+                          onChange={(_, v) =>
+                            setLoudnessParamsByMode((prev) => ({
+                              ...prev,
+                              [mode]: { ...(prev[mode] ?? DEFAULT_LOUDNESS_PARAMS), gain: v as number },
+                            }))
+                          }
+                        />
+                        <Typography gutterBottom sx={{ mt: 2 }}>
+                          {t("displayVolume.loudnessGamma", {
+                            value: (loudnessParamsByMode[mode]?.gamma ?? DEFAULT_LOUDNESS_PARAMS.gamma).toFixed(2),
+                          })}
+                        </Typography>
+                        <Slider
+                          value={loudnessParamsByMode[mode]?.gamma ?? DEFAULT_LOUDNESS_PARAMS.gamma}
+                          min={0.2}
+                          max={3}
+                          step={0.02}
+                          onChange={(_, v) =>
+                            setLoudnessParamsByMode((prev) => ({
+                              ...prev,
+                              [mode]: { ...(prev[mode] ?? DEFAULT_LOUDNESS_PARAMS), gamma: v as number },
+                            }))
+                          }
+                        />
+                        <Typography gutterBottom sx={{ mt: 2 }}>
+                          {t("displayVolume.loudnessAttack", {
+                            value: (loudnessParamsByMode[mode]?.attack ?? DEFAULT_LOUDNESS_PARAMS.attack).toFixed(2),
+                          })}
+                        </Typography>
+                        <Slider
+                          value={loudnessParamsByMode[mode]?.attack ?? DEFAULT_LOUDNESS_PARAMS.attack}
+                          min={0.01}
+                          max={0.9}
+                          step={0.01}
+                          onChange={(_, v) =>
+                            setLoudnessParamsByMode((prev) => ({
+                              ...prev,
+                              [mode]: { ...(prev[mode] ?? DEFAULT_LOUDNESS_PARAMS), attack: v as number },
+                            }))
+                          }
+                        />
+                        <Typography gutterBottom sx={{ mt: 2 }}>
+                          {t("displayVolume.loudnessRelease", {
+                            value: (loudnessParamsByMode[mode]?.release ?? DEFAULT_LOUDNESS_PARAMS.release).toFixed(2),
+                          })}
+                        </Typography>
+                        <Slider
+                          value={loudnessParamsByMode[mode]?.release ?? DEFAULT_LOUDNESS_PARAMS.release}
+                          min={0.01}
+                          max={0.9}
+                          step={0.01}
+                          onChange={(_, v) =>
+                            setLoudnessParamsByMode((prev) => ({
+                              ...prev,
+                              [mode]: { ...(prev[mode] ?? DEFAULT_LOUDNESS_PARAMS), release: v as number },
+                            }))
+                          }
+                        />
+                      </Box>
+                    )}
+                    {(mode === 15 || mode === 16) && (
+                      <Box sx={{ mb: 3 }}>
+                        <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600 }}>
+                          {t("displayVolume.wmpTrailTuning")}
+                        </Typography>
+                        <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap", mb: 1 }}>
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            onClick={() =>
+                              setWmpTrailParamsByMode((prev) => ({
+                                ...prev,
+                                [mode]: { ...WMP_TRAIL_PRESETS.classic[mode as 15 | 16] },
+                              }))
+                            }
+                          >
+                            {t("displayVolume.presetWmpClassic")}
+                          </Button>
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            onClick={() =>
+                              setWmpTrailParamsByMode((prev) => ({
+                                ...prev,
+                                [mode]: { ...WMP_TRAIL_PRESETS.modern[mode as 15 | 16] },
+                              }))
+                            }
+                          >
+                            {t("displayVolume.presetWmpModern")}
+                          </Button>
+                        </Box>
+                        <Typography gutterBottom>
+                          {t("displayVolume.wmpTrailLength", {
+                            value: (wmpTrailParamsByMode[mode]?.trailLength ?? defaultWmpTrailParamsForMode.trailLength).toFixed(0),
+                          })}
+                        </Typography>
+                        <Slider
+                          value={wmpTrailParamsByMode[mode]?.trailLength ?? defaultWmpTrailParamsForMode.trailLength}
+                          min={2}
+                          max={24}
+                          step={1}
+                          onChange={(_, v) =>
+                            setWmpTrailParamsByMode((prev) => ({
+                              ...prev,
+                              [mode]: { ...(prev[mode] ?? defaultWmpTrailParamsForMode), trailLength: v as number },
+                            }))
+                          }
+                        />
+                        <Typography gutterBottom sx={{ mt: 2 }}>
+                          {t("displayVolume.wmpTrailDecay", {
+                            value: (wmpTrailParamsByMode[mode]?.trailDecay ?? defaultWmpTrailParamsForMode.trailDecay).toFixed(2),
+                          })}
+                        </Typography>
+                        <Slider
+                          value={wmpTrailParamsByMode[mode]?.trailDecay ?? defaultWmpTrailParamsForMode.trailDecay}
+                          min={0.5}
+                          max={0.99}
+                          step={0.01}
+                          onChange={(_, v) =>
+                            setWmpTrailParamsByMode((prev) => ({
+                              ...prev,
+                              [mode]: { ...(prev[mode] ?? defaultWmpTrailParamsForMode), trailDecay: v as number },
+                            }))
+                          }
+                        />
+                        <Typography gutterBottom sx={{ mt: 2 }}>
+                          {t("displayVolume.wmpAdditive", {
+                            value: (wmpTrailParamsByMode[mode]?.additive ?? defaultWmpTrailParamsForMode.additive).toFixed(2),
+                          })}
+                        </Typography>
+                        <Slider
+                          value={wmpTrailParamsByMode[mode]?.additive ?? defaultWmpTrailParamsForMode.additive}
+                          min={0.2}
+                          max={3}
+                          step={0.05}
+                          onChange={(_, v) =>
+                            setWmpTrailParamsByMode((prev) => ({
+                              ...prev,
+                              [mode]: { ...(prev[mode] ?? defaultWmpTrailParamsForMode), additive: v as number },
+                            }))
+                          }
                         />
                       </Box>
                     )}
@@ -1756,12 +4195,13 @@ const Home: NextPage = () => {
                       value={modeAdjustments.scaleX}
                       onChange={(_, value) => handleAdjustmentChange("scaleX", value as number)}
                       min={0.1}
-                      max={3.0}
+                      max={5.0}
                       step={0.1}
                       marks={[
-                        { value: 0.5, label: "0.5" },
+                        { value: 0.1, label: "0.1" },
                         { value: 1.0, label: "1.0" },
                         { value: 2.0, label: "2.0" },
+                        { value: 5.0, label: "5.0" },
                       ]}
                     />
                     <Typography gutterBottom sx={{ mt: 3 }}>
@@ -1771,17 +4211,18 @@ const Home: NextPage = () => {
                       value={modeAdjustments.scaleY}
                       onChange={(_, value) => handleAdjustmentChange("scaleY", value as number)}
                       min={0.1}
-                      max={3.0}
+                      max={5.0}
                       step={0.1}
                       marks={[
-                        { value: 0.5, label: "0.5" },
+                        { value: 0.1, label: "0.1" },
                         { value: 1.0, label: "1.0" },
                         { value: 2.0, label: "2.0" },
+                        { value: 5.0, label: "5.0" },
                       ]}
                     />
                     <Typography gutterBottom sx={{ mt: 3 }}>
                       {t("displayVolume.offsetX", {
-                        value: modeAdjustments.offsetX.toFixed(1),
+                        value: Math.round(modeAdjustments.offsetX),
                         px: Math.round((getCanvasDimensions(activeCanvasLayout).width * modeAdjustments.offsetX) / 100),
                       })}
                     </Typography>
@@ -1799,7 +4240,7 @@ const Home: NextPage = () => {
                     />
                     <Typography gutterBottom sx={{ mt: 3 }}>
                       {t("displayVolume.offsetY", {
-                        value: modeAdjustments.offsetY.toFixed(1),
+                        value: Math.round(modeAdjustments.offsetY),
                         px: Math.round((getCanvasDimensions(activeCanvasLayout).height * modeAdjustments.offsetY) / 100),
                       })}
                     </Typography>
@@ -1852,7 +4293,7 @@ const Home: NextPage = () => {
                     </Typography>
                   </AccordionSummary>
                   <AccordionDetails>
-                    {effectType !== "none" && ALL_EFFECT_STRENGTH_TYPES.includes(effectType) && (
+                    {effectType !== "none" && effectType !== "dust" && ALL_EFFECT_STRENGTH_TYPES.includes(effectType) && (
                       <Box
                         sx={{
                           display: "flex",
@@ -1878,32 +4319,291 @@ const Home: NextPage = () => {
                         ))}
                       </Box>
                     )}
-                    {isSpaceEffect && (
-                      <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1, justifyContent: "center", alignItems: "center", mt: 1.5 }}>
-                        <Typography variant="caption" color="textSecondary">
-                          {t("effect.spaceType")}
+                    {effectType === "dust" && (
+                      <Box sx={{ width: "100%", maxWidth: 440, mt: 1.5, mx: "auto" }}>
+                        <Typography variant="caption" color="textSecondary" display="block">
+                          {t("effect.atmosphereStrength", { value: atmosphereStrength })}
                         </Typography>
-                        <Button
-                          variant={effectType === "space" ? "contained" : "outlined"}
-                          onClick={() => setEffectType("space")}
+                        <Slider
+                          value={atmosphereStrength}
+                          min={1}
+                          max={100}
+                          step={1}
+                          onChange={(_, v) => setAtmosphereStrength(v as number)}
+                        />
+                      </Box>
+                    )}
+                    {isSpaceEffect && (
+                      <>
+                        <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1, justifyContent: "center", alignItems: "center", mt: 1.5 }}>
+                          <Typography variant="caption" color="textSecondary">
+                            {t("effect.spaceType")}
+                          </Typography>
+                          <Button
+                            variant={effectType === "space" ? "contained" : "outlined"}
+                            onClick={() => setEffectType("space")}
+                            size="small"
+                          >
+                            {t("effect.space1")}
+                          </Button>
+                          <Button
+                            variant={effectType === "spaceConstant" ? "contained" : "outlined"}
+                            onClick={() => setEffectType("spaceConstant")}
+                            size="small"
+                          >
+                            {t("effect.space2")}
+                          </Button>
+                          <Button
+                            variant={effectType === "spaceAudio" ? "contained" : "outlined"}
+                            onClick={() => setEffectType("spaceAudio")}
+                            size="small"
+                          >
+                            {t("effect.space3")}
+                          </Button>
+                        </Box>
+                        <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1, justifyContent: "center", alignItems: "center", mt: 1 }}>
+                          <Typography variant="caption" color="textSecondary">
+                            {t("effect.spaceDirection")}
+                          </Typography>
+                          <Button
+                            variant={spaceDirection === "forward" ? "contained" : "outlined"}
+                            onClick={() => setSpaceDirection("forward")}
+                            size="small"
+                          >
+                            {t("effect.spaceForward")}
+                          </Button>
+                          <Button
+                            variant={spaceDirection === "backward" ? "contained" : "outlined"}
+                            onClick={() => setSpaceDirection("backward")}
+                            size="small"
+                          >
+                            {t("effect.spaceBackward")}
+                          </Button>
+                        </Box>
+                        <Box sx={{ width: "100%", maxWidth: 440, mt: 1, mx: "auto" }}>
+                          <Typography variant="caption" color="textSecondary" display="block">
+                            {t("effect.spaceSpeed", { value: spaceSpeed.toFixed(2) })}
+                          </Typography>
+                          <Slider
+                            value={spaceSpeed}
+                            min={0.2}
+                            max={3}
+                            step={0.05}
+                            onChange={(_, v) => setSpaceSpeed(v as number)}
+                          />
+                        </Box>
+                        <Box sx={{ width: "100%", maxWidth: 440, mt: 2, mx: "auto" }}>
+                          <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 0.5 }}>
+                            {t("effect.weatherColor")}
+                          </Typography>
+                          <Box sx={paletteGridSx}>
+                            {DEFAULT_COLOR_PALETTE_20.map((c) => (
+                              <Box
+                                key={`space-${c}`}
+                                component="button"
+                                type="button"
+                                aria-label={`${t("effect.space")} ${c}`}
+                                onClick={() => {
+                                  const u = c.toUpperCase();
+                                  setSpaceParticleColor(u);
+                                  setSpaceColorInput(u);
+                                }}
+                                sx={{
+                                  width: 28,
+                                  height: 28,
+                                  borderRadius: 0.75,
+                                  border:
+                                    spaceParticleColor.toUpperCase() === c.toUpperCase()
+                                      ? "2px solid #111"
+                                      : "1px solid #999",
+                                  backgroundColor: c,
+                                  cursor: "pointer",
+                                  p: 0,
+                                }}
+                              />
+                            ))}
+                          </Box>
+                          <TextField
+                            size="small"
+                            label={t("effect.weatherColorCode")}
+                            value={spaceColorInput}
+                            onChange={(e) => {
+                              const next = normalizeHexColorInput(e.target.value);
+                              setSpaceColorInput(next);
+                              if (isHexColorCode(next)) {
+                                setSpaceParticleColor(next);
+                              }
+                            }}
+                            error={spaceColorInput.length > 0 && !isHexColorCode(spaceColorInput)}
+                            helperText={
+                              spaceColorInput.length > 0 && !isHexColorCode(spaceColorInput)
+                                ? t("effect.weatherColorCodeInvalid")
+                                : " "
+                            }
+                            inputProps={{ inputMode: "text", pattern: "#?[0-9a-fA-F]{6}" }}
+                            sx={{ width: 220, mt: 0.5 }}
+                          />
+                        </Box>
+                      </>
+                    )}
+                    {effectType === "sparkle" && (
+                      <Box sx={{ width: "100%", maxWidth: 440, mt: 2, mx: "auto" }}>
+                        <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1, justifyContent: "center", alignItems: "center", mb: 1 }}>
+                          <Typography variant="caption" color="textSecondary">
+                            {t("effect.sparkleType")}
+                          </Typography>
+                          <Button
+                            variant={sparkleVariant === "normal" ? "contained" : "outlined"}
+                            onClick={() => setSparkleVariant("normal")}
+                            size="small"
+                          >
+                            {t("effect.sparkleNormal")}
+                          </Button>
+                          <Button
+                            variant={sparkleVariant === "heart" ? "contained" : "outlined"}
+                            onClick={() => setSparkleVariant("heart")}
+                            size="small"
+                          >
+                            {t("effect.sparkleHeart")}
+                          </Button>
+                          <Button
+                            variant={sparkleVariant === "star" ? "contained" : "outlined"}
+                            onClick={() => setSparkleVariant("star")}
+                            size="small"
+                          >
+                            {t("effect.sparkleStar")}
+                          </Button>
+                        </Box>
+                        <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 0.5 }}>
+                          {t("effect.weatherColor")}
+                        </Typography>
+                        <Box sx={paletteGridSx}>
+                          {DEFAULT_COLOR_PALETTE_20.map((c) => (
+                            <Box
+                              key={`sparkle-${c}`}
+                              component="button"
+                              type="button"
+                              aria-label={`${t("effect.sparkle")} ${c}`}
+                              onClick={() => {
+                                const u = c.toUpperCase();
+                                setSparkleParticleColor(u);
+                                setSparkleColorInput(u);
+                              }}
+                              sx={{
+                                width: 28,
+                                height: 28,
+                                borderRadius: 0.75,
+                                border:
+                                  sparkleParticleColor.toUpperCase() === c.toUpperCase()
+                                    ? "2px solid #111"
+                                    : "1px solid #999",
+                                backgroundColor: c,
+                                cursor: "pointer",
+                                p: 0,
+                              }}
+                            />
+                          ))}
+                        </Box>
+                        <TextField
                           size="small"
-                        >
-                          {t("effect.space1")}
-                        </Button>
-                        <Button
-                          variant={effectType === "spaceConstant" ? "contained" : "outlined"}
-                          onClick={() => setEffectType("spaceConstant")}
+                          label={t("effect.weatherColorCode")}
+                          value={sparkleColorInput}
+                          onChange={(e) => {
+                            const next = normalizeHexColorInput(e.target.value);
+                            setSparkleColorInput(next);
+                            if (isHexColorCode(next)) {
+                              setSparkleParticleColor(next);
+                            }
+                          }}
+                          error={sparkleColorInput.length > 0 && !isHexColorCode(sparkleColorInput)}
+                          helperText={
+                            sparkleColorInput.length > 0 && !isHexColorCode(sparkleColorInput)
+                              ? t("effect.weatherColorCodeInvalid")
+                              : " "
+                          }
+                          inputProps={{ inputMode: "text", pattern: "#?[0-9a-fA-F]{6}" }}
+                          sx={{ width: 220, mt: 0.5 }}
+                        />
+                      </Box>
+                    )}
+                    {effectType === "dust" && (
+                      <Box sx={{ width: "100%", maxWidth: 440, mt: 2, mx: "auto" }}>
+                        <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1, justifyContent: "center", alignItems: "center", mb: 1 }}>
+                          <Typography variant="caption" color="textSecondary">
+                            {t("effect.atmosphereType")}
+                          </Typography>
+                          <Button
+                            variant={atmosphereVariant === "dust" ? "contained" : "outlined"}
+                            onClick={() => setAtmosphereVariant("dust")}
+                            size="small"
+                          >
+                            {t("effect.atmosphereDust")}
+                          </Button>
+                          <Button
+                            variant={atmosphereVariant === "sparks" ? "contained" : "outlined"}
+                            onClick={() => setAtmosphereVariant("sparks")}
+                            size="small"
+                          >
+                            {t("effect.atmosphereSparks")}
+                          </Button>
+                          <Button
+                            variant={atmosphereVariant === "fireflies" ? "contained" : "outlined"}
+                            onClick={() => setAtmosphereVariant("fireflies")}
+                            size="small"
+                          >
+                            {t("effect.atmosphereFireflies")}
+                          </Button>
+                        </Box>
+                        <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 0.5 }}>
+                          {t("effect.weatherColor")}
+                        </Typography>
+                        <Box sx={paletteGridSx}>
+                          {DEFAULT_COLOR_PALETTE_20.map((c) => (
+                            <Box
+                              key={`dust-${c}`}
+                              component="button"
+                              type="button"
+                              aria-label={`${t("effect.dust")} ${c}`}
+                              onClick={() => {
+                                const u = c.toUpperCase();
+                                setDustParticleColor(u);
+                                setDustColorInput(u);
+                              }}
+                              sx={{
+                                width: 28,
+                                height: 28,
+                                borderRadius: 0.75,
+                                border:
+                                  dustParticleColor.toUpperCase() === c.toUpperCase()
+                                    ? "2px solid #111"
+                                    : "1px solid #999",
+                                backgroundColor: c,
+                                cursor: "pointer",
+                                p: 0,
+                              }}
+                            />
+                          ))}
+                        </Box>
+                        <TextField
                           size="small"
-                        >
-                          {t("effect.space2")}
-                        </Button>
-                        <Button
-                          variant={effectType === "spaceAudio" ? "contained" : "outlined"}
-                          onClick={() => setEffectType("spaceAudio")}
-                          size="small"
-                        >
-                          {t("effect.space3")}
-                        </Button>
+                          label={t("effect.weatherColorCode")}
+                          value={dustColorInput}
+                          onChange={(e) => {
+                            const next = normalizeHexColorInput(e.target.value);
+                            setDustColorInput(next);
+                            if (isHexColorCode(next)) {
+                              setDustParticleColor(next);
+                            }
+                          }}
+                          error={dustColorInput.length > 0 && !isHexColorCode(dustColorInput)}
+                          helperText={
+                            dustColorInput.length > 0 && !isHexColorCode(dustColorInput)
+                              ? t("effect.weatherColorCodeInvalid")
+                              : " "
+                          }
+                          inputProps={{ inputMode: "text", pattern: "#?[0-9a-fA-F]{6}" }}
+                          sx={{ width: 220, mt: 0.5 }}
+                        />
                       </Box>
                     )}
                     {effectType === "rain" && (
@@ -1932,8 +4632,8 @@ const Home: NextPage = () => {
                           <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 0.5 }}>
                             {t("effect.weatherColor")}
                           </Typography>
-                          <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.75, mb: 1 }}>
-                            {BASIC_COLOR_PALETTE_16.map((c) => (
+                          <Box sx={paletteGridSx}>
+                            {DEFAULT_COLOR_PALETTE_20.map((c) => (
                               <Box
                                 key={`rain-${c}`}
                                 component="button"
@@ -1941,8 +4641,8 @@ const Home: NextPage = () => {
                                 aria-label={`${t("effect.weatherColor")} ${c}`}
                                 onClick={() => setRainWeather((p) => ({ ...p, color: c }))}
                                 sx={{
-                                  width: 24,
-                                  height: 24,
+                                  width: 28,
+                                  height: 28,
                                   borderRadius: 0.75,
                                   border: rainWeather.color.toUpperCase() === c.toUpperCase() ? "2px solid #111" : "1px solid #999",
                                   backgroundColor: c,
@@ -2001,8 +4701,8 @@ const Home: NextPage = () => {
                           <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 0.5 }}>
                             {t("effect.weatherColor")}
                           </Typography>
-                          <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.75, mb: 1 }}>
-                            {BASIC_COLOR_PALETTE_16.map((c) => (
+                          <Box sx={paletteGridSx}>
+                            {DEFAULT_COLOR_PALETTE_20.map((c) => (
                               <Box
                                 key={`snow-${c}`}
                                 component="button"
@@ -2010,8 +4710,8 @@ const Home: NextPage = () => {
                                 aria-label={`${t("effect.weatherColor")} ${c}`}
                                 onClick={() => setSnowWeather((p) => ({ ...p, color: c }))}
                                 sx={{
-                                  width: 24,
-                                  height: 24,
+                                  width: 28,
+                                  height: 28,
                                   borderRadius: 0.75,
                                   border: snowWeather.color.toUpperCase() === c.toUpperCase() ? "2px solid #111" : "1px solid #999",
                                   backgroundColor: c,
@@ -2050,6 +4750,598 @@ const Home: NextPage = () => {
             )}
 
             {settingsTab === 2 && (
+              <Box sx={{ width: "100%", maxWidth: 600, margin: "0 auto", py: 1 }}>
+                <Typography variant="body2" sx={{ mb: 2, textAlign: "center", fontWeight: 500 }}>
+                  {t("titleTab.title")}
+                </Typography>
+                <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 1 }}>
+                  {t("titleTab.caption")}
+                </Typography>
+                <TextField
+                  fullWidth
+                  multiline
+                  minRows={2}
+                  maxRows={6}
+                  size="small"
+                  label={t("titleTab.textLabel")}
+                  value={titleText}
+                  onChange={(e) => setTitleText(e.target.value.slice(0, 500))}
+                  placeholder={t("titleTab.placeholder")}
+                  sx={{ mb: 2 }}
+                />
+                <FormControlLabel
+                  control={<Switch checked={titleEnabled} onChange={(_, c) => setTitleEnabled(c)} size="small" />}
+                  label={t("titleTab.enabled")}
+                  sx={{ mb: 2, display: "flex", alignItems: "center" }}
+                />
+                <Typography gutterBottom>{t("titleTab.positionY", { value: titleStyle.positionYPercent.toFixed(0) })}</Typography>
+                <Slider
+                  value={titleStyle.positionYPercent}
+                  min={5}
+                  max={98}
+                  step={1}
+                  onChange={(_, v) => setTitleStyle((prev) => ({ ...prev, positionYPercent: v as number }))}
+                />
+                <FormControl size="small" fullWidth sx={{ mt: 1.5, mb: 1.5 }}>
+                  <InputLabel>{t("titleTab.align")}</InputLabel>
+                  <Select
+                    value={titleStyle.align}
+                    label={t("titleTab.align")}
+                    onChange={(e) => setTitleStyle((prev) => ({ ...prev, align: e.target.value as TitleStyle["align"] }))}
+                  >
+                    <MenuItem value="left">{t("subtitle.alignLeft")}</MenuItem>
+                    <MenuItem value="center">{t("subtitle.alignCenter")}</MenuItem>
+                    <MenuItem value="right">{t("subtitle.alignRight")}</MenuItem>
+                  </Select>
+                </FormControl>
+                <FormControl size="small" fullWidth sx={{ mb: 1.5 }}>
+                  <InputLabel>{t("titleTab.displayType")}</InputLabel>
+                  <Select
+                    value={titleStyle.displayType}
+                    label={t("titleTab.displayType")}
+                    onChange={(e) => setTitleStyle((prev) => ({ ...prev, displayType: e.target.value as TitleStyle["displayType"] }))}
+                  >
+                    <MenuItem value="plain">{t("subtitle.typePlain")}</MenuItem>
+                    <MenuItem value="outline">{t("subtitle.typeOutline")}</MenuItem>
+                    <MenuItem value="boxed">{t("subtitle.typeBoxed")}</MenuItem>
+                  </Select>
+                </FormControl>
+                <Typography gutterBottom>{t("titleTab.fontSize", { value: titleStyle.fontSize.toFixed(0) })}</Typography>
+                <Slider
+                  value={titleStyle.fontSize}
+                  min={12}
+                  max={200}
+                  step={1}
+                  onChange={(_, v) => setTitleStyle((prev) => ({ ...prev, fontSize: v as number }))}
+                />
+                <Typography gutterBottom sx={{ mt: 2 }}>{t("titleTab.letterSpacing", { value: titleStyle.letterSpacingPx.toFixed(0) })}</Typography>
+                <Slider
+                  value={titleStyle.letterSpacingPx}
+                  min={0}
+                  max={24}
+                  step={1}
+                  onChange={(_, v) => setTitleStyle((prev) => ({ ...prev, letterSpacingPx: v as number }))}
+                />
+                <FormControl size="small" fullWidth sx={{ mt: 1.5, mb: 1.5 }}>
+                  <InputLabel>{t("titleTab.fontFamily")}</InputLabel>
+                  <Select
+                    value={titleStyle.fontFamily}
+                    label={t("titleTab.fontFamily")}
+                    onChange={(e) => setTitleStyle((prev) => ({ ...prev, fontFamily: String(e.target.value) }))}
+                  >
+                    <MenuItem value="sans-serif">sans-serif</MenuItem>
+                    <MenuItem value="serif">serif</MenuItem>
+                    <MenuItem value="monospace">monospace</MenuItem>
+                    <MenuItem value="'Noto Sans JP', sans-serif">Noto Sans JP</MenuItem>
+                  </Select>
+                </FormControl>
+                <Box sx={{ display: "flex", gap: 2, mb: 1.5 }}>
+                  <FormControlLabel
+                    control={<Switch checked={titleStyle.bold} onChange={(_, c) => setTitleStyle((p) => ({ ...p, bold: c }))} size="small" />}
+                    label={t("subtitle.bold")}
+                  />
+                  <FormControlLabel
+                    control={<Switch checked={titleStyle.italic} onChange={(_, c) => setTitleStyle((p) => ({ ...p, italic: c }))} size="small" />}
+                    label={t("subtitle.italic")}
+                  />
+                </Box>
+                <TextField
+                  size="small"
+                  fullWidth
+                  label={t("titleTab.textColor")}
+                  value={titleStyle.color}
+                  onChange={(e) => setTitleStyle((p) => ({ ...p, color: normalizeHexColorInput(e.target.value) }))}
+                  sx={{ mb: 1.5 }}
+                />
+                <TextField
+                  size="small"
+                  fullWidth
+                  label={t("titleTab.strokeColor")}
+                  value={titleStyle.strokeColor}
+                  onChange={(e) => setTitleStyle((p) => ({ ...p, strokeColor: normalizeHexColorInput(e.target.value) }))}
+                  sx={{ mb: 1.5 }}
+                />
+                <Typography gutterBottom>{t("titleTab.strokeWidth", { value: titleStyle.strokeWidth.toFixed(1) })}</Typography>
+                <Slider
+                  value={titleStyle.strokeWidth}
+                  min={0}
+                  max={12}
+                  step={0.5}
+                  onChange={(_, v) => setTitleStyle((prev) => ({ ...prev, strokeWidth: v as number }))}
+                />
+                <TextField
+                  size="small"
+                  fullWidth
+                  label={t("titleTab.shadowColor")}
+                  value={titleStyle.shadowColor}
+                  onChange={(e) => setTitleStyle((p) => ({ ...p, shadowColor: e.target.value }))}
+                  sx={{ mb: 1.5, mt: 2 }}
+                />
+                <Typography gutterBottom>{t("titleTab.shadowBlur", { value: titleStyle.shadowBlur.toFixed(0) })}</Typography>
+                <Slider
+                  value={titleStyle.shadowBlur}
+                  min={0}
+                  max={40}
+                  step={1}
+                  onChange={(_, v) => setTitleStyle((prev) => ({ ...prev, shadowBlur: v as number }))}
+                />
+                <TextField
+                  size="small"
+                  fullWidth
+                  label={t("titleTab.boxColor")}
+                  value={titleStyle.boxColor}
+                  onChange={(e) => setTitleStyle((p) => ({ ...p, boxColor: e.target.value }))}
+                  sx={{ mb: 1.5 }}
+                />
+                <Typography gutterBottom>{t("titleTab.boxPadding", { value: titleStyle.boxPadding.toFixed(0) })}</Typography>
+                <Slider
+                  value={titleStyle.boxPadding}
+                  min={0}
+                  max={40}
+                  step={1}
+                  onChange={(_, v) => setTitleStyle((prev) => ({ ...prev, boxPadding: v as number }))}
+                />
+                <FormControl size="small" fullWidth sx={{ mt: 1.5, mb: 1.5 }}>
+                  <InputLabel>{t("titleTab.animationType")}</InputLabel>
+                  <Select
+                    value={titleStyle.animationType}
+                    label={t("titleTab.animationType")}
+                    onChange={(e) => setTitleStyle((prev) => ({ ...prev, animationType: e.target.value as TitleStyle["animationType"] }))}
+                  >
+                    <MenuItem value="none">{t("subtitle.animNone")}</MenuItem>
+                    <MenuItem value="fade">{t("subtitle.animFade")}</MenuItem>
+                    <MenuItem value="slideUp">{t("subtitle.animSlideUp")}</MenuItem>
+                    <MenuItem value="pop">{t("subtitle.animPop")}</MenuItem>
+                  </Select>
+                </FormControl>
+                <Typography gutterBottom>{t("titleTab.animationDuration", { value: titleStyle.animationDurationSec.toFixed(2) })}</Typography>
+                <Slider
+                  value={titleStyle.animationDurationSec}
+                  min={0}
+                  max={1.5}
+                  step={0.05}
+                  onChange={(_, v) => setTitleStyle((prev) => ({ ...prev, animationDurationSec: v as number }))}
+                />
+              </Box>
+            )}
+
+            {settingsTab === 3 && (
+              <Box sx={{ width: "100%", maxWidth: 600, margin: "0 auto", py: 1 }}>
+                <Typography variant="body2" sx={{ mb: 2, textAlign: "center", fontWeight: 500 }}>
+                  {t("subtitle.title")}
+                </Typography>
+                <Box sx={{ display: "flex", gap: 1, alignItems: "center", flexWrap: "wrap", mb: 1.5 }}>
+                  <Button variant="outlined" component="label" size="small">
+                    {t("subtitle.selectSrt")}
+                    <input type="file" accept=".srt,text/plain" onChange={subtitleLoad} hidden />
+                  </Button>
+                  <Typography variant="caption" color="textSecondary">
+                    {subtitleFileName || t("dropZone.unselected")}
+                  </Typography>
+                </Box>
+                <Box
+                  sx={{
+                    border: "1px dashed",
+                    borderColor: "divider",
+                    borderRadius: 1,
+                    p: 1.2,
+                    mb: 1.5,
+                    fontSize: 12,
+                    color: "text.secondary",
+                  }}
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={async (e) => {
+                    e.preventDefault();
+                    const f = Array.from(e.dataTransfer.files).find((x) => isSrtFileByName(x.name));
+                    if (!f) {
+                      openSnackBar(t("snackbar.subtitleTypeNotSupported"));
+                      return;
+                    }
+                    await loadSubtitleFile(f);
+                  }}
+                >
+                  {t("subtitle.dropSrt")}
+                </Box>
+
+                {ENABLE_SRT_AUTHOR_UI && (
+                <Accordion defaultExpanded={false} sx={{ mb: 1.5 }}>
+                  <AccordionSummary expandIcon={<ExpandMore />}>
+                    <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+                      {t("subtitle.author.sectionTitle")}
+                    </Typography>
+                  </AccordionSummary>
+                  <AccordionDetails>
+                    <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 1 }}>
+                      {t("subtitle.author.hint")}
+                    </Typography>
+                    <TextField
+                      size="small"
+                      fullWidth
+                      multiline
+                      minRows={4}
+                      label={t("subtitle.author.lyricsLabel")}
+                      placeholder={t("subtitle.author.lyricsPlaceholder")}
+                      value={srtAuthorLyricsRaw}
+                      onChange={(e) => setSrtAuthorLyricsRaw(e.target.value)}
+                      sx={{ mb: 1 }}
+                    />
+                    <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap", mb: 1 }}>
+                      <Button variant="outlined" size="small" onClick={srtAuthorReflectLyrics}>
+                        {t("subtitle.author.reflectLyrics")}
+                      </Button>
+                      <Button variant="outlined" size="small" component="label">
+                        {t("subtitle.author.loadTxt")}
+                        <input type="file" accept=".txt,.lrc,text/plain" hidden onChange={lyricsTxtLoad} />
+                      </Button>
+                      <Button variant="outlined" size="small" onClick={srtAuthorEvenSplitAgain} disabled={srtAuthorCues.length === 0}>
+                        {t("subtitle.author.evenSplit")}
+                      </Button>
+                    </Box>
+                    <Typography gutterBottom>{t("subtitle.author.globalOffset", { value: srtAuthorGlobalOffsetMs })}</Typography>
+                    <Slider
+                      value={srtAuthorGlobalOffsetMs}
+                      min={-3000}
+                      max={3000}
+                      step={50}
+                      onChange={(_, v) => setSrtAuthorGlobalOffsetMs(v as number)}
+                      sx={{ mb: 1.5 }}
+                    />
+                    <Box
+                      ref={srtRecordPanelRef}
+                      tabIndex={-1}
+                      sx={{ outline: srtAuthorRecordActive ? "2px solid" : "none", outlineColor: "primary.main", borderRadius: 1, p: 1, mb: 1, bgcolor: "action.hover" }}
+                    >
+                      <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 0.5 }}>
+                        {t("subtitle.author.recordHint")}
+                      </Typography>
+                      <FormControlLabel
+                        control={
+                          <Switch
+                            checked={srtAuthorRecordActive}
+                            onChange={(_, c) => {
+                              if (c) {
+                                if (srtAuthorCues.length === 0) {
+                                  openSnackBar(t("snackbar.subtitleAuthorNoCues"));
+                                  return;
+                                }
+                                setSrtAuthorRecordActive(true);
+                                setSrtAuthorLineIndex(0);
+                                setSrtAuthorPhase("wait_start");
+                                queueMicrotask(() => srtRecordPanelRef.current?.focus());
+                              } else {
+                                setSrtAuthorRecordActive(false);
+                              }
+                            }}
+                            size="small"
+                          />
+                        }
+                        label={t("subtitle.author.recordMode")}
+                        sx={{ mb: 1, display: "block" }}
+                      />
+                      {srtAuthorCues.length > 0 && srtAuthorLineIndex < srtAuthorCues.length && (
+                        <Typography variant="body2" sx={{ mb: 1, fontWeight: 600 }}>
+                          {srtAuthorPhase === "wait_start"
+                            ? t("subtitle.author.statusWaitStart", {
+                                current: srtAuthorLineIndex + 1,
+                                total: srtAuthorCues.length,
+                              })
+                            : t("subtitle.author.statusInside", {
+                                current: srtAuthorLineIndex + 1,
+                                total: srtAuthorCues.length,
+                              })}
+                        </Typography>
+                      )}
+                      {srtAuthorCues.length > 0 && srtAuthorLineIndex < srtAuthorCues.length && (
+                        <Typography variant="body2" color="text.secondary" sx={{ mb: 1, whiteSpace: "pre-wrap" }}>
+                          {srtAuthorCues[srtAuthorLineIndex]?.text ?? ""}
+                        </Typography>
+                      )}
+                      <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap", alignItems: "center", mb: 1 }}>
+                        <Button
+                          variant="contained"
+                          color="primary"
+                          size="medium"
+                          disabled={!srtAuthorRecordActive || srtAuthorPhase !== "wait_start" || srtAuthorLineIndex >= srtAuthorCues.length}
+                          onClick={srtAuthorMarkStart}
+                        >
+                          {t("subtitle.author.btnStart")}
+                        </Button>
+                        <Button
+                          variant="contained"
+                          color="secondary"
+                          size="medium"
+                          disabled={!srtAuthorRecordActive || srtAuthorPhase !== "inside_line" || srtAuthorLineIndex >= srtAuthorCues.length}
+                          onClick={srtAuthorMarkEnd}
+                        >
+                          {t("subtitle.author.btnEnd")}
+                        </Button>
+                        <Tooltip title={t("subtitle.author.undoTooltip")}>
+                          <span>
+                            <Button variant="outlined" size="small" startIcon={<Undo />} onClick={srtAuthorUndoLast}>
+                              {t("subtitle.author.undo")}
+                            </Button>
+                          </span>
+                        </Tooltip>
+                      </Box>
+                    </Box>
+                    <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap", mb: 1 }}>
+                      <Button variant="outlined" size="small" onClick={srtAuthorExportSrt} disabled={srtAuthorCues.length === 0}>
+                        {t("subtitle.author.exportSrt")}
+                      </Button>
+                      <Button variant="contained" size="small" onClick={srtAuthorApplyToPreview} disabled={srtAuthorCues.length === 0}>
+                        {t("subtitle.author.applyPreview")}
+                      </Button>
+                      <Button
+                        variant="outlined"
+                        size="small"
+                        onClick={() => {
+                          const mediaDur = getMediaDurationSec();
+                          if (!(mediaDur > 0)) {
+                            openSnackBar(t("snackbar.subtitleAuthorNeedAudio"));
+                            return;
+                          }
+                          pushSrtAuthorUndoSnapshot();
+                          const win = getPlaybackWindowBounds(resolvePlaybackWindow(), mediaDur);
+                          setSrtAuthorCues((prev) => {
+                            const last = prev[prev.length - 1];
+                            const s = last ? Math.min(last.endSec, win.endSec - 0.06) : win.startSec;
+                            const e = Math.min(win.endSec, s + 0.5);
+                            return [...prev, { startSec: s, endSec: Math.max(s + 0.05, e), text: "" }];
+                          });
+                          openSnackBar(t("snackbar.subtitleAuthorLineAdded"));
+                        }}
+                      >
+                        {t("subtitle.author.addLine")}
+                      </Button>
+                    </Box>
+                    {srtAuthorCues.length > 0 && (
+                      <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 0.5 }}>
+                        {t("subtitle.author.cueListCaption")}
+                      </Typography>
+                    )}
+                    <Box sx={{ maxHeight: 240, overflow: "auto", border: "1px solid", borderColor: "divider", borderRadius: 1, p: 0.5 }}>
+                      {srtAuthorCues.map((cue, index) => (
+                        <Box
+                          key={`srt-cue-${index}`}
+                          sx={{
+                            display: "grid",
+                            gridTemplateColumns: { xs: "1fr", sm: "72px 72px 1fr 40px" },
+                            gap: 0.5,
+                            alignItems: "center",
+                            mb: 0.5,
+                            p: 0.5,
+                            bgcolor: index === srtAuthorLineIndex && srtAuthorRecordActive ? "action.selected" : "transparent",
+                            borderRadius: 0.5,
+                          }}
+                        >
+                          <TextField
+                            size="small"
+                            type="number"
+                            inputProps={{ step: 0.01 }}
+                            label={t("subtitle.author.startSec")}
+                            value={Number.isFinite(cue.startSec) ? cue.startSec.toFixed(2) : ""}
+                            onChange={(e) => {
+                              const v = parseFloat(e.target.value.replace(",", "."));
+                              if (!Number.isFinite(v)) return;
+                              setSrtAuthorCues((prev) => {
+                                const next = [...prev];
+                                if (!next[index]) return prev;
+                                next[index] = { ...next[index], startSec: v };
+                                return next;
+                              });
+                            }}
+                          />
+                          <TextField
+                            size="small"
+                            type="number"
+                            inputProps={{ step: 0.01 }}
+                            label={t("subtitle.author.endSec")}
+                            value={Number.isFinite(cue.endSec) ? cue.endSec.toFixed(2) : ""}
+                            onChange={(e) => {
+                              const v = parseFloat(e.target.value.replace(",", "."));
+                              if (!Number.isFinite(v)) return;
+                              setSrtAuthorCues((prev) => {
+                                const next = [...prev];
+                                if (!next[index]) return prev;
+                                next[index] = { ...next[index], endSec: v };
+                                return next;
+                              });
+                            }}
+                          />
+                          <TextField
+                            size="small"
+                            fullWidth
+                            label={t("subtitle.author.lineText")}
+                            value={cue.text}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              setSrtAuthorCues((prev) => {
+                                const next = [...prev];
+                                if (!next[index]) return prev;
+                                next[index] = { ...next[index], text: v };
+                                return next;
+                              });
+                            }}
+                          />
+                          <IconButton
+                            size="small"
+                            aria-label={t("subtitle.author.deleteLine")}
+                            onClick={() => {
+                              pushSrtAuthorUndoSnapshot();
+                              setSrtAuthorCues((prev) => prev.filter((_, j) => j !== index));
+                              setSrtAuthorLineIndex((li) => {
+                                if (index < li) return Math.max(0, li - 1);
+                                if (index === li) return Math.max(0, li);
+                                return li;
+                              });
+                            }}
+                          >
+                            <DeleteSweep fontSize="small" />
+                          </IconButton>
+                        </Box>
+                      ))}
+                    </Box>
+                  </AccordionDetails>
+                </Accordion>
+                )}
+
+                <FormControlLabel
+                  control={<Switch checked={subtitleEnabled} onChange={(_, c) => setSubtitleEnabled(c)} size="small" />}
+                  label={t("subtitle.enabled")}
+                  sx={{ mb: 1.5, display: "flex", alignItems: "center" }}
+                />
+                <Typography gutterBottom>{t("subtitle.positionY", { value: subtitleStyle.positionYPercent.toFixed(0) })}</Typography>
+                <Slider
+                  value={subtitleStyle.positionYPercent}
+                  min={5}
+                  max={98}
+                  step={1}
+                  onChange={(_, v) => setSubtitleStyle((prev) => ({ ...prev, positionYPercent: v as number }))}
+                />
+                <FormControl size="small" fullWidth sx={{ mt: 1.5, mb: 1.5 }}>
+                  <InputLabel>{t("subtitle.align")}</InputLabel>
+                  <Select
+                    value={subtitleStyle.align}
+                    label={t("subtitle.align")}
+                    onChange={(e) =>
+                      setSubtitleStyle((prev) => ({ ...prev, align: e.target.value as SubtitleStyle["align"] }))
+                    }
+                  >
+                    <MenuItem value="left">{t("subtitle.alignLeft")}</MenuItem>
+                    <MenuItem value="center">{t("subtitle.alignCenter")}</MenuItem>
+                    <MenuItem value="right">{t("subtitle.alignRight")}</MenuItem>
+                  </Select>
+                </FormControl>
+                <FormControl size="small" fullWidth sx={{ mb: 1.5 }}>
+                  <InputLabel>{t("subtitle.displayType")}</InputLabel>
+                  <Select
+                    value={subtitleStyle.displayType}
+                    label={t("subtitle.displayType")}
+                    onChange={(e) =>
+                      setSubtitleStyle((prev) => ({ ...prev, displayType: e.target.value as SubtitleStyle["displayType"] }))
+                    }
+                  >
+                    <MenuItem value="plain">{t("subtitle.typePlain")}</MenuItem>
+                    <MenuItem value="outline">{t("subtitle.typeOutline")}</MenuItem>
+                    <MenuItem value="boxed">{t("subtitle.typeBoxed")}</MenuItem>
+                  </Select>
+                </FormControl>
+                <Typography gutterBottom>{t("subtitle.fontSize", { value: subtitleStyle.fontSize.toFixed(0) })}</Typography>
+                <Slider
+                  value={subtitleStyle.fontSize}
+                  min={12}
+                  max={96}
+                  step={1}
+                  onChange={(_, v) => setSubtitleStyle((prev) => ({ ...prev, fontSize: v as number }))}
+                />
+                <FormControl size="small" fullWidth sx={{ mt: 1.5, mb: 1.5 }}>
+                  <InputLabel>{t("subtitle.fontFamily")}</InputLabel>
+                  <Select
+                    value={subtitleStyle.fontFamily}
+                    label={t("subtitle.fontFamily")}
+                    onChange={(e) => setSubtitleStyle((prev) => ({ ...prev, fontFamily: String(e.target.value) }))}
+                  >
+                    <MenuItem value="sans-serif">sans-serif</MenuItem>
+                    <MenuItem value="serif">serif</MenuItem>
+                    <MenuItem value="monospace">monospace</MenuItem>
+                    <MenuItem value="'Noto Sans JP', sans-serif">Noto Sans JP</MenuItem>
+                  </Select>
+                </FormControl>
+                <Box sx={{ display: "flex", gap: 2, mb: 1.5 }}>
+                  <FormControlLabel
+                    control={
+                      <Switch
+                        checked={subtitleStyle.bold}
+                        onChange={(_, c) => setSubtitleStyle((p) => ({ ...p, bold: c }))}
+                        size="small"
+                      />
+                    }
+                    label={t("subtitle.bold")}
+                  />
+                  <FormControlLabel
+                    control={
+                      <Switch
+                        checked={subtitleStyle.italic}
+                        onChange={(_, c) => setSubtitleStyle((p) => ({ ...p, italic: c }))}
+                        size="small"
+                      />
+                    }
+                    label={t("subtitle.italic")}
+                  />
+                </Box>
+                <TextField
+                  size="small"
+                  fullWidth
+                  label={t("subtitle.color")}
+                  value={subtitleStyle.color}
+                  onChange={(e) => setSubtitleStyle((p) => ({ ...p, color: normalizeHexColorInput(e.target.value) }))}
+                  sx={{ mb: 1.5 }}
+                />
+                <TextField
+                  size="small"
+                  fullWidth
+                  label={t("subtitle.strokeColor")}
+                  value={subtitleStyle.strokeColor}
+                  onChange={(e) => setSubtitleStyle((p) => ({ ...p, strokeColor: normalizeHexColorInput(e.target.value) }))}
+                  sx={{ mb: 1.5 }}
+                />
+                <Typography gutterBottom>{t("subtitle.strokeWidth", { value: subtitleStyle.strokeWidth.toFixed(1) })}</Typography>
+                <Slider
+                  value={subtitleStyle.strokeWidth}
+                  min={0}
+                  max={12}
+                  step={0.5}
+                  onChange={(_, v) => setSubtitleStyle((prev) => ({ ...prev, strokeWidth: v as number }))}
+                />
+                <FormControl size="small" fullWidth sx={{ mt: 1.5, mb: 1.5 }}>
+                  <InputLabel>{t("subtitle.animationType")}</InputLabel>
+                  <Select
+                    value={subtitleStyle.animationType}
+                    label={t("subtitle.animationType")}
+                    onChange={(e) =>
+                      setSubtitleStyle((prev) => ({ ...prev, animationType: e.target.value as SubtitleStyle["animationType"] }))
+                    }
+                  >
+                    <MenuItem value="none">{t("subtitle.animNone")}</MenuItem>
+                    <MenuItem value="fade">{t("subtitle.animFade")}</MenuItem>
+                    <MenuItem value="slideUp">{t("subtitle.animSlideUp")}</MenuItem>
+                    <MenuItem value="pop">{t("subtitle.animPop")}</MenuItem>
+                  </Select>
+                </FormControl>
+                <Typography gutterBottom>
+                  {t("subtitle.animationDuration", { value: subtitleStyle.animationDurationSec.toFixed(2) })}
+                </Typography>
+                <Slider
+                  value={subtitleStyle.animationDurationSec}
+                  min={0}
+                  max={1.5}
+                  step={0.05}
+                  onChange={(_, v) => setSubtitleStyle((prev) => ({ ...prev, animationDurationSec: v as number }))}
+                />
+              </Box>
+            )}
+
+            {settingsTab === 4 && (
               <Box sx={{ width: "100%", maxWidth: 600, margin: "0 auto", py: 1 }}>
                 <Typography variant="subtitle2" sx={{ mb: 2, fontWeight: 600 }}>
                   {t("audioSettings.title")}
@@ -2114,7 +5406,7 @@ const Home: NextPage = () => {
               </Box>
             )}
 
-            {settingsTab === 3 && (
+            {settingsTab === 5 && (
               <div className={styles.effectButtons} style={{ paddingTop: 8 }}>
                 <Typography variant="body2" sx={{ mb: 1, textAlign: "center", fontWeight: 500 }}>
                   {t("shortOutput.title")}
@@ -2132,7 +5424,7 @@ const Home: NextPage = () => {
                     variant={shortOutputPreset === "youtube" ? "contained" : "outlined"}
                     onClick={() => {
                       setShortOutputPreset("youtube");
-                      setShortDurationSecStr("60");
+                      setShortDurationSecStr("180");
                     }}
                     size="small"
                     sx={{ height: 36 }}
@@ -2176,26 +5468,20 @@ const Home: NextPage = () => {
                     value={shortDurationSecStr}
                     onChange={(e) => setShortDurationSecStr(e.target.value)}
                     disabled={shortOutputPreset === "all"}
-                    placeholder={
-                      shortOutputPreset === "all"
-                        ? ""
-                        : t("shortOutput.durationPlaceholder", {
-                            max: getShortPlatformMaxSec(shortOutputPreset),
-                          })
-                    }
+                    placeholder={shortOutputPreset === "all" ? "" : t("shortOutput.durationPlaceholder")}
                     sx={{ width: 140, "& .MuiInputBase-root": { height: 36 } }}
                     inputProps={{ inputMode: "decimal" }}
                   />
                 </Box>
                 {shortOutputPreset !== "all" && (
                   <Typography variant="caption" color="textSecondary" display="block" sx={{ mt: 0.5, textAlign: "center" }}>
-                    {t("shortOutput.hint", { max: getShortPlatformMaxSec(shortOutputPreset) })}
+                    {t("shortOutput.hint")}
                   </Typography>
                 )}
               </div>
             )}
 
-            {settingsTab === 4 && (
+            {settingsTab === 6 && (
               <Box sx={{ width: "100%", maxWidth: 800, margin: "0 auto", py: 1 }}>
                 <Typography variant="subtitle2" color="primary" sx={{ mb: 1 }}>
                   {t("resolution.title")}
@@ -2205,6 +5491,7 @@ const Home: NextPage = () => {
                     variant={canvasSize === "auto" ? "contained" : "outlined"}
                     onClick={() => onChangeCanvasSize({ target: { value: "auto" } } as SelectChangeEvent<string>)}
                     size="small"
+                    disabled={isQuickEncoding || isRecording}
                   >
                     {t("resolution.auto")}
                   </Button>
@@ -2235,6 +5522,46 @@ const Home: NextPage = () => {
                     {t("resolution.autoHint")}
                   </Typography>
                 )}
+                <Divider sx={{ my: 2 }} />
+                <Typography variant="subtitle2" color="primary" sx={{ mb: 1 }}>
+                  {t("videoQuality.title")}
+                </Typography>
+                <Typography variant="body2" sx={{ mb: 2 }}>
+                  {t("videoQuality.outputResolution", {
+                    width: getCanvasDimensions(activeCanvasLayout).width,
+                    height: getCanvasDimensions(activeCanvasLayout).height,
+                  })}
+                </Typography>
+                <Typography gutterBottom>
+                  {t("videoQuality.videoBitrate", { value: recordVideoBitrateMbps })}
+                </Typography>
+                <Slider
+                  value={recordVideoBitrateMbps}
+                  min={1}
+                  max={40}
+                  step={0.5}
+                  onChange={(_, v) => setRecordVideoBitrateMbps(v as number)}
+                />
+                <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 2 }}>
+                  {t("videoQuality.videoBitrateHint")}
+                </Typography>
+                <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 2 }}>
+                  {t("videoQuality.recordContainerFixedMp4")}
+                </Typography>
+                <FormControl size="small" fullWidth sx={{ mb: 2, maxWidth: 360 }}>
+                  <InputLabel>{t("videoQuality.audioBitrate")}</InputLabel>
+                  <Select
+                    value={exportAudioBitrateKbps}
+                    label={t("videoQuality.audioBitrate")}
+                    onChange={(e) =>
+                      setExportAudioBitrateKbps(Number(e.target.value) as 128 | 192 | 256)
+                    }
+                  >
+                    <MenuItem value={128}>128 kbps</MenuItem>
+                    <MenuItem value={192}>192 kbps</MenuItem>
+                    <MenuItem value={256}>256 kbps</MenuItem>
+                  </Select>
+                </FormControl>
                 <Divider sx={{ my: 2 }} />
                 {isDeveloperMode && (
                   <Box sx={{ mb: 2, p: 1, bgcolor: "background.paper", borderRadius: 1 }}>
@@ -2324,35 +5651,6 @@ const Home: NextPage = () => {
                       </Typography>
                     </Box>
                   )}
-                  <Typography variant="body1" gutterBottom fontWeight={500}>
-                    {t("gpu.renderEngine")}
-                  </Typography>
-                  <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 1 }}>
-                    {t("gpu.renderCaption")}
-                  </Typography>
-                  <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
-                    <Button
-                      variant={rendererType === "canvas2d" ? "contained" : "outlined"}
-                      onClick={() => {
-                        setRendererType("canvas2d");
-                        localStorage.setItem("common_rendererType", "canvas2d");
-                      }}
-                      size="small"
-                    >
-                      {t("buttons.canvas2d")}
-                    </Button>
-                    <Button
-                      variant={rendererType === "webgl" ? "contained" : "outlined"}
-                      onClick={() => {
-                        setRendererType("webgl");
-                        localStorage.setItem("common_rendererType", "webgl");
-                      }}
-                      size="small"
-                      disabled={!gpuInfo?.isWebGLSupported}
-                    >
-                      {t("buttons.webgl")}
-                    </Button>
-                  </Box>
                 </Box>
                 <Divider sx={{ my: 2 }} />
                 <Typography variant="subtitle2" color="primary" sx={{ mb: 1 }}>
@@ -2409,8 +5707,6 @@ const Home: NextPage = () => {
                           reader.onload = () => {
                             const text = reader.result as string;
                             if (importAllSettings(text)) {
-                              const loaded = loadSettings(activeCanvasLayout, mode);
-                              setModeAdjustments(loaded ?? DEFAULT_ADJUSTMENTS);
                               openSnackBar(t("snackbar.importSuccess"));
                             } else {
                               openSnackBar(t("snackbar.importFailed"));
@@ -2453,20 +5749,22 @@ const Home: NextPage = () => {
           </div>
         </div>
 
-        <div className={styles.canvasWrapper}>
-          <canvas
-            key={rendererType}
-            className={styles.canvas}
-            ref={canvasRef}
-            data-size={activeCanvasLayout}
-          ></canvas>
+        <div className={`${styles.canvasWrapper} rounded-2xl border border-slate-200/80 bg-white/90 px-3 pb-3 pt-2 shadow-sm md:px-4 md:pb-4 dark:border-slate-600/50 dark:bg-slate-900/80 dark:shadow-md`}>
+          <div className="flex justify-center py-5 px-2 md:py-7 md:px-4">
+            <canvas
+              key={rendererType}
+              className={styles.canvas}
+              ref={canvasRef}
+              data-size={activeCanvasLayout}
+            ></canvas>
+          </div>
 
-          <div className={styles.menu__right}>
+          <div className={`${styles.menu__right} mt-3 rounded-xl bg-slate-50/70 p-3 dark:bg-slate-800/80`}>
             <Box sx={{ display: "flex", gap: 1.5, justifyContent: "center", flexWrap: "wrap", mt: 1 }}>
             <Button
               variant="outlined"
               startIcon={<VideoLibrary />}
-              disabled={playSoundDisabled}
+              disabled={playSoundDisabled || isQuickEncoding}
               onClick={onPlaySound}
               size="medium"
             >
@@ -2475,11 +5773,21 @@ const Home: NextPage = () => {
             <Button
               variant="outlined"
               startIcon={<FiberManualRecord />}
-              disabled={recordMovieDisabled || isPlaySound}
+              disabled={recordMovieDisabled || isPlaySound || isQuickEncoding}
               onClick={onRecordMovie}
               size="medium"
             >
               {t("buttons.generateVideo")}
+            </Button>
+            <Button
+              variant={isQuickEncoding ? "contained" : "outlined"}
+              color={isQuickEncoding ? "error" : "primary"}
+              startIcon={isQuickEncoding ? <Cancel /> : <Speed />}
+              disabled={playSoundDisabled || isPlaySound || isRecording}
+              onClick={isQuickEncoding ? onCancelQuickEncode : onQuickEncodeMovie}
+              size="medium"
+            >
+              {isQuickEncoding ? "キャンセル" : "動画高速生成"}
             </Button>
             <Button
               variant="outlined"
@@ -2492,9 +5800,26 @@ const Home: NextPage = () => {
               {t("buttons.clear")}
             </Button>
           </Box>
+          {isQuickEncoding && quickEncodingProgress && (
+            <Box sx={{ mt: 2, width: "100%" }}>
+              <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", mb: 1 }}>
+                <Typography variant="body2" color="textSecondary">
+                  {quickEncodingProgress.message}
+                </Typography>
+                <Typography variant="body2" color="textSecondary">
+                  {Math.round(quickEncodingProgress.progress)}%
+                </Typography>
+              </Box>
+              <LinearProgress
+                variant="determinate"
+                value={quickEncodingProgress.progress}
+                sx={{ height: 8, borderRadius: 4 }}
+              />
+            </Box>
+          )}
           </div>
 
-          <div className={styles.canvasInfo}>
+          <div className={`${styles.canvasInfo} mt-1 rounded-md dark:bg-slate-800/70`}>
             <Typography variant="caption" color="textSecondary">
               {t("recordSize", {
               width: getCanvasDimensions(activeCanvasLayout).width,
@@ -2505,12 +5830,48 @@ const Home: NextPage = () => {
         </div>
       </main>
 
+      <Dialog
+        open={dialogClearGalleryForVideo}
+        onClose={() => {
+          pendingVideoBackgroundFileRef.current = null;
+          setDialogClearGalleryForVideo(false);
+        }}
+      >
+        <DialogTitle>{t("dialog.clearGalleryForVideoTitle")}</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2">{t("dialog.clearGalleryForVideoBody")}</Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button
+            onClick={() => {
+              pendingVideoBackgroundFileRef.current = null;
+              setDialogClearGalleryForVideo(false);
+            }}
+          >
+            {t("dialog.cancel")}
+          </Button>
+          <Button
+            variant="contained"
+            onClick={() => {
+              const f = pendingVideoBackgroundFileRef.current;
+              pendingVideoBackgroundFileRef.current = null;
+              setDialogClearGalleryForVideo(false);
+              if (f) {
+                applyBackgroundMp4File(f);
+              }
+            }}
+          >
+            {t("dialog.confirmReplaceWithVideo")}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
       <CustomSnackbar
         {...snackBarProps}
         handleClose={handleClose}
       ></CustomSnackbar>
 
-      <footer className={styles.footer}>
+      <footer className={`${styles.footer} mt-8 rounded-xl border border-slate-200/70 bg-white/75 px-4 py-3 shadow-sm backdrop-blur-sm dark:border-slate-600/50 dark:bg-slate-900/75 dark:shadow-md`}>
         <p>
           Original work ©{" "}
           <a
@@ -2534,6 +5895,7 @@ const Home: NextPage = () => {
       </footer>
       </div>
     </>
+    </ThemeProvider>
   );
 };
 

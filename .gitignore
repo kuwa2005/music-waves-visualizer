@@ -42,12 +42,14 @@ img/
 dist/
 .env
 
-# SSL証明書（HTTPS用・自己生成）
-ssl/
-
 # ビルド出力
 out/
 visualizer/
 
 # postinstall で @ffmpeg/core から生成
 public/ffmpeg-core/
+
+# local editor / scripts
+mining.code-workspace
+x.sh
+引継ぎ資料_Windows_Cursor.md
