@@ -2526,18 +2526,6 @@ const Home: NextPage = () => {
     loadGalleryImagesFromFiles(images, true);
   };
 
-  const appendImageLoad = (event: { target: HTMLInputElement }) => {
-    if (backgroundMediaMode === "video") {
-      openSnackBar(t("snackbar.stillsBlockedInVideoBg"));
-      event.target.value = "";
-      return;
-    }
-    const raw = Array.from(event.target.files ?? []);
-    if (raw.length === 0) return;
-    loadGalleryImagesFromFiles(raw, false);
-    event.target.value = "";
-  };
-
   // 音楽ボタンから読み込み
   const audioLoad = async (event: { target: HTMLInputElement }) => {
     const file = event.target.files[0];
@@ -3629,10 +3617,6 @@ const Home: NextPage = () => {
                   onChange={imageLoad}
                   hidden
                 />
-              </Button>
-              <Button variant="outlined" component="label" size="medium" sx={{ flexShrink: 0, minWidth: 130 }}>
-                {t("dropZone.addImage")}
-                <input type="file" accept="image/*" multiple onChange={appendImageLoad} hidden />
               </Button>
               <Typography
                 variant="body2"
