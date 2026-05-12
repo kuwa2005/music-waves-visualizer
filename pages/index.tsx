@@ -44,6 +44,8 @@ import {
   Undo,
   Lightbulb,
   LightbulbOutlined,
+  Speed,
+  Cancel,
 } from "@mui/icons-material";
 import i18n from "i18next";
 import { CustomSnackbar } from "../components/CustomSnackbar";
@@ -68,6 +70,12 @@ import {
 import { drawBarsWebGL, getFPSWebGL, cleanupWebGL, stopWebGLAnimation, clearWebGLImageCache } from "../lib/WebGLRenderer";
 import type { EffectType, EffectDensity, EffectParams } from "../lib/Effects";
 import { getGpuInfo, getGpuDisplayName, type GpuInfo } from "../lib/GpuDetector";
+import {
+  QuickVideoEncoder,
+  analyzeAudioRealtime,
+  type QuickEncoderProgress,
+  type QuickEncoderConfig
+} from "../lib/QuickVideoEncoder";
 import { isWebCodecsSupported, checkHardwareEncoderSupport, getBestEncodingMethod } from "../lib/WebCodecsEncoder";
 import { generateMp4Video } from "../lib/Ffmpeg";
 import { mwvError, mwvLog, mwvMilestone } from "../lib/mwvConsole";
@@ -240,6 +248,11 @@ const Home: NextPage = () => {
   // エンコード進捗
   const [encodeStatus, setEncodeStatus] = useState<"idle" | "loading" | "converting">("idle");
   const [encodeProgress, setEncodeProgress] = useState<number>(0);
+  // 高速エンコード関連State
+  const [isQuickEncoding, setIsQuickEncoding] = useState<boolean>(false);
+  const [quickEncodingProgress, setQuickEncodingProgress] = useState<QuickEncoderProgress | null>(null);
+  const quickEncoderRef = useRef<QuickVideoEncoder | null>(null);
+  const quickEncodeCancelRef = useRef(false);
 
   // GPU関連State
   const [gpuInfo, setGpuInfo] = useState<GpuInfo | null>(null);
@@ -3236,10 +3249,149 @@ const Home: NextPage = () => {
     }, 100); // 100ms待機して録画用canvasのアニメーション開始を保証
   };
 
+  const onQuickEncodeMovie = async () => {
+    if (!decodedAudioBufferRef.current && !videoElementRef.current) {
+      openSnackBar("音声ファイルが読み込まれていません");
+      return;
+    }
+    if (videoElementRef.current) {
+      openSnackBar("動画ファイルの高速生成は現在サポートされていません");
+      return;
+    }
+    const audioBuffer = decodedAudioBufferRef.current;
+    if (!audioBuffer) {
+      openSnackBar("音声データが読み込まれていません");
+      return;
+    }
+
+    quickEncodeCancelRef.current = false;
+    setIsQuickEncoding(true);
+    setQuickEncodingProgress({
+      stage: "analyzing",
+      progress: 0,
+      message: "音声データを解析中...",
+    });
+
+    try {
+      const analysisResult = await analyzeAudioRealtime(
+        audioBuffer,
+        60,
+        2048,
+        (progress) => {
+          if (!quickEncodeCancelRef.current) {
+            setQuickEncodingProgress(progress);
+          }
+        },
+        () => quickEncodeCancelRef.current || quickEncoderRef.current?.isCancelled() || false
+      );
+
+      if (quickEncodeCancelRef.current) {
+        throw new Error("Cancelled");
+      }
+
+      const { width, height } = getCanvasDimensions(activeCanvasLayout);
+      const encoderConfig: QuickEncoderConfig = {
+        width,
+        height,
+        frameRate: 60,
+        bitrate: Math.round(recordVideoBitrateMbps * 1_000_000),
+        mode,
+        adjustments: modeAdjustments,
+        backgroundImage: imageCtx,
+        rendererType,
+      };
+
+      const encoder = new QuickVideoEncoder(encoderConfig, (progress) => {
+        if (!quickEncodeCancelRef.current) {
+          setQuickEncodingProgress(progress);
+        }
+      });
+      quickEncoderRef.current = encoder;
+
+      const webmBlob = await encoder.encodeWithCanvas2D(analysisResult, imageCtx);
+      if (quickEncodeCancelRef.current || encoder.isCancelled()) {
+        throw new Error("Cancelled");
+      }
+
+      const movieBase = "movie_quick_" + Math.random().toString(36).slice(-8);
+      const downloadMp4Name = buildDownloadMp4Name(audioFileName, movieBase);
+      const webmName = movieBase + ".webm";
+      const mp4Name = movieBase + ".mp4";
+      const binaryData = new Uint8Array(await webmBlob.arrayBuffer());
+
+      const video = await generateMp4Video(
+        binaryData,
+        webmName,
+        mp4Name,
+        {
+          onLoadStart: () =>
+            setQuickEncodingProgress({
+              stage: "finalizing",
+              progress: 72,
+              message: t("encode.loadingFfmpeg"),
+            }),
+          onLoadComplete: () =>
+            setQuickEncodingProgress({
+              stage: "finalizing",
+              progress: 78,
+              message: t("encode.converting", { progress: 78 }),
+            }),
+          onProgress: (ratio) => {
+            if (!Number.isFinite(ratio)) return;
+            const pct = 78 + Math.round(Math.max(0, Math.min(1, ratio)) * 22);
+            setQuickEncodingProgress({
+              stage: "finalizing",
+              progress: pct,
+              message: t("encode.converting", { progress: pct }),
+            });
+          },
+        },
+        targetLufs,
+        exportAudioBitrateKbps
+      );
+
+      if (!video || video.length === 0) {
+        throw new Error("empty_mp4");
+      }
+
+      const mp4Blob = new Blob([video], { type: "video/mp4" });
+      const objectURL = URL.createObjectURL(mp4Blob);
+      const a = document.createElement("a");
+      a.href = objectURL;
+      a.download = downloadMp4Name;
+      a.click();
+      a.remove();
+      openSnackBar("動画の高速生成が完了しました");
+    } catch (error) {
+      if (error instanceof Error && error.message === "Cancelled") {
+        openSnackBar("高速生成をキャンセルしました");
+      } else {
+        mwvError("quick-encode error", error);
+        openSnackBar("動画の高速生成に失敗しました");
+      }
+    } finally {
+      quickEncodeCancelRef.current = false;
+      quickEncoderRef.current = null;
+      setIsQuickEncoding(false);
+      setQuickEncodingProgress(null);
+    }
+  };
+
+  const onCancelQuickEncode = () => {
+    quickEncodeCancelRef.current = true;
+    quickEncoderRef.current?.cancel();
+    openSnackBar("高速生成をキャンセルしています...");
+  };
+
   // クリア（ページロード時の状態に戻す）
   const onClear = () => {
     clearPlaybackWindowTimer();
     mediaRecorderRef.current = null;
+    quickEncodeCancelRef.current = true;
+    quickEncoderRef.current?.cancel();
+    quickEncoderRef.current = null;
+    setIsQuickEncoding(false);
+    setQuickEncodingProgress(null);
     disposeStandaloneBackgroundVideo();
     setBackgroundMediaMode("none");
     setBackgroundVideoFileName("");
@@ -3468,6 +3620,7 @@ const Home: NextPage = () => {
                 component="label"
                 startIcon={<PhotoLibrary />}
                 size="medium"
+                disabled={isQuickEncoding || isRecording || isPlaySound}
                 sx={{ flexShrink: 0, minWidth: 200 }}
               >
                 {t("dropZone.selectImage")}
@@ -3598,6 +3751,7 @@ const Home: NextPage = () => {
                 component="label"
                 startIcon={<LibraryMusic />}
                 size="medium"
+                disabled={isQuickEncoding || isRecording || isPlaySound}
                 sx={{ flexShrink: 0, minWidth: 210 }}
               >
                 {t("dropZone.selectAudio")}
@@ -5337,6 +5491,7 @@ const Home: NextPage = () => {
                     variant={canvasSize === "auto" ? "contained" : "outlined"}
                     onClick={() => onChangeCanvasSize({ target: { value: "auto" } } as SelectChangeEvent<string>)}
                     size="small"
+                    disabled={isQuickEncoding || isRecording}
                   >
                     {t("resolution.auto")}
                   </Button>
@@ -5609,7 +5764,7 @@ const Home: NextPage = () => {
             <Button
               variant="outlined"
               startIcon={<VideoLibrary />}
-              disabled={playSoundDisabled}
+              disabled={playSoundDisabled || isQuickEncoding}
               onClick={onPlaySound}
               size="medium"
             >
@@ -5618,11 +5773,21 @@ const Home: NextPage = () => {
             <Button
               variant="outlined"
               startIcon={<FiberManualRecord />}
-              disabled={recordMovieDisabled || isPlaySound}
+              disabled={recordMovieDisabled || isPlaySound || isQuickEncoding}
               onClick={onRecordMovie}
               size="medium"
             >
               {t("buttons.generateVideo")}
+            </Button>
+            <Button
+              variant={isQuickEncoding ? "contained" : "outlined"}
+              color={isQuickEncoding ? "error" : "primary"}
+              startIcon={isQuickEncoding ? <Cancel /> : <Speed />}
+              disabled={playSoundDisabled || isPlaySound || isRecording}
+              onClick={isQuickEncoding ? onCancelQuickEncode : onQuickEncodeMovie}
+              size="medium"
+            >
+              {isQuickEncoding ? "キャンセル" : "動画高速生成"}
             </Button>
             <Button
               variant="outlined"
@@ -5635,6 +5800,23 @@ const Home: NextPage = () => {
               {t("buttons.clear")}
             </Button>
           </Box>
+          {isQuickEncoding && quickEncodingProgress && (
+            <Box sx={{ mt: 2, width: "100%" }}>
+              <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", mb: 1 }}>
+                <Typography variant="body2" color="textSecondary">
+                  {quickEncodingProgress.message}
+                </Typography>
+                <Typography variant="body2" color="textSecondary">
+                  {Math.round(quickEncodingProgress.progress)}%
+                </Typography>
+              </Box>
+              <LinearProgress
+                variant="determinate"
+                value={quickEncodingProgress.progress}
+                sx={{ height: 8, borderRadius: 4 }}
+              />
+            </Box>
+          )}
           </div>
 
           <div className={`${styles.canvasInfo} mt-1 rounded-md dark:bg-slate-800/70`}>
