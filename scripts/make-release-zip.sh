@@ -37,7 +37,7 @@ cp -a "${ROOT}/visualizer/." "${STAGE}/visualizer/"
 cp "${ROOT}/docs/INSTALL_LOCAL_STATIC.md" "${STAGE}/INSTALL_LOCAL_STATIC.md"
 
 # Root-level legal & hosting docs
-for f in LICENSE NOTICE CHANGELOG.md HTML_HOSTING.md SERVER_REQUIREMENTS.md SERVER_REQUIREMENTS_DOCKER.md USER_TERMS.md PRIVACY_POLICY.md EU_GDPR_NOTICE.md nginx-static-https.conf; do
+for f in LICENSE NOTICE CHANGELOG.md HTML_HOSTING.md SERVER_REQUIREMENTS.md USER_TERMS.md PRIVACY_POLICY.md EU_GDPR_NOTICE.md; do
   if [[ -f "${ROOT}/${f}" ]]; then
     cp "${ROOT}/${f}" "${STAGE}/docs-bundled/"
   fi
@@ -50,6 +50,21 @@ for f in BUILD.md SECURITY.md FFMPEG.md README.md INSTALL_LOCAL_STATIC.md VIDEO_
   fi
 done
 
-( cd "${STAGE}" && zip -r -q "${OUT_DIR}/${ZIP_NAME}" . )
+( cd "${STAGE}" && if command -v zip >/dev/null 2>&1; then
+    zip -r -q "${OUT_DIR}/${ZIP_NAME}" .
+  else
+    python3 - "${OUT_DIR}/${ZIP_NAME}" <<'PY'
+import pathlib
+import sys
+import zipfile
+
+out_path = pathlib.Path(sys.argv[1])
+root = pathlib.Path('.')
+with zipfile.ZipFile(out_path, 'w', compression=zipfile.ZIP_DEFLATED) as zf:
+    for path in sorted(root.rglob('*')):
+        if path.is_file():
+            zf.write(path, path.relative_to(root))
+PY
+  fi )
 echo "Created ${OUT_DIR}/${ZIP_NAME}"
 ls -lh "${OUT_DIR}/${ZIP_NAME}"

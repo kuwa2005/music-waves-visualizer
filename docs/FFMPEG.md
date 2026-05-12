@@ -20,7 +20,7 @@ SharedArrayBuffer requires **cross-origin isolation**:
 - `Cross-Origin-Opener-Policy: same-origin`
 - `Cross-Origin-Embedder-Policy: require-corp`
 
-These are set in `next.config.js` (standalone), `nginx-static-https.conf`, and `htaccess-for-export`.
+These are set in `next.config.js`, `htaccess-for-export`, or any equivalent static server configuration you use for deployment.
 
 ### Logging
 

@@ -6,11 +6,11 @@ alwaysApply: true
 
 # music-waves-visualizer デプロイルール
 
-## 検証・反映
+## 標準の開発・検証
 
-- **Docker版**: 修正後は**常に**Docker版へ反映する
-  - `docker compose -f docker-compose.https.yml up -d --build` で再ビルド・起動
-  - 検証は常にDocker版で行う
+- 標準の開発環境は **WSL2 + Node.js** とする
+- 修正確認は基本的に `npm run dev` または `npm run build` で行う
+- 静的配布物の更新が必要なときのみ `npm run build:html` を使う
 
 ## 指示がある場合のみ
 

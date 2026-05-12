@@ -5,7 +5,7 @@ Requirements for running Music Waves Visualizer on shared hosting, rental server
 ## Quick Build
 
 ```bash
-npm install
+npm install --legacy-peer-deps
 npm run build:html
 ```
 
@@ -13,7 +13,7 @@ Upload contents of `visualizer/` to the server's `visualizer` directory. Access 
 
 ## Requirements
 
-- **Node.js**: 18.x+ (for build)
+- **Node.js**: 20.x+ (for build)
 - **Static hosting**: Vercel, Netlify, GitHub Pages, or any static file server
 - **Storage**: 500MB+ recommended
 - **HTTPS**: Recommended (required for SharedArrayBuffer / FFmpeg)

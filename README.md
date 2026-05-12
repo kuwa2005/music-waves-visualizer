@@ -18,49 +18,33 @@ Static build with SEO-friendly absolute URLs for that host: `npm run build:html:
 
 ## Features
 
-- **File loading**: Drag & drop or button to load image and audio files; **MP4** can be **music (audio)** or a **single background video** (see [docs/VIDEO_BACKGROUND.md](./docs/VIDEO_BACKGROUND.md))
-- **Auto image scaling**: Loaded images are scaled to recommended resolution (1920×1080, etc.) with aspect ratio preserved
-- **Spectrum analyzer**: OFF plus **5 selectable styles** in the UI (frequency bars, circle, symmetric bars, dots, glyco). *Line (mode 1) and symmetric waveform (mode 5) remain in the engine but are hidden from the toolbar; old saved sessions using those modes fall back to frequency bars.*
-- **Resolution mode**: Manual (1920×1080 / 1080×1920 / 1920×1920) and **Auto** (detect from loaded image aspect ratio as 16:9 / 9:16 / 1:1)
-- **Clip length limit (short platforms)**: When enabled, preview/recording use **Start (sec)** and **Duration (sec)**. Preset buttons (YouTube / TikTok / NicoNico) only **suggest** a duration in the field; they do not cap playback. **Empty duration** = play from start **to end of media**.
-- **Settings tabs**: Spectrum Analyzer / Effects / Audio / Subtitles / Title / Clip Length / Settings (exact labels depend on locale)
-- **Display & volume settings**: Scale/position per **resolved layout × spectrum mode** (persisted), target LUFS (YouTube -14, NicoNico -15, custom, **off** stored explicitly)
-- **Client persistence**: Most settings are saved in **first-party browser cookies** (with migration from older `localStorage` keys on first visit). **Not persisted**: loaded image/music files, **title text**, **SRT file content** (styles and toggles for subtitles/title are saved).
-- **Effects**: Space (select type 1/2/3 in parameter panel), vignette, rainbow, curtain, sparkle (きらきら), dust (atmosphere), rain, snow. Shown during preview/recording only. Per-effect strength (weak/medium/strong). Sparkle/dust use compact rendering (no large radial glow halos)
-- **Preview**: Real-time waveform display while playing music
-- **Video generation**: MP4 output
-- **Settings management**: Export all settings, import with overwrite of existing keys only
-- **Clear**: Reset image/music selection and settings to initial state
-- **Bilingual UI**: Japanese / English (auto-detected from browser language)
+- **File loading**: Drag & drop or buttons for still images, audio, subtitle files, and a single MP4/video background
+- **Multi-image gallery**: Add multiple still images, auto-advance them during playback/recording, and apply transitions such as crossfade, wipe, slide, zoom, checker, and flash
+- **Spectrum visualizers**: Frequency and loudness modes including bars, circle, symmetric bars, dots, fill, glyco, loudness pulse, VU meter, pulse ring, center orb, breathing background, particles, geometry morph, oscilloscope, and Lissajous-style curves
+- **Title and subtitles**: Canvas title overlay plus SRT subtitle import, styling, animation, and built-in subtitle authoring/timing tools from pasted lyrics
+- **Video background support**: Use a single MP4 as the background visual, or extract audio/stills from video files where appropriate (see [docs/VIDEO_BACKGROUND.md](./docs/VIDEO_BACKGROUND.md))
+- **Resolution and tuning**: Auto/manual layouts (16:9 / 9:16 / 1:1), per-layout scale/position, waveform color/style presets, LUFS normalization, bitrate controls, and Canvas 2D / WebGL renderer selection
+- **Effects**: Space, vignette, rainbow, curtain, sparkle, atmosphere, rain, snow, and scanlines with per-effect parameters
+- **Clip length limit**: Presets and manual ranges for preview/recording windows, including YouTube, TikTok, and NicoNico-oriented lengths
+- **Video generation**: MP4 output plus a fast-generation path when the alternative encoder route is available
+- **Settings management**: Export/import settings JSON, persistent saved values, and one-click clear
+- **Client persistence**: Most settings are saved in first-party browser cookies, with migration from older localStorage keys on first visit
+- **UI extras**: Dark/light mode toggle and bilingual Japanese / English UI
 
 ## Quick Start
 
-### Docker HTTPS (recommended for testing)
+### WSL / Local development (recommended)
 
 ```bash
-./generate-ssl-cert.sh <server-IP>   # First time only
-docker compose -f docker-compose.https.yml up -d --build
+npm install --legacy-peer-deps
+npm run dev
 ```
 
-Access: `https://<server-IP>:8443/visualizer/`
+Open: `http://localhost:3000`
 
-- HTTPS is required for remote access and SharedArrayBuffer (FFmpeg video conversion)
-- Self-signed certificate: In browser, choose "Advanced" → "Proceed to site"
-
-### Other run methods
-
-```bash
-# Production (Next.js standalone)
-docker-compose up --build
-
-# Development
-docker-compose -f docker-compose.dev.yml up --build
-
-# Local development (localhost only)
-npm install --legacy-peer-deps && npm run dev
-```
-
-See [README_DOCKER.md](./README_DOCKER.md) for details.
+- Standard development environment: **Windows + Cursor + WSL2 + Node.js**
+- Use Git and npm inside WSL
+- Use `npm run build` for production build checks
 
 ### Static HTML for shared hosting
 
@@ -75,14 +59,13 @@ npm run build:html
 
 ## Usage
 
-1. **Load files**: Drag & drop or use buttons to select stills and/or audio; use **Music** for MP4 audio, or **one** MP4 under image picker for **video background** (see [docs/VIDEO_BACKGROUND.md](./docs/VIDEO_BACKGROUND.md))
-2. **Select spectrum analyzer**: Choose from the visible modes (OFF + five styles)
-3. **Settings > Resolution**: Use Auto or manual 3 layouts
-4. **Audio (optional)**: Configure target LUFS
-5. **Effects (optional)**: Select effect and adjust parameters (collapsible panel)
-6. **Preview**: Play music and view waveform
-7. **Generate video**: Output MP4 (do not switch windows during generation)
-8. **Clear**: Reset to initial state
+1. **Load media**: Drop/select still images, audio, subtitles, or a single MP4 for video background
+2. **Build the scene**: Add more gallery images, choose a spectrum mode, and optionally enable title/subtitle overlays
+3. **Tune visuals**: Adjust effects, layout, waveform style, renderer, and clip-length range
+4. **Tune audio/output**: Configure target LUFS, bitrate, and output resolution as needed
+5. **Preview**: Play the track and confirm transitions, subtitles, and waveform behavior
+6. **Generate video**: Export MP4, or use the fast-generation option when available
+7. **Save or reset**: Export/import settings JSON, or clear everything to start over
 
 See [SPECIFICATION.md](./SPECIFICATION.md) for details.
 
@@ -90,13 +73,11 @@ See [SPECIFICATION.md](./SPECIFICATION.md) for details.
 
 - **[docs/README.md](./docs/README.md)**: Documentation hub (build, security, FFmpeg)
 - **[docs/BUILD.md](./docs/BUILD.md)**: Install (`--legacy-peer-deps`), FFmpeg copy, env vars, scripts
-- **[docs/SECURITY.md](./docs/SECURITY.md)**: Headers, file limits, Docker, audits
+- **[docs/SECURITY.md](./docs/SECURITY.md)**: Headers, file limits, dependency audits
 - **[docs/FFMPEG.md](./docs/FFMPEG.md)**: Self-hosted core, COOP/COEP, vs upstream PR #23
 - **[docs/VIDEO_BACKGROUND.md](./docs/VIDEO_BACKGROUND.md)**: MP4 roles (music vs video background), picker / drag-drop rules, and current **MP4-fixed output** policy (no alpha)
 - **[SPECIFICATION.md](./SPECIFICATION.md)**: Technical spec and feature details
-- **[README_DOCKER.md](./README_DOCKER.md)**: Docker usage
 - **[SERVER_REQUIREMENTS.md](./SERVER_REQUIREMENTS.md)**: Shared hosting requirements
-- **[SERVER_REQUIREMENTS_DOCKER.md](./SERVER_REQUIREMENTS_DOCKER.md)**: Local/Docker requirements
 - **[DEVELOPER_MODE.md](./DEVELOPER_MODE.md)**: Developer mode
 - **[CHANGELOG.md](./CHANGELOG.md)**: Changelog
 - **[USER_TERMS.md](./USER_TERMS.md)**: Terms of Service (EN + 日本語)
@@ -106,7 +87,7 @@ See [SPECIFICATION.md](./SPECIFICATION.md) for details.
 
 ## GitHub Releases
 
-[Releases](https://github.com/kuwa2005/music-waves-visualizer/releases) ship a **static ZIP** (no Node.js needed on the host): `visualizer/` plus **`INSTALL_LOCAL_STATIC.md`** and **`docs-bundled/`** (license, changelog, hosting, FFmpeg, nginx sample, terms/privacy). Maintainer: `npm run release:zip` (runs `npm run build:html` when `visualizer/` is missing).
+[Releases](https://github.com/kuwa2005/music-waves-visualizer/releases) ship a **static ZIP** (no Node.js needed on the host): `visualizer/` plus **`INSTALL_LOCAL_STATIC.md`** and **`docs-bundled/`** (license, changelog, hosting, FFmpeg, terms/privacy). Maintainer: `npm run release:zip` (runs `npm run build:html` when `visualizer/` is missing).
 
 ## Credits
 
@@ -131,25 +112,26 @@ MIT License. See [LICENSE](./LICENSE). Dependencies: [NOTICE](./NOTICE).
 
 ### 主な機能
 
-- **ファイル読み込み**: ドラッグ&ドロップまたはボタンから画像・音楽を読み込み。**MP4** は音楽用／**単体**で背景動画用（詳細は [docs/VIDEO_BACKGROUND.md](./docs/VIDEO_BACKGROUND.md)）
-- **画像の自動スケーリング**: 読み込んだ画像を推奨解像度に自動拡大・縮小
-- **スペクトラムアナライザー**: UI では周波数系（OFF・周波数バー・円形・上下対称バー・ドット・面塗り・グライコ・オシロ）＋音圧系（パルス・VU・リング・オーブ・背景・粒子・ジオメトリ）。リサージュ(16)・折れ線(1)・波形上下対称(5)は描画ロジックのみ残しボタン非表示
-- **解像度モード**: 手動3種（1920×1080、1080×1920、1920×1920）＋**自動**（画像比率から16:9/9:16/1:1を判定）
-- **表示・音量設定**: 倍率・位置の調整、目標LUFS（YouTube -14、ニコニコ -15、任意値）
-- **字幕（SRT）**: スペアナ/エフェクトの設定パネルから `.srt` を読み込み。位置・種類（プレーン/縁取り/ボックス）・色・フォント・装飾（太字/斜体/縁取り）・表示アニメーション（フェード/スライド/ポップ）を調整可能
-- **タイトル**: 「タイトル」タブでテキスト入力。フォントサイズ・字間・揃え・縁取り/ボックス・影・再生時の表示アニメなどを調整可能（Canvas 2D で描画）
-- **設定タブ**: スペアナ / エフェクト / 音設定 / 動画長 / 設定
-- **エフェクト**: 宇宙空間（タイプ1/2/3はパラメータで選択）、ビネット、レインボー、カーテン、きらきら、空気感（ほこり）、雨、雪
-- **プレビュー・動画生成・設定管理・クリア**
-- **バイリンガルUI**: ブラウザ言語に応じて日本語/英語を自動切り替え
+- **ファイル読み込み**: 静止画・音楽・字幕をドラッグ&ドロップまたはボタンから読み込み。単一 MP4 を背景動画として使うことも可能
+- **複数画像ギャラリー**: 追加画像の読み込み、自動切替、クロスフェード・ワイプ・ズーム・フラッシュなどのトランジションに対応
+- **スペクトラムアナライザー**: 周波数系と音圧系の両方を搭載。バー、円形、対称バー、ドット、面、グライコ、パルス、VU、リング、オーブ、背景ブリージング、粒子、ジオメトリ変形、オシロスコープ、リサージュ系などを選択可能
+- **タイトル・字幕**: タイトル文字のオーバーレイ、SRT 字幕の読み込み・装飾・アニメーション、歌詞からの字幕作成/タイミング記録に対応
+- **背景動画対応**: 静止画ギャラリーの代わりに単一 MP4 を背景として使用可能。動画から音声や静止画を取り込む導線もあり（詳細は [docs/VIDEO_BACKGROUND.md](./docs/VIDEO_BACKGROUND.md)）
+- **解像度・表示・音量調整**: 自動/手動レイアウト、倍率・位置、波形カラー/スタイル、LUFS 正規化、ビットレート、Canvas 2D / WebGL の切り替えに対応
+- **エフェクト**: 宇宙空間、ビネット、レインボー、カーテン、きらきら、空気感、雨、雪、スキャンラインをパラメータ付きで利用可能
+- **動画長制限**: YouTube / TikTok / ニコニコ向けの長さプリセットと、開始位置・秒数の手動指定に対応
+- **動画生成**: MP4 出力に加えて、条件が合えば高速生成ルートも利用可能
+- **設定管理**: JSON のエクスポート/インポート、保存済み設定の利用、ワンクリッククリア
+- **設定保持**: 主要な設定はファーストパーティ Cookie に保存され、初回アクセス時に旧 localStorage から移行
+- **UI**: ダーク/ライト切り替えと、日本語/英語のバイリンガル表示
 
 ### クイックスタート
 
 ```bash
-# Docker HTTPS版（推奨）
-./generate-ssl-cert.sh <サーバーIP>
-docker compose -f docker-compose.https.yml up -d --build
-# アクセス: https://<サーバーIP>:8443/visualizer/
+# WSL2 / ローカル開発（標準）
+npm install --legacy-peer-deps
+npm run dev
+# アクセス: http://localhost:3000
 
 # 静的HTML版（レンタルサーバー用）
 npm run build:html
@@ -161,9 +143,7 @@ npm run build:html
 - [docs/README.md](./docs/README.md): ドキュメント索引（ビルド・セキュリティ・FFmpeg・動画背景）
 - [docs/VIDEO_BACKGROUND.md](./docs/VIDEO_BACKGROUND.md): MP4 の使い分け・UI 規則・録画・関連 Issue
 - [仕様書.md](./仕様書.md): 技術仕様と機能詳細
-- [README_DOCKER.md](./README_DOCKER.md): Dockerの使い方
 - [サーバー要件.md](./サーバー要件.md): レンタルサーバー用要件
-- [サーバー要件(local docker)用.md](./サーバー要件(local%20docker)用.md): ローカル・Docker用
 - [DEVELOPER_MODE.md](./DEVELOPER_MODE.md): 開発者モード
 - [CHANGELOG.md](./CHANGELOG.md): 変更履歴
 - [USER_TERMS.md](./USER_TERMS.md): 利用規約
@@ -173,4 +153,4 @@ npm run build:html
 
 ### GitHub Releases
 
-[Releases](https://github.com/kuwa2005/music-waves-visualizer/releases) に **静的版 ZIP** を添付しています（配信先に Node.js は不要）。中身は `visualizer/` と **`INSTALL_LOCAL_STATIC.md`**、および **`docs-bundled/`**（ライセンス・変更履歴・ホスティング・FFmpeg・nginx サンプル・規約類）。メンテ用: `npm run release:zip`（`visualizer/` が無いときは `build:html` を実行）。
+[Releases](https://github.com/kuwa2005/music-waves-visualizer/releases) に **静的版 ZIP** を添付しています（配信先に Node.js は不要）。中身は `visualizer/` と **`INSTALL_LOCAL_STATIC.md`**、および **`docs-bundled/`**（ライセンス・変更履歴・ホスティング・FFmpeg・規約類）。メンテ用: `npm run release:zip`（`visualizer/` が無いときは `build:html` を実行）。

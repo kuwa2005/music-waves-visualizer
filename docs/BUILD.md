@@ -2,7 +2,7 @@
 
 ## Requirements
 
-- **Node.js 18+** (aligned with `Dockerfile` / `Dockerfile.static`)
+- **Node.js 20+**
 - **npm** 9+ recommended
 
 ## Install
@@ -12,8 +12,6 @@ This repo pins versions that can conflict on **peer dependencies** (`i18next` vs
 ```bash
 npm install --legacy-peer-deps
 ```
-
-**Docker**: the `Dockerfile` (Next.js standalone) and `Dockerfile.static` use `npm ci --legacy-peer-deps --ignore-scripts` on the layer that only has `package.json` / lockfile (so `postinstall` does not run before `scripts/` is copied). FFmpeg copy runs later via `prebuild` / `build:html` / `npm run build` after the full tree is in the image.
 
 ## FFmpeg core assets (postinstall)
 
@@ -33,7 +31,7 @@ node scripts/copy-ffmpeg-core.cjs
 | Command | Purpose |
 |---------|---------|
 | `npm run dev` | Next.js dev server (localhost) |
-| `npm run build` | Production build (standalone layout for Docker) |
+| `npm run build` | Production build check |
 | `npm run build:html` | Static export → `visualizer/` for Apache/nginx hosting |
 
 `next export` may print **deprecation / “Static Export”** notices depending on Next.js version; the script remains the supported path for this repo. If the build warns about **Browserslist** being outdated, run `npx update-browserslist-db@latest` (optional; see [browserslist.dev](https://github.com/browserslist/update-db#readme)).
@@ -62,17 +60,6 @@ npm run build:html:lil-la
 
 テンプレートはリポジトリ直下の [`.env.production.example`](../.env.production.example) を参照してください。
 
-## Docker images
-
-- **`Dockerfile.static` + `docker-compose.https.yml`**: nginx serves static `visualizer/` on HTTPS (port 8443).
-- **`Dockerfile` + `docker-compose.yml`**: Next.js **standalone** on port 3000.
-
-Production standalone image: developer mode defaults **off**; enable only with:
-
-```bash
-docker build --build-arg NEXT_PUBLIC_DEVELOPER_MODE=true -t mwv:dev .
-```
-
 ---
 
 ## 日本語
@@ -90,4 +77,4 @@ npm install --legacy-peer-deps
 ### ビルド
 
 - 静的配信: `npm run build:html` → `visualizer/` をサーバーに配置
-- Docker 本番（Next standalone）: ルートの `Dockerfile` を参照。開発者モードはビルド引数でのみ有効化
+- 本番確認: `npm run build`
