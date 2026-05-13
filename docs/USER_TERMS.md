@@ -70,7 +70,17 @@ Users shall not engage in the following when using the Service:
 ### Q. Is credit required when using the Service on YouTube?
 
 Credit attribution is not required for use of the Service itself.  
+**The same applies on other video-sharing services (not only YouTube):** you do not need to credit the Service for having used it.  
 However, if the User Content (audio, images, etc.) you use has its own terms (e.g., credit required), follow those terms.
+
+### Q. Do I need to include the tool name when I post videos I made with the Service?
+
+**No.** You are welcome to mention the Service or list the tool name if you wish, but it is **not** required.
+
+### Q. Can I introduce or link to the Service in my posts?
+
+We **welcome** posts that introduce the Service or say you used it.  
+On **X (formerly Twitter)** and similar platforms, **posting a link on every post** may be treated as spam and **can lead to shadowbanning or other restrictions** in some cases; please share **in moderation**.
 
 ---
 
@@ -117,7 +127,13 @@ For handling of personal information, access logs, and whether uploaded images/a
 ### よくある質問
 
 **Q. YouTubeで使う場合、クレジット表記は必要？**  
-本サービスの利用自体にはクレジット表記は必須ではありません。ただし、使用する音源・画像等の利用条件（クレジット必須等）がある場合は各素材の条件に従ってください。
+本サービスの利用自体にはクレジット表記は必須ではありません。**YouTube に限らず、他の動画共有サービスでも同様に、本サービス利用の旨のクレジット表記は不要です。** ただし、使用する音源・画像等の利用条件（クレジット必須等）がある場合は各素材の条件に従ってください。
+
+**Q. 投稿するときに利用ツール名の記載は必要？**  
+**必須ではありません。** 任意でツール名や本サービス名を添えていただく分には問題ありません。
+
+**Q. 本サービスを紹介してくれることについて**  
+**大歓迎です。** 一方、**X（旧 Twitter）** などでは、**毎回のように投稿にリンクを貼り続ける**とスパム扱いとなり、**シャドウBAN等の制限を受けることがある**場合があります。**ほどほど**にご利用ください。
 
 ### 付則
 
