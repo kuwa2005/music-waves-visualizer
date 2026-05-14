@@ -157,7 +157,7 @@
     "animPop": "Pop",
     "animationDuration": "Animation duration: {{value}} s",
     "author": {
-      "sectionTitle": "Create SRT from lyrics",
+      "sectionTitle": "Subtitle authoring (hidden feature)",
       "hint": "Paste Suno-style lyrics. Tags in [ ] are removed; blank lines are skipped. Timing uses the loaded audio timeline.",
       "lyricsLabel": "Lyrics text",
       "lyricsPlaceholder": "Paste lyrics here…",
