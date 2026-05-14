@@ -29,6 +29,7 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
+  Checkbox,
 } from "@mui/material";
 import { ThemeProvider, createTheme } from "@mui/material/styles";
 import {
@@ -137,9 +138,6 @@ function isLyricsTextFileByName(name: string): boolean {
   return /\.(txt|lrc)$/i.test(name);
 }
 
-/** 字幕タブの「SRT 作成支援」パネル。公開時は false のまま（再有効化は true に変更） */
-const ENABLE_SRT_AUTHOR_UI = false;
-
 type CanvasLayoutKey = "1920x1080" | "1080x1920" | "1920x1920";
 
 function detectLayoutFromAspectRatio(ratio: number): CanvasLayoutKey {
@@ -216,6 +214,13 @@ const Home: NextPage = () => {
   /** ライト／ダーク。初期は固定でハイドレーション一致（Cookie は useLayoutEffect で適用） */
   const [uiScheme, setUiScheme] = useState<"light" | "dark">("light");
   const [isPlaySound, setIsPlaySound] = useState<boolean>(false);
+  /** プレビュー再生の有効判定（state より先に同期し、同一ターン内のタイミング取りに使う） */
+  const isPlaySoundRef = useRef(false);
+  useEffect(() => {
+    isPlaySoundRef.current = isPlaySound;
+  }, [isPlaySound]);
+  /** プレビュー再生ハンドラ（SRT「開始」などから最新の onPlaySound を同期的に呼ぶ用） */
+  const onPlaySoundPlaybackRef = useRef<() => void>(() => {});
   const [playSoundDisabled, setPlaySoundDisabled] = useState<boolean>(true);
   const [recordMovieDisabled, setRecordMovieDisabled] = useState<boolean>(true);
   const [audioFileName, setAudioFileName] = useState<string>("");
@@ -236,6 +241,9 @@ const Home: NextPage = () => {
   const srtAuthorLineIndexRef = useRef(0);
   const srtAuthorPhaseRef = useRef<"wait_start" | "inside_line">("wait_start");
   const srtRecordPanelRef = useRef<HTMLDivElement | null>(null);
+  const srtAuthorCueListRef = useRef<HTMLDivElement | null>(null);
+  const srtAuthorActiveCueRowRef = useRef<HTMLDivElement | null>(null);
+  const srtAuthorNextCueRowRef = useRef<HTMLDivElement | null>(null);
   const srtAuthorCuesRef = useRef<SubtitleCue[]>([]);
   const [titleText, setTitleText] = useState<string>("");
   const [titleEnabled, setTitleEnabled] = useState<boolean>(true);
@@ -390,17 +398,22 @@ const Home: NextPage = () => {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
 
   const getCurrentPlaybackTimeSec = useCallback((): number => {
-    if (!isPlaySound && !isRecording) return 0;
+    if (!isPlaySoundRef.current && !isRecording) return 0;
     const v = videoElementRef.current;
-    if (v && !v.paused && Number.isFinite(v.currentTime)) {
-      return Math.max(0, v.currentTime);
+    if (v && Number.isFinite(v.currentTime)) {
+      if (!v.paused) {
+        return Math.max(0, v.currentTime);
+      }
+      if (isPlaySoundRef.current && !isRecording) {
+        return Math.max(0, v.currentTime);
+      }
     }
     if (audioPlaybackStartCtxTimeRef.current != null && audioCtxRef.current) {
       const elapsed = audioCtxRef.current.currentTime - audioPlaybackStartCtxTimeRef.current;
       return Math.max(0, audioPlaybackOffsetSecRef.current + elapsed);
     }
     return 0;
-  }, [isPlaySound, isRecording]);
+  }, [isRecording]);
 
   const syncBackgroundOnlyVideo = useCallback(() => {
     const v = backgroundOnlyVideoRef.current;
@@ -630,6 +643,8 @@ const Home: NextPage = () => {
 
   const [recordVideoBitrateMbps, setRecordVideoBitrateMbps] = useState<number>(8);
   const [exportAudioBitrateKbps, setExportAudioBitrateKbps] = useState<128 | 192 | 256>(192);
+  /** 隠し: 字幕タブの SRT 作成支援パネルを表示（設定タブの「SRT」チェックで切替） */
+  const [srtAuthorPanelEnabled, setSrtAuthorPanelEnabled] = useState<boolean>(false);
 
   // 音量設定（共通設定: 目標LUFS、null=正規化なし）
   const [targetLufs, setTargetLufs] = useState<number | null>(-14);
@@ -716,6 +731,11 @@ const Home: NextPage = () => {
     if (typeof window === "undefined") return;
     mwvSetItem("common_settingsTab", String(settingsTab));
   }, [settingsTab]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    mwvSetItem("common_srtAuthorPanelEnabled", srtAuthorPanelEnabled ? "1" : "0");
+  }, [srtAuthorPanelEnabled]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -850,6 +870,7 @@ const Home: NextPage = () => {
         titleStyle,
         recordVideoBitrateMbps,
         exportAudioBitrateKbps,
+        srtAuthorPanelEnabled,
         rendererType,
         rainWeather,
         snowWeather,
@@ -911,6 +932,7 @@ const Home: NextPage = () => {
       "common_atmosphereStrength",
       "common_recordVideoBitrateMbps",
       "common_exportAudioBitrateKbps",
+      "common_srtAuthorPanelEnabled",
       "common_rainWeather",
       "common_snowWeather",
       "common_galleryAutoEnabled",
@@ -1146,6 +1168,13 @@ const Home: NextPage = () => {
         if (c.exportAudioBitrateKbps === 128 || c.exportAudioBitrateKbps === 192 || c.exportAudioBitrateKbps === 256) {
           mwvSetItem("common_exportAudioBitrateKbps", String(c.exportAudioBitrateKbps));
           setExportAudioBitrateKbps(c.exportAudioBitrateKbps);
+        }
+        if (c.srtAuthorPanelEnabled === true || c.srtAuthorPanelEnabled === false) {
+          mwvSetItem("common_srtAuthorPanelEnabled", c.srtAuthorPanelEnabled ? "1" : "0");
+          setSrtAuthorPanelEnabled(c.srtAuthorPanelEnabled);
+          if (!c.srtAuthorPanelEnabled) {
+            setSrtAuthorRecordActive(false);
+          }
         }
         if (c.rendererType === "canvas2d" || c.rendererType === "webgl") {
           // 今後は Canvas2D 固定運用
@@ -1639,6 +1668,7 @@ const Home: NextPage = () => {
           analyserRef.current.connect(streamDestinationRef.current);
 
           video.onended = () => {
+            isPlaySoundRef.current = false;
             setIsPlaySound(false);
             stopCanvas2DAnimation();
             stopWebGLAnimation();
@@ -2056,6 +2086,10 @@ const Home: NextPage = () => {
     const savedAudBr = mwvGetItem("common_exportAudioBitrateKbps");
     if (savedAudBr === "128" || savedAudBr === "192" || savedAudBr === "256") {
       setExportAudioBitrateKbps(Number(savedAudBr) as 128 | 192 | 256);
+    }
+    const savedSrtPanel = mwvGetItem("common_srtAuthorPanelEnabled");
+    if (savedSrtPanel === "1") {
+      setSrtAuthorPanelEnabled(true);
     }
 
     const rawTl = mwvGetItem("common_targetLufs");
@@ -2658,7 +2692,7 @@ const Home: NextPage = () => {
   }, []);
 
   const getAuthoringTimeSec = useCallback((): number => {
-    if (isPlaySound || isRecording) {
+    if (isPlaySoundRef.current || isRecording) {
       return getCurrentPlaybackTimeSec();
     }
     const v = videoElementRef.current;
@@ -2666,7 +2700,47 @@ const Home: NextPage = () => {
       return Math.max(0, v.currentTime);
     }
     return NaN;
-  }, [isPlaySound, isRecording, getCurrentPlaybackTimeSec]);
+  }, [isRecording, getCurrentPlaybackTimeSec]);
+
+  const ensureSrtAuthorCueRowsInView = useCallback(() => {
+    if (!srtAuthorPanelEnabled) return;
+    const container = srtAuthorCueListRef.current;
+    const active = srtAuthorActiveCueRowRef.current;
+    if (!container || !active) return;
+    const next = srtAuthorNextCueRowRef.current;
+    const pad = 8;
+    const adjust = (): boolean => {
+      const cRect = container.getBoundingClientRect();
+      const rects: DOMRect[] = [active.getBoundingClientRect()];
+      if (next) rects.push(next.getBoundingClientRect());
+      const minTop = Math.min(...rects.map((r) => r.top));
+      const maxBottom = Math.max(...rects.map((r) => r.bottom));
+      const deltaUp = cRect.top + pad - minTop;
+      if (deltaUp > 0) {
+        container.scrollTop -= deltaUp;
+        return true;
+      }
+      const deltaDown = maxBottom - (cRect.bottom - pad);
+      if (deltaDown > 0) {
+        container.scrollTop += deltaDown;
+        return true;
+      }
+      return false;
+    };
+    if (adjust()) adjust();
+  }, [srtAuthorPanelEnabled]);
+
+  useLayoutEffect(() => {
+    if (!srtAuthorPanelEnabled || srtAuthorCues.length === 0) return;
+    ensureSrtAuthorCueRowsInView();
+  }, [
+    srtAuthorLineIndex,
+    srtAuthorPhase,
+    srtAuthorCues.length,
+    srtAuthorRecordActive,
+    srtAuthorPanelEnabled,
+    ensureSrtAuthorCueRowsInView,
+  ]);
 
   const pushSrtAuthorUndoSnapshot = useCallback(() => {
     srtAuthorUndoRef.current.push({
@@ -2706,7 +2780,9 @@ const Home: NextPage = () => {
     setSrtAuthorLineIndex(0);
     setSrtAuthorPhase("wait_start");
     openSnackBar(t("snackbar.subtitleAuthorReflectDone", { count: cues.length }));
+    queueMicrotask(() => ensureSrtAuthorCueRowsInView());
   }, [
+    ensureSrtAuthorCueRowsInView,
     getMediaDurationSec,
     openSnackBar,
     pushSrtAuthorUndoSnapshot,
@@ -2732,10 +2808,11 @@ const Home: NextPage = () => {
     setSrtAuthorLineIndex(0);
     setSrtAuthorPhase("wait_start");
     openSnackBar(t("snackbar.subtitleAuthorEvenSplitDone"));
-  }, [getMediaDurationSec, openSnackBar, pushSrtAuthorUndoSnapshot, resolvePlaybackWindow, t]);
+    queueMicrotask(() => ensureSrtAuthorCueRowsInView());
+  }, [ensureSrtAuthorCueRowsInView, getMediaDurationSec, openSnackBar, pushSrtAuthorUndoSnapshot, resolvePlaybackWindow, t]);
 
   const srtAuthorMarkStart = useCallback(() => {
-    if (!(isPlaySound || isRecording)) {
+    if (!(isPlaySoundRef.current || isRecording)) {
       openSnackBar(t("snackbar.subtitleAuthorMarkWhilePlaying"));
       return;
     }
@@ -2766,10 +2843,10 @@ const Home: NextPage = () => {
       return next;
     });
     setSrtAuthorPhase("inside_line");
-  }, [getAuthoringTimeSec, isPlaySound, isRecording, openSnackBar, pushSrtAuthorUndoSnapshot, t]);
+  }, [getAuthoringTimeSec, isRecording, openSnackBar, pushSrtAuthorUndoSnapshot, t]);
 
   const srtAuthorMarkEnd = useCallback(() => {
-    if (!(isPlaySound || isRecording)) {
+    if (!(isPlaySoundRef.current || isRecording)) {
       openSnackBar(t("snackbar.subtitleAuthorMarkWhilePlaying"));
       return;
     }
@@ -2805,7 +2882,10 @@ const Home: NextPage = () => {
       setSrtAuthorLineIndex(nextIdx);
       setSrtAuthorPhase("wait_start");
     }
-  }, [getAuthoringTimeSec, isPlaySound, isRecording, openSnackBar, pushSrtAuthorUndoSnapshot, t]);
+    if (isPlaySoundRef.current) {
+      onPlaySoundPlaybackRef.current();
+    }
+  }, [getAuthoringTimeSec, isRecording, openSnackBar, pushSrtAuthorUndoSnapshot, t]);
 
   const srtAuthorUndoLast = useCallback(() => {
     if (popSrtAuthorUndoSnapshot()) {
@@ -2874,7 +2954,7 @@ const Home: NextPage = () => {
   );
 
   useEffect(() => {
-    if (!ENABLE_SRT_AUTHOR_UI || !srtAuthorRecordActive) {
+    if (!srtAuthorPanelEnabled || !srtAuthorRecordActive) {
       return;
     }
     const onKeyDown = (e: KeyboardEvent) => {
@@ -2911,7 +2991,7 @@ const Home: NextPage = () => {
       window.removeEventListener("keydown", onKeyDown, true);
       window.removeEventListener("keyup", onKeyUp, true);
     };
-  }, [srtAuthorRecordActive, srtAuthorMarkStart, srtAuthorMarkEnd]);
+  }, [srtAuthorPanelEnabled, srtAuthorRecordActive, srtAuthorMarkStart, srtAuthorMarkEnd]);
 
   const setupAudioSourceForPlayback = (clip: ResolvedClip) => {
     if (videoElementRef.current) {
@@ -2943,6 +3023,7 @@ const Home: NextPage = () => {
     audioBufferSourceNode.loop = false;
     audioBufferSourceNode.onended = () => {
       audioPlaybackStartCtxTimeRef.current = null;
+      isPlaySoundRef.current = false;
       setIsPlaySound(false);
       stopCanvas2DAnimation();
       stopWebGLAnimation();
@@ -2963,6 +3044,7 @@ const Home: NextPage = () => {
       mediaRecorderRef.current.stop();
     }
     audioPlaybackStartCtxTimeRef.current = null;
+    isPlaySoundRef.current = false;
     setIsPlaySound(false);
     stopCanvas2DAnimation();
     stopWebGLAnimation();
@@ -2997,6 +3079,7 @@ const Home: NextPage = () => {
       audioPlaybackStartCtxTimeRef.current = null;
       stopCanvas2DAnimation();
       stopWebGLAnimation();
+      isPlaySoundRef.current = false;
       setIsPlaySound(false);
       return;
     }
@@ -3033,8 +3116,36 @@ const Home: NextPage = () => {
       }
     }
 
+    isPlaySoundRef.current = true;
     setIsPlaySound(true);
   };
+  onPlaySoundPlaybackRef.current = onPlaySound;
+
+  const srtAuthorOnBtnStartClick = useCallback(() => {
+    if (!srtAuthorRecordActive) return;
+    if (srtAuthorPhase !== "wait_start" || srtAuthorLineIndex >= srtAuthorCues.length) return;
+    if (!(isPlaySoundRef.current || isRecording)) {
+      const clip = resolvePlaybackWindow();
+      if (clip.full === false && clip.duration <= 0) {
+        openSnackBar(t("snackbar.shortClipInvalid"));
+        return;
+      }
+      onPlaySoundPlaybackRef.current();
+    }
+    queueMicrotask(() => {
+      srtAuthorMarkStart();
+    });
+  }, [
+    srtAuthorRecordActive,
+    srtAuthorPhase,
+    srtAuthorLineIndex,
+    srtAuthorCues.length,
+    resolvePlaybackWindow,
+    openSnackBar,
+    t,
+    isRecording,
+    srtAuthorMarkStart,
+  ]);
   // RecordMovieEvent
   const onRecordMovie = () => {
     if (!canvasRef.current) {
@@ -3180,6 +3291,7 @@ const Home: NextPage = () => {
             }
             safeStopRecorder();
             setIsRecording(false);
+            isPlaySoundRef.current = false;
             setIsPlaySound(false);
           };
         }
@@ -3225,6 +3337,7 @@ const Home: NextPage = () => {
             }
             safeStopRecorder();
             setIsRecording(false);
+            isPlaySoundRef.current = false;
             setIsPlaySound(false);
           };
         } else {
@@ -3430,6 +3543,7 @@ const Home: NextPage = () => {
     setTitleEnabled(true);
     setTitleStyle(DEFAULT_TITLE_STYLE);
     decodedAudioBufferRef.current = null;
+    isPlaySoundRef.current = false;
     setIsPlaySound(false);
     setPlaySoundDisabled(true);
     setRecordMovieDisabled(true);
@@ -4945,7 +5059,7 @@ const Home: NextPage = () => {
                   {t("subtitle.dropSrt")}
                 </Box>
 
-                {ENABLE_SRT_AUTHOR_UI && (
+                {srtAuthorPanelEnabled && (
                 <Accordion defaultExpanded={false} sx={{ mb: 1.5 }}>
                   <AccordionSummary expandIcon={<ExpandMore />}>
                     <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
@@ -5010,6 +5124,7 @@ const Home: NextPage = () => {
                                 setSrtAuthorLineIndex(0);
                                 setSrtAuthorPhase("wait_start");
                                 queueMicrotask(() => srtRecordPanelRef.current?.focus());
+                                queueMicrotask(() => ensureSrtAuthorCueRowsInView());
                               } else {
                                 setSrtAuthorRecordActive(false);
                               }
@@ -5044,7 +5159,7 @@ const Home: NextPage = () => {
                           color="primary"
                           size="medium"
                           disabled={!srtAuthorRecordActive || srtAuthorPhase !== "wait_start" || srtAuthorLineIndex >= srtAuthorCues.length}
-                          onClick={srtAuthorMarkStart}
+                          onClick={srtAuthorOnBtnStartClick}
                         >
                           {t("subtitle.author.btnStart")}
                         </Button>
@@ -5101,10 +5216,20 @@ const Home: NextPage = () => {
                         {t("subtitle.author.cueListCaption")}
                       </Typography>
                     )}
-                    <Box sx={{ maxHeight: 240, overflow: "auto", border: "1px solid", borderColor: "divider", borderRadius: 1, p: 0.5 }}>
+                    <Box
+                      ref={srtAuthorCueListRef}
+                      sx={{ maxHeight: 240, overflow: "auto", border: "1px solid", borderColor: "divider", borderRadius: 1, p: 0.5 }}
+                    >
                       {srtAuthorCues.map((cue, index) => (
                         <Box
                           key={`srt-cue-${index}`}
+                          ref={
+                            index === srtAuthorLineIndex
+                              ? srtAuthorActiveCueRowRef
+                              : index === srtAuthorLineIndex + 1
+                                ? srtAuthorNextCueRowRef
+                                : undefined
+                          }
                           sx={{
                             display: "grid",
                             gridTemplateColumns: { xs: "1fr", sm: "72px 72px 1fr 40px" },
@@ -5544,6 +5669,23 @@ const Home: NextPage = () => {
                     <MenuItem value={256}>256 kbps</MenuItem>
                   </Select>
                 </FormControl>
+                <FormControlLabel
+                  control={
+                    <Checkbox
+                      size="small"
+                      checked={srtAuthorPanelEnabled}
+                      onChange={(_, checked) => {
+                        setSrtAuthorPanelEnabled(checked);
+                        if (!checked) {
+                          setSrtAuthorRecordActive(false);
+                        }
+                      }}
+                      disabled={isQuickEncoding || isRecording}
+                    />
+                  }
+                  label="SRT"
+                  sx={{ display: "block", mb: 2, ml: 0, alignItems: "center" }}
+                />
                 <Divider sx={{ my: 2 }} />
                 {isDeveloperMode && (
                   <Box sx={{ mb: 2, p: 1, bgcolor: "background.paper", borderRadius: 1 }}>
@@ -5718,6 +5860,8 @@ const Home: NextPage = () => {
                           setTargetLufs(-14);
                           setTargetLufsCustom("-14");
                           setModeAdjustments(DEFAULT_ADJUSTMENTS);
+                          setSrtAuthorPanelEnabled(false);
+                          setSrtAuthorRecordActive(false);
                           openSnackBar(t("snackbar.allCleared"));
                         }
                       }}
