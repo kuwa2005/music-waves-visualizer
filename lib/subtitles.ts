@@ -51,6 +51,8 @@ export type SubtitleOverlaySettings = {
   cues: SubtitleCue[];
   getCurrentTimeSec: () => number;
   style: SubtitleStyle;
+  /** 表示のみのタイミング補正（秒）。負で早く、正で遅く。SRT データは変更しない */
+  displayTimingOffsetSec?: number;
 };
 
 function parseSrtTime(time: string): number {
@@ -92,11 +94,12 @@ export function parseSrt(srtText: string): SubtitleCue[] {
   return cues;
 }
 
-function getActiveCue(cues: SubtitleCue[], t: number): SubtitleCue | null {
-  if (!(t >= 0) || cues.length === 0) return null;
+function getActiveCue(cues: SubtitleCue[], t: number, displayTimingOffsetSec = 0): SubtitleCue | null {
+  const tLookup = t - displayTimingOffsetSec;
+  if (!(tLookup >= 0) || cues.length === 0) return null;
   for (let i = 0; i < cues.length; i++) {
     const c = cues[i];
-    if (t >= c.startSec && t <= c.endSec) return c;
+    if (tLookup >= c.startSec && tLookup <= c.endSec) return c;
   }
   return null;
 }
@@ -225,10 +228,12 @@ export function renderSubtitleOverlayCanvas(
 ): void {
   if (!overlay || !overlay.enabled || overlay.cues.length === 0) return;
   const t = overlay.getCurrentTimeSec();
-  const cue = getActiveCue(overlay.cues, t);
+  const offsetSec = overlay.displayTimingOffsetSec ?? 0;
+  const tLookup = t - offsetSec;
+  const cue = getActiveCue(overlay.cues, t, offsetSec);
   if (!cue) return;
   const style = overlay.style;
-  const anim = getAnimationFactor(style, cue, t);
+  const anim = getAnimationFactor(style, cue, tLookup);
   if (anim.alpha <= 0.001) return;
   const lines = cue.text.split("\n").filter(Boolean);
   if (lines.length === 0) return;

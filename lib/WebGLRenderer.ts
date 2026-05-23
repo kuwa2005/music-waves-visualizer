@@ -21,6 +21,7 @@ import {
   updateAndGetDustParticles,
   updateAndGetRainStreaks,
   updateAndGetSnowParticles,
+  buildMirrorBallFrame,
   type EffectParams,
   type EffectType,
   type AudioReactiveData,
@@ -41,6 +42,7 @@ const EFFECT_TYPE_TO_GL: Record<EffectType, number> = {
   rain: 0,
   snow: 0,
   scanlines: 0,
+  mirrorBall: 0,
   filmGrain: 1,
   vignette: 2,
   rainbow: 3,
@@ -715,6 +717,34 @@ function drawRect(
   gl.drawArrays(gl.TRIANGLES, 0, 6);
 }
 
+/** WebGLで三角形を描画 */
+function drawTriangle(
+  ctx: WebGLRendererContext,
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  x3: number,
+  y3: number,
+  r: number,
+  g: number,
+  b: number,
+  a: number
+): void {
+  const { gl, positionBuffer, colorBuffer, positionLocation, colorLocation } = ctx;
+  const positions = new Float32Array([x1, y1, x2, y2, x3, y3]);
+  const colors = new Float32Array([r, g, b, a, r, g, b, a, r, g, b, a]);
+  gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+  gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(positionLocation);
+  gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
+  gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+  gl.bufferData(gl.ARRAY_BUFFER, colors, gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(colorLocation);
+  gl.vertexAttribPointer(colorLocation, 4, gl.FLOAT, false, 0, 0);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+}
+
 /**
  * WebGLでグラデーション付き矩形を描画
  */
@@ -1108,6 +1138,7 @@ function renderFrame(): void {
         "dust",
         "rain",
         "snow",
+        "mirrorBall",
       ].includes(latestEffect.type);
     if (needsFreqForEffect) {
       analyser.getByteFrequencyData(freqForEffect);
@@ -1225,7 +1256,7 @@ function renderFrame(): void {
     }
   }
 
-  // エフェクトオーバーレイ（wantSpectrum 時のみ到達＝上で取得した音源メトリクス）
+  // エフェクトオーバーレイ（背景→スペアナの上。字幕は Canvas 2D フォールバック時のみ手前）
   if (latestEffect && latestEffect.type !== "none") {
     const effectDucking =
       mode !== -1 && (latestEffect.type === "scanlines" || latestEffect.type === "rain" || latestEffect.type === "dust")
@@ -1408,6 +1439,116 @@ function renderFrame(): void {
           drawRect(glContext, 0, y + 1, canvasWidth, 1, 0, 0, 0, alpha * 0.35);
         }
       }
+    } else if (latestEffect.type === "mirrorBall") {
+      const now = performance.now();
+      const deltaTime = Math.min(now - lastEffectTime, 50);
+      lastEffectTime = now;
+      const frame = buildMirrorBallFrame(
+        canvasWidth,
+        canvasHeight,
+        latestEffect,
+        deltaTime,
+        audioRForEffects
+      );
+      const roomDim = Math.min(0.55, frame.ambientAlpha);
+      if (roomDim > 0.001) {
+        const shade = 1 - roomDim * 0.92;
+        gl.blendFunc(gl.DST_COLOR, gl.ZERO);
+        drawRect(
+          glContext,
+          0,
+          0,
+          canvasWidth,
+          canvasHeight,
+          shade,
+          shade,
+          Math.min(1, shade + 0.03),
+          1
+        );
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+      }
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+      for (const w of frame.wallSpots) {
+        const aspect = w.square ?? 1;
+        const hw = w.radius * aspect;
+        const hh = w.radius / Math.max(0.75, aspect);
+        const spotA = w.a * 0.92;
+        drawRect(
+          glContext,
+          w.x - hw,
+          w.y - hh,
+          hw * 2,
+          hh * 2,
+          w.r / 255,
+          w.g / 255,
+          w.b / 255,
+          spotA
+        );
+        drawCircle(
+          glContext,
+          w.x,
+          w.y,
+          Math.max(hw, hh) * 0.55,
+          1,
+          1,
+          0.98,
+          spotA * 0.35
+        );
+      }
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+      for (const f of frame.facets) {
+        const [x1, y1, x2, y2, x3, y3] = f.points;
+        drawTriangle(
+          glContext,
+          x1,
+          y1,
+          x2,
+          y2,
+          x3,
+          y3,
+          f.r / 255,
+          f.g / 255,
+          f.b / 255,
+          f.a
+        );
+      }
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+      for (const s of frame.sparkles) {
+        drawCircle(
+          glContext,
+          s.x,
+          s.y,
+          Math.max(1.2, s.radius * 2),
+          s.r / 255,
+          s.g / 255,
+          s.b / 255,
+          s.a
+        );
+      }
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+      drawCircle(glContext, frame.ballCx, frame.ballCy, frame.ballR, 0.22, 0.23, 0.28, 0.82);
+      drawCircle(
+        glContext,
+        frame.ballCx,
+        frame.ballCy,
+        frame.coreR,
+        0.78,
+        0.8,
+        0.86,
+        frame.coreAlpha * 0.35
+      );
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+      drawCircle(
+        glContext,
+        frame.lightX,
+        frame.lightY,
+        frame.ballR * 1.25,
+        1,
+        0.97,
+        0.86,
+        0.06
+      );
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     } else {
       drawEffectOverlayWebGL(glContext, canvasWidth, canvasHeight, latestEffect, audioRForEffects);
     }

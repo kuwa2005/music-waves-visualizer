@@ -16,7 +16,8 @@ export type EffectType =
   | "dust"
   | "rain"
   | "snow"
-  | "scanlines";
+  | "scanlines"
+  | "mirrorBall";
 
 export type EffectDensity = 1 | 2 | 3;
 export type AtmosphereVariant = "dust" | "sparks" | "fireflies";
@@ -44,6 +45,44 @@ export interface EffectParams {
   atmosphereVariant?: AtmosphereVariant;
   /** 空気感: 強度スケール 0.05〜1.0 */
   effectStrengthScale?: number;
+  /** ミラーボール: 中心 X（0〜1、左→右） */
+  mirrorBallX?: number;
+  /** ミラーボール: 中心 Y（0〜1、上→下） */
+  mirrorBallY?: number;
+  /** ミラーボール: 回転速度（度/秒、負で逆回転） */
+  mirrorBallRotationSpeed?: number;
+  /** ミラーボール: 半径（画面短辺に対する比率 0.04〜0.35） */
+  mirrorBallRadius?: number;
+  /** ミラーボール: 鏡面ファセット数（8〜64） */
+  mirrorBallFacetCount?: number;
+  /** ミラーボール: きらめき強度 0〜1 */
+  mirrorBallSparkle?: number;
+  /** ミラーボール: 光線本数 4〜32 */
+  mirrorBallBeamCount?: number;
+  /** ミラーボール: 光線の広がり（度 8〜90） */
+  mirrorBallBeamSpread?: number;
+  /** ミラーボール: 室内の暗さ 0〜1 */
+  mirrorBallAmbient?: number;
+  /** ミラーボール: ハイライトの鋭さ 0〜1 */
+  mirrorBallSpecular?: number;
+  /** ミラーボール: 反射率 0〜1 */
+  mirrorBallReflectivity?: number;
+  /** ミラーボール: 主光源 X（0〜1） */
+  mirrorBallLightX?: number;
+  /** ミラーボール: 主光源 Y（0〜1） */
+  mirrorBallLightY?: number;
+  /** ミラーボール: 主光源色 #RRGGBB */
+  mirrorBallLightColor?: string;
+  /** ミラーボール: 主光源強度 0〜1 */
+  mirrorBallLightIntensity?: number;
+  /** ミラーボール: 副光源を有効化 */
+  mirrorBallSecondaryEnabled?: boolean;
+  mirrorBallSecondaryX?: number;
+  mirrorBallSecondaryY?: number;
+  mirrorBallSecondaryColor?: string;
+  mirrorBallSecondaryIntensity?: number;
+  /** ミラーボール: 低音で回転をブースト（BPM検出は未実装のため代替） */
+  mirrorBallAudioSyncRotation?: boolean;
 }
 
 /** 音源連動用メトリクス（0〜1正規化） */
@@ -1265,6 +1304,768 @@ function drawScanlinesCanvas(
   ctx.restore();
 }
 
+// --- ミラーボール（ディスコ）---
+/** @deprecated 光線ビームは描画しない（互換のため型のみ残す） */
+export interface MirrorBallBeamDraw {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  r: number;
+  g: number;
+  b: number;
+  a: number;
+  lw: number;
+  kind?: "reflected" | "spotlight";
+}
+
+/** 壁・床・天井に落ちる反射スポット（小さめの角丸四角） */
+export interface MirrorBallWallSpotDraw {
+  x: number;
+  y: number;
+  radius: number;
+  r: number;
+  g: number;
+  b: number;
+  a: number;
+  /** 1=正方形に近い, 未指定時1 */
+  square?: number;
+}
+
+export interface MirrorBallFacetDraw {
+  points: [number, number, number, number, number, number];
+  r: number;
+  g: number;
+  b: number;
+  a: number;
+}
+
+export interface MirrorBallSparkleDraw {
+  x: number;
+  y: number;
+  radius: number;
+  r: number;
+  g: number;
+  b: number;
+  a: number;
+}
+
+export interface MirrorBallFrameDraw {
+  ambientAlpha: number;
+  beams: MirrorBallBeamDraw[];
+  wallSpots: MirrorBallWallSpotDraw[];
+  facets: MirrorBallFacetDraw[];
+  sparkles: MirrorBallSparkleDraw[];
+  ballCx: number;
+  ballCy: number;
+  ballR: number;
+  coreR: number;
+  coreAlpha: number;
+  lightX: number;
+  lightY: number;
+}
+
+let mirrorBallRotationRad = 0;
+let mirrorBallSparklePhase = 0;
+
+export interface ResolvedMirrorBallParams {
+  ballX: number;
+  ballY: number;
+  rotationSpeedDeg: number;
+  radiusFrac: number;
+  facetCount: number;
+  sparkle: number;
+  beamCount: number;
+  beamSpreadDeg: number;
+  ambient: number;
+  specular: number;
+  reflectivity: number;
+  lightX: number;
+  lightY: number;
+  lightRgb: [number, number, number];
+  lightIntensity: number;
+  secondaryEnabled: boolean;
+  secondaryX: number;
+  secondaryY: number;
+  secondaryRgb: [number, number, number];
+  secondaryIntensity: number;
+  audioSyncRotation: boolean;
+  strength: number;
+}
+
+export function resolveMirrorBallParams(effect: EffectParams): ResolvedMirrorBallParams {
+  const strength = DENSITY_STRENGTH[effect.density];
+  return {
+    ballX: Math.max(0.05, Math.min(0.95, effect.mirrorBallX ?? 0.5)),
+    ballY: Math.max(0.08, Math.min(0.92, effect.mirrorBallY ?? 0.28)),
+    rotationSpeedDeg: Math.max(-180, Math.min(180, effect.mirrorBallRotationSpeed ?? 14)),
+    radiusFrac: Math.max(0.04, Math.min(0.35, effect.mirrorBallRadius ?? 0.12)),
+    facetCount: Math.round(Math.max(8, Math.min(64, effect.mirrorBallFacetCount ?? 32))),
+    sparkle: Math.max(0, Math.min(1, effect.mirrorBallSparkle ?? 0.65)),
+    beamCount: Math.round(Math.max(4, Math.min(32, effect.mirrorBallBeamCount ?? 18))),
+    beamSpreadDeg: Math.max(8, Math.min(90, effect.mirrorBallBeamSpread ?? 26)),
+    ambient: Math.max(0, Math.min(1, effect.mirrorBallAmbient ?? 0.62)),
+    specular: Math.max(0.05, Math.min(1, effect.mirrorBallSpecular ?? 0.72)),
+    reflectivity: Math.max(0.1, Math.min(1, effect.mirrorBallReflectivity ?? 0.88)),
+    lightX: Math.max(0, Math.min(1, effect.mirrorBallLightX ?? 0.5)),
+    lightY: Math.max(0, Math.min(1, effect.mirrorBallLightY ?? 0.08)),
+    lightRgb: parseWeatherColorHex(effect.mirrorBallLightColor, [255, 248, 220]),
+    lightIntensity: Math.max(0, Math.min(1, effect.mirrorBallLightIntensity ?? 0.85)),
+    secondaryEnabled: effect.mirrorBallSecondaryEnabled ?? false,
+    secondaryX: Math.max(0, Math.min(1, effect.mirrorBallSecondaryX ?? 0.18)),
+    secondaryY: Math.max(0, Math.min(1, effect.mirrorBallSecondaryY ?? 0.22)),
+    secondaryRgb: parseWeatherColorHex(effect.mirrorBallSecondaryColor, [180, 210, 255]),
+    secondaryIntensity: Math.max(0, Math.min(1, effect.mirrorBallSecondaryIntensity ?? 0.45)),
+    audioSyncRotation: effect.mirrorBallAudioSyncRotation ?? false,
+    strength,
+  };
+}
+
+/** 天井から吊るボール: Y軸（上下）を極にして水平回転 */
+function rotateY3(x: number, y: number, z: number, angle: number): [number, number, number] {
+  const c = Math.cos(angle);
+  const s = Math.sin(angle);
+  return [x * c + z * s, y, -x * s + z * c];
+}
+
+/** 球面法線（Y=上下極, XZ=赤道面） */
+function sphereNormal(lon: number, lat: number): [number, number, number] {
+  const cl = Math.cos(lat);
+  return [Math.cos(lon) * cl, Math.sin(lat), Math.sin(lon) * cl];
+}
+
+function projectBallPoint(
+  nx: number,
+  ny: number,
+  nz: number,
+  cx: number,
+  cy: number,
+  r: number
+): [number, number] {
+  const depth = 0.78 + 0.22 * ((nz + 1) * 0.5);
+  return [cx + nx * r * depth, cy - ny * r * depth];
+}
+
+function mirrorBallHash(n: number): number {
+  const x = Math.sin(n * 127.1 + 311.7) * 43758.5453;
+  return x - Math.floor(x);
+}
+
+/** 入射方向 I（光源→面）を法線 N で鏡面反射: R = I - 2(N·I)N */
+function reflectDir3(
+  ix: number,
+  iy: number,
+  iz: number,
+  nx: number,
+  ny: number,
+  nz: number
+): [number, number, number] {
+  const ndoti = nx * ix + ny * iy + nz * iz;
+  return [ix - 2 * ndoti * nx, iy - 2 * ndoti * ny, iz - 2 * ndoti * nz];
+}
+
+/** スクリーン矩形 [0,w]×[0,h] への前方レイ出口 */
+function rayRectExit(
+  px: number,
+  py: number,
+  dx: number,
+  dy: number,
+  w: number,
+  h: number
+): { x: number; y: number; t: number } | null {
+  const eps = 1e-5;
+  if (Math.abs(dx) < eps && Math.abs(dy) < eps) return null;
+  let tMax = Infinity;
+  if (dx > eps) tMax = Math.min(tMax, (w - px) / dx);
+  else if (dx < -eps) tMax = Math.min(tMax, -px / dx);
+  if (dy > eps) tMax = Math.min(tMax, (h - py) / dy);
+  else if (dy < -eps) tMax = Math.min(tMax, -py / dy);
+  if (!Number.isFinite(tMax) || tMax <= eps) return null;
+  return { t: tMax, x: px + dx * tMax, y: py + dy * tMax };
+}
+
+/**
+ * 反射方向を部屋の壁面座標へ（画面全体にスポットが流れるよう、境界のみに偏らない）
+ * @param preferBorder true のとき画面端の壁面ヒットを優先（全体の約35%）
+ */
+function reflectionToRoomPoint(
+  sx: number,
+  sy: number,
+  dirX: number,
+  dirY: number,
+  width: number,
+  height: number,
+  p: ResolvedMirrorBallParams,
+  seed: number,
+  preferBorder: boolean
+): { x: number; y: number } | null {
+  const len = Math.hypot(dirX, dirY);
+  if (len < 0.05) return null;
+  const ux = dirX / len;
+  const uy = dirY / len;
+  const edgeHit = rayRectExit(sx, sy, ux, uy, width, height);
+  const spread = 0.42 + p.beamSpreadDeg / 220;
+  const panX = 0.5 + spread * Math.tanh(ux * (1.15 + p.specular * 0.35));
+  const panY = 0.5 + spread * Math.tanh(uy * (0.95 + p.specular * 0.25));
+  const margin = 0.02;
+  const interiorX = Math.max(margin, Math.min(1 - margin, panX)) * width;
+  const interiorY = Math.max(margin, Math.min(1 - margin, panY)) * height;
+
+  if (preferBorder && edgeHit && mirrorBallHash(seed * 5.9) < 0.35) {
+    return { x: edgeHit.x, y: edgeHit.y };
+  }
+  return { x: interiorX, y: interiorY };
+}
+
+interface MirrorBallLightSource {
+  x: number;
+  y: number;
+  z: number;
+  rgb: [number, number, number];
+  intensity: number;
+}
+
+/** 外部スポットライトの細い円錐内か（ボール中心方向を軸） */
+function facetInSpotlightCone(
+  lx: number,
+  ly: number,
+  lz: number,
+  fx: number,
+  fy: number,
+  fz: number,
+  cx: number,
+  cy: number,
+  cz: number,
+  halfAngleRad: number
+): boolean {
+  const ax = cx - lx;
+  const ay = cy - ly;
+  const az = cz - lz;
+  const aLen = Math.hypot(ax, ay, az) || 1;
+  const tx = fx - lx;
+  const ty = fy - ly;
+  const tz = fz - lz;
+  const tLen = Math.hypot(tx, ty, tz) || 1;
+  const dot = (ax * tx + ay * ty + az * tz) / (aLen * tLen);
+  return dot >= Math.cos(halfAngleRad);
+}
+
+function pushWallSpot(spots: MirrorBallWallSpotDraw[], spot: MirrorBallWallSpotDraw): void {
+  if (spot.a < 0.012) return;
+  spots.push(spot);
+}
+
+function computeTileReflectionSpot(
+  width: number,
+  height: number,
+  cx: number,
+  cy: number,
+  r: number,
+  minDim: number,
+  nx: number,
+  ny: number,
+  nz: number,
+  p: ResolvedMirrorBallParams,
+  light: MirrorBallLightSource,
+  halfConeRad: number,
+  audioBoost: number,
+  seed: number,
+  preferBorder: boolean
+): MirrorBallWallSpotDraw | null {
+  const ballDepth = r * 0.55;
+  const fx = cx + nx * r;
+  const fy = cy - ny * r;
+  const fz = nz * ballDepth;
+  const cz = nz * r * 0.15;
+
+  if (!facetInSpotlightCone(light.x, light.y, light.z, fx, fy, fz, cx, cy, cz, halfConeRad)) {
+    return null;
+  }
+
+  const iix = fx - light.x;
+  const iiy = fy - light.y;
+  const iiz = fz - light.z;
+  const iLen = Math.hypot(iix, iiy, iiz) || 1;
+  const iux = iix / iLen;
+  const iuy = iiy / iLen;
+  const iuz = iiz / iLen;
+
+  const ndoti = nx * iux + ny * iuy + nz * iuz;
+  if (ndoti <= 0.03) return null;
+
+  const [rrx, rry, rrz] = reflectDir3(iux, iuy, iuz, nx, ny, nz);
+  const rdx = rrx;
+  const rdy = -rry;
+  const rdLen = Math.hypot(rdx, rdy);
+  if (rdLen < 0.05) return null;
+
+  const [sx, sy] = projectBallPoint(nx, ny, nz, cx, cy, r);
+  const roomPt = reflectionToRoomPoint(sx, sy, rdx, rdy, width, height, p, seed, preferBorder);
+  if (!roomPt) return null;
+
+  const facing = Math.pow(ndoti, 0.25 + p.specular * 0.55);
+  const forward = Math.pow(Math.max(0.08, rdLen), 0.45 + (1 - p.specular) * 0.35);
+  const flicker =
+    0.72 +
+    0.28 *
+      Math.pow(
+        0.5 + 0.5 * Math.sin(mirrorBallSparklePhase * 2.1 + seed * 4.17),
+        1.6 + p.sparkle
+      );
+  let bright =
+    light.intensity *
+    p.reflectivity *
+    p.strength *
+    facing *
+    forward *
+    flicker *
+    (1 + audioBoost * 0.35);
+  bright *= 0.55 + 0.45 * (1 - halfConeRad / (Math.PI * 0.5));
+  if (bright < 0.01) return null;
+
+  const baseSize = minDim * (0.0028 + p.specular * 0.0022) * (0.75 + p.beamSpreadDeg / 120);
+  const sizeVar = 0.65 + mirrorBallHash(seed * 1.9) * 0.7 + p.sparkle * 0.25;
+  const half = Math.max(1.4, baseSize * sizeVar * (0.55 + bright * 2.2));
+
+  const [lr, lg, lb] = light.rgb;
+  const mix = 0.15 + mirrorBallHash(seed * 3.1) * 0.35;
+  return {
+    x: roomPt.x,
+    y: roomPt.y,
+    radius: half,
+    r: Math.round(lr * (1 - mix) + 255 * mix),
+    g: Math.round(lg * (1 - mix) + 248 * mix),
+    b: Math.round(lb * (1 - mix) + 235 * mix),
+    a: Math.min(0.72, bright * 0.42),
+    square: 0.85 + mirrorBallHash(seed * 5.3) * 0.3,
+  };
+}
+
+function collectRaycastWallSpots(
+  width: number,
+  height: number,
+  cx: number,
+  cy: number,
+  r: number,
+  minDim: number,
+  p: ResolvedMirrorBallParams,
+  light: MirrorBallLightSource,
+  audioBoost: number
+): MirrorBallWallSpotDraw[] {
+  const spots: MirrorBallWallSpotDraw[] = [];
+  const seg = Math.max(10, p.facetCount);
+  const latRings = Math.max(5, Math.round(seg / 2.8));
+  const halfConeRad = ((p.beamSpreadDeg * 0.5) * Math.PI) / 180;
+  let seed = 0;
+
+  for (let lat = 0; lat < latRings; lat++) {
+    const lat0 = -Math.PI * 0.46 + (lat / latRings) * Math.PI * 0.92;
+    const lat1 = -Math.PI * 0.46 + ((lat + 1) / latRings) * Math.PI * 0.92;
+    const latM = (lat0 + lat1) * 0.5;
+    const lonSeg = Math.max(8, Math.round(seg * (0.5 + 0.5 * Math.cos(latM))));
+    for (let lon = 0; lon < lonSeg; lon++) {
+      const lonM = ((lon + 0.5) / lonSeg) * Math.PI * 2;
+      const jitterLon = (mirrorBallHash(seed++) - 0.5) * 0.08;
+      const jitterLat = (mirrorBallHash(seed++) - 0.5) * 0.06;
+      const [nx0, ny0, nz0] = sphereNormal(lonM + jitterLon, latM + jitterLat);
+      const [rx, ry, rz] = rotateY3(nx0, ny0, nz0, mirrorBallRotationRad);
+      const len = Math.hypot(rx, ry, rz) || 1;
+      const spot = computeTileReflectionSpot(
+        width,
+        height,
+        cx,
+        cy,
+        r,
+        minDim,
+        rx / len,
+        ry / len,
+        rz / len,
+        p,
+        light,
+        halfConeRad,
+        audioBoost,
+        seed,
+        true
+      );
+      if (spot) pushWallSpot(spots, spot);
+    }
+  }
+  return spots;
+}
+
+function collectProceduralWallSpots(
+  width: number,
+  height: number,
+  cx: number,
+  cy: number,
+  r: number,
+  minDim: number,
+  p: ResolvedMirrorBallParams,
+  light: MirrorBallLightSource,
+  audioBoost: number,
+  count: number
+): MirrorBallWallSpotDraw[] {
+  const spots: MirrorBallWallSpotDraw[] = [];
+  const halfConeRad = ((p.beamSpreadDeg * 0.55) * Math.PI) / 180;
+
+  for (let i = 0; i < count; i++) {
+    const h1 = mirrorBallHash(i * 17.3 + 2.1);
+    const h2 = mirrorBallHash(i * 31.7 + 9.4);
+    const h3 = mirrorBallHash(i * 53.1 + 0.7);
+    const lon = h1 * Math.PI * 2;
+    const lat = (h2 - 0.5) * Math.PI * 0.88;
+    const [nx0, ny0, nz0] = sphereNormal(lon, lat);
+    const [rx, ry, rz] = rotateY3(nx0, ny0, nz0, mirrorBallRotationRad);
+    const len = Math.hypot(rx, ry, rz) || 1;
+    const spot = computeTileReflectionSpot(
+      width,
+      height,
+      cx,
+      cy,
+      r,
+      minDim,
+      rx / len,
+      ry / len,
+      rz / len,
+      p,
+      light,
+      halfConeRad * (1.05 + h3 * 0.35),
+      audioBoost,
+      i + 1000,
+      false
+    );
+    if (spot) pushWallSpot(spots, spot);
+  }
+  return spots;
+}
+
+function capWallSpots(spots: MirrorBallWallSpotDraw[], maxSpots: number): MirrorBallWallSpotDraw[] {
+  if (spots.length <= maxSpots) return spots;
+  spots.sort((a, b) => b.a - a.a);
+  return spots.slice(0, maxSpots);
+}
+
+function drawMirrorBallSoftSpot(
+  ctx: CanvasRenderingContext2D,
+  spot: MirrorBallWallSpotDraw
+): void {
+  const half = spot.radius;
+  const aspect = spot.square ?? 1;
+  const hw = half * aspect;
+  const hh = half / Math.max(0.75, aspect);
+  const g = ctx.createRadialGradient(spot.x, spot.y, 0, spot.x, spot.y, Math.max(hw, hh) * 1.15);
+  g.addColorStop(0, `rgba(255,255,255,${spot.a * 0.95})`);
+  g.addColorStop(0.35, `rgba(${spot.r},${spot.g},${spot.b},${spot.a * 0.85})`);
+  g.addColorStop(1, `rgba(${spot.r},${spot.g},${spot.b},0)`);
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.ellipse(spot.x, spot.y, hw, hh, 0, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+/**
+ * ミラーボール1フレーム分の描画データ（Canvas / WebGL 共用）
+ */
+export function buildMirrorBallFrame(
+  width: number,
+  height: number,
+  effect: EffectParams,
+  deltaTime: number,
+  audio?: AudioReactiveData
+): MirrorBallFrameDraw {
+  const p = resolveMirrorBallParams(effect);
+  const a = audio ?? SILENT_AUDIO_REACTIVE;
+  const minDim = Math.min(width, height);
+  const cx = p.ballX * width;
+  const cy = p.ballY * height;
+  const r = p.radiusFrac * minDim;
+  const lx = p.lightX * width;
+  const ly = p.lightY * height;
+
+  let rotDeg = p.rotationSpeedDeg;
+  if (p.audioSyncRotation) {
+    rotDeg += a.bass * 18 + a.volume * 6;
+  }
+  mirrorBallRotationRad += (rotDeg * Math.PI) / 180 * (deltaTime / 1000);
+  mirrorBallSparklePhase += deltaTime * 0.0035 * (1 + a.highFreq * 2 * p.sparkle);
+
+  const audioBoost = a.bass * 0.45 + a.volume * 0.18 + a.highFreq * 0.12 * p.sparkle;
+  const lightZ = -minDim * 0.42;
+
+  const lights: MirrorBallLightSource[] = [
+    { x: lx, y: ly, z: lightZ, rgb: p.lightRgb, intensity: p.lightIntensity },
+  ];
+  if (p.secondaryEnabled) {
+    lights.push({
+      x: p.secondaryX * width,
+      y: p.secondaryY * height,
+      z: lightZ * 0.92,
+      rgb: p.secondaryRgb,
+      intensity: p.secondaryIntensity,
+    });
+  }
+
+  const wallSpotsRaw: MirrorBallWallSpotDraw[] = [];
+  const procPerLight = Math.round((14 + p.beamCount * 14) * p.strength);
+  const maxSpots = Math.round((120 + p.beamCount * 28 + p.facetCount * 10) * p.strength);
+
+  for (let li = 0; li < lights.length; li++) {
+    const light = lights[li];
+    const scale = li === 0 ? 1 : 0.72;
+    wallSpotsRaw.push(
+      ...collectRaycastWallSpots(width, height, cx, cy, r, minDim, p, light, audioBoost)
+    );
+    wallSpotsRaw.push(
+      ...collectProceduralWallSpots(
+        width,
+        height,
+        cx,
+        cy,
+        r,
+        minDim,
+        p,
+        light,
+        audioBoost,
+        Math.round(procPerLight * scale)
+      )
+    );
+  }
+
+  const wallSpots = capWallSpots(wallSpotsRaw, maxSpots);
+  const beams: MirrorBallBeamDraw[] = [];
+
+  const lightDirs: Array<{ dx: number; dy: number; dz: number; rgb: [number, number, number]; w: number }> = [
+    {
+      dx: cx - lx,
+      dy: cy - ly,
+      dz: r * 0.85,
+      rgb: p.lightRgb,
+      w: p.lightIntensity,
+    },
+  ];
+  if (p.secondaryEnabled) {
+    const sx = p.secondaryX * width;
+    const sy = p.secondaryY * height;
+    lightDirs.push({
+      dx: cx - sx,
+      dy: cy - sy,
+      dz: r * 0.85,
+      rgb: p.secondaryRgb,
+      w: p.secondaryIntensity,
+    });
+  }
+  for (const ld of lightDirs) {
+    const len = Math.hypot(ld.dx, ld.dy, ld.dz) || 1;
+    ld.dx /= len;
+    ld.dy /= len;
+    ld.dz /= len;
+  }
+
+  const seg = Math.max(8, p.facetCount);
+  const latRings = Math.max(4, Math.round(seg / 3.2));
+  const facets: MirrorBallFacetDraw[] = [];
+
+  for (let lat = 0; lat < latRings; lat++) {
+    const lat0 = -Math.PI * 0.46 + (lat / latRings) * Math.PI * 0.92;
+    const lat1 = -Math.PI * 0.46 + ((lat + 1) / latRings) * Math.PI * 0.92;
+    const latM = (lat0 + lat1) * 0.5;
+    const lonSeg = Math.max(6, Math.round(seg * (0.5 + 0.5 * Math.cos(latM))));
+    for (let lon = 0; lon < lonSeg; lon++) {
+      const u0 = (lon / lonSeg) * Math.PI * 2;
+      const u1 = ((lon + 1) / lonSeg) * Math.PI * 2;
+      const corners: [number, number, number][] = [
+        sphereNormal(u0, lat0),
+        sphereNormal(u1, lat0),
+        sphereNormal(u1, lat1),
+        sphereNormal(u0, lat1),
+      ];
+      let br = 0;
+      let tintR = 0;
+      let tintG = 0;
+      let tintB = 0;
+      let tintW = 0;
+      const proj: [number, number][] = [];
+      for (const [nx0, ny0, nz0] of corners) {
+        const [rx, ry, rz] = rotateY3(nx0, ny0, nz0, mirrorBallRotationRad);
+        const len = Math.hypot(rx, ry, rz) || 1;
+        const nx = rx / len;
+        const ny = ry / len;
+        const nz = rz / len;
+        let spec = 0;
+        for (const ld of lightDirs) {
+          const dot = Math.max(0, nx * ld.dx + ny * ld.dy + nz * ld.dz);
+          const specPow = 2 + p.specular * 46;
+          spec += Math.pow(dot, specPow) * ld.w;
+          if (dot > 0.02) {
+            tintR += ld.rgb[0] * dot * ld.w;
+            tintG += ld.rgb[1] * dot * ld.w;
+            tintB += ld.rgb[2] * dot * ld.w;
+            tintW += dot * ld.w;
+          }
+        }
+        br += spec;
+        proj.push(projectBallPoint(nx, ny, nz, cx, cy, r));
+      }
+      br /= corners.length;
+      const ambient = p.ambient * 0.045;
+      const base = ambient + br * p.reflectivity * p.strength * (1 + audioBoost * 0.18);
+      if (base < 0.04) continue;
+      const tr = tintW > 0 ? tintR / tintW : 175;
+      const tg = tintW > 0 ? tintG / tintW : 178;
+      const tb = tintW > 0 ? tintB / tintW : 188;
+      const edge = 0.5 + 0.5 * Math.sin(u0 * 5 + mirrorBallRotationRad * 2 + lat);
+      facets.push({
+        points: [
+          proj[0][0], proj[0][1],
+          proj[1][0], proj[1][1],
+          proj[2][0], proj[2][1],
+        ],
+        r: Math.min(255, Math.round(28 + tr * base * edge * 0.55)),
+        g: Math.min(255, Math.round(30 + tg * base * edge * 0.55)),
+        b: Math.min(255, Math.round(38 + tb * base * edge * 0.55)),
+        a: Math.min(1, 0.18 + base * 0.65),
+      });
+    }
+  }
+
+  const sparkles: MirrorBallSparkleDraw[] = [];
+  const sparkleN = Math.round(3 + p.sparkle * 10 * p.strength);
+  for (let i = 0; i < sparkleN; i++) {
+    const phase = mirrorBallSparklePhase + i * 2.11;
+    const flicker = Math.pow(0.5 + 0.5 * Math.sin(phase * 3.2), 4);
+    if (flicker < 0.55) continue;
+    const lon = (i / sparkleN) * Math.PI * 2 + mirrorBallRotationRad;
+    const lat = (mirrorBallHash(i * 7.3) - 0.5) * 1.1;
+    const [nx0, ny0, nz0] = sphereNormal(lon, lat);
+    const [rx, ry, rz] = rotateY3(nx0, ny0, nz0, mirrorBallRotationRad);
+    const len = Math.hypot(rx, ry, rz) || 1;
+    const [sx, sy] = projectBallPoint(rx / len, ry / len, rz / len, cx, cy, r);
+    const [lr, lg, lb] = p.lightRgb;
+    sparkles.push({
+      x: sx,
+      y: sy,
+      radius: Math.max(0.8, r * 0.018 * flicker),
+      r: lr,
+      g: lg,
+      b: lb,
+      a: p.sparkle * flicker * p.strength * 0.35 * p.lightIntensity,
+    });
+  }
+
+  return {
+    ambientAlpha: p.ambient * p.strength * 0.28,
+    beams,
+    wallSpots,
+    facets,
+    sparkles,
+    ballCx: cx,
+    ballCy: cy,
+    ballR: r,
+    coreR: Math.max(1.5, r * 0.05),
+    coreAlpha: 0.12 + 0.18 * p.reflectivity * p.strength,
+    lightX: lx,
+    lightY: ly,
+  };
+}
+
+function drawMirrorBallCanvas(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  effect: EffectParams,
+  deltaTime: number,
+  audio: AudioReactiveData
+): void {
+  const frame = buildMirrorBallFrame(width, height, effect, deltaTime, audio);
+  const p = resolveMirrorBallParams(effect);
+  const [cr, cg, cb] = p.lightRgb;
+  ctx.save();
+
+  // 室内の暗さ（背景・スペアナの上、反射スポットの下）
+  const roomDim = Math.min(0.55, frame.ambientAlpha);
+  if (roomDim > 0.001) {
+    ctx.globalCompositeOperation = "multiply";
+    const shade = Math.round(255 * (1 - roomDim * 0.92));
+    ctx.fillStyle = `rgb(${shade},${shade},${Math.min(255, shade + 8)})`;
+    ctx.fillRect(0, 0, width, height);
+    ctx.globalCompositeOperation = "source-over";
+  }
+
+  ctx.globalCompositeOperation = "lighter";
+  for (const w of frame.wallSpots) {
+    drawMirrorBallSoftSpot(ctx, w);
+  }
+
+  ctx.globalCompositeOperation = "source-over";
+  for (const f of frame.facets) {
+    const [x1, y1, x2, y2, x3, y3] = f.points;
+    ctx.fillStyle = `rgba(${f.r},${f.g},${f.b},${f.a})`;
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.lineTo(x3, y3);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = `rgba(255,255,255,${f.a * 0.18})`;
+    ctx.lineWidth = Math.max(0.35, frame.ballR * 0.005);
+    ctx.stroke();
+  }
+
+  ctx.globalCompositeOperation = "lighter";
+  for (const s of frame.sparkles) {
+    const g = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, s.radius * 2.2);
+    g.addColorStop(0, `rgba(255,255,255,${s.a})`);
+    g.addColorStop(0.5, `rgba(${s.r},${s.g},${s.b},${s.a * 0.5})`);
+    g.addColorStop(1, `rgba(${s.r},${s.g},${s.b},0)`);
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.radius * 2.2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.globalCompositeOperation = "source-over";
+  const ballGrad = ctx.createRadialGradient(
+    frame.ballCx - frame.ballR * 0.2,
+    frame.ballCy - frame.ballR * 0.15,
+    frame.ballR * 0.08,
+    frame.ballCx,
+    frame.ballCy,
+    frame.ballR
+  );
+  ballGrad.addColorStop(0, `rgba(200,205,220,${frame.coreAlpha * 0.25})`);
+  ballGrad.addColorStop(0.65, `rgba(55,58,72,0.75)`);
+  ballGrad.addColorStop(1, "rgba(12,12,22,0.88)");
+  ctx.fillStyle = ballGrad;
+  ctx.beginPath();
+  ctx.arc(frame.ballCx, frame.ballCy, frame.ballR, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.strokeStyle = "rgba(140,145,165,0.28)";
+  ctx.lineWidth = Math.max(0.6, frame.ballR * 0.01);
+  ctx.beginPath();
+  ctx.arc(frame.ballCx, frame.ballCy, frame.ballR, 0, Math.PI * 2);
+  ctx.stroke();
+
+  const lightGlow = ctx.createRadialGradient(
+    frame.lightX,
+    frame.lightY,
+    0,
+    frame.lightX,
+    frame.lightY,
+    frame.ballR * 1.35
+  );
+  lightGlow.addColorStop(0, `rgba(${cr},${cg},${cb},${0.14 * p.lightIntensity * p.strength})`);
+  lightGlow.addColorStop(0.55, `rgba(${cr},${cg},${cb},${0.03 * p.lightIntensity})`);
+  lightGlow.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.globalCompositeOperation = "lighter";
+  ctx.fillStyle = lightGlow;
+  ctx.beginPath();
+  ctx.arc(frame.lightX, frame.lightY, frame.ballR * 1.35, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
+}
+
 /** 音声データなし時のデフォルト（無音・プレビュー停止中のエフェクト用） */
 export const SILENT_AUDIO_REACTIVE: AudioReactiveData = { bass: 0.2, volume: 0.2, highFreq: 0.1 };
 
@@ -1375,6 +2176,9 @@ export function drawEffectOverlayCanvas(
         break;
       case "scanlines":
         drawScanlinesCanvas(ctx, width, height, effect.density, a);
+        break;
+      case "mirrorBall":
+        drawMirrorBallCanvas(ctx, width, height, effect, overlayDelta, a);
         break;
       default:
         break;

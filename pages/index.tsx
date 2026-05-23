@@ -107,14 +107,35 @@ import {
   type TitleStyle,
 } from "../lib/subtitles";
 import { mwvGetItem, mwvSetItem, mwvRemoveItem } from "../lib/mwvCookieStorage";
+import {
+  parseExplicitDurationSec,
+  parseFadeSecStr,
+  resetClipGain,
+  resolveClipFadeSchedule,
+  scheduleClipGainFade,
+} from "../lib/clipAudioFade";
 
 type ShortOutputPreset = "all" | "tiktok" | "youtube" | "niconico";
+type ExportAudioBitrateKbps = 128 | 192 | 256 | 320;
 type ResolvedClip = { full: true } | { full: false; start: number; duration: number };
 const MODE_COOKIE_KEY = "mwv_mode";
 /** ライト／ダーク UI 切替（`light` | `dark`）。電球点灯＝ライトモード */
 const UI_SCHEME_COOKIE = "mwv_ui_scheme";
 /** Cookie 上で targetLufs === null（正規化オフ）を表す */
 const TARGET_LUFS_NONE_COOKIE = "__none__";
+
+function isExportAudioBitrateKbps(v: number): v is ExportAudioBitrateKbps {
+  return v === 128 || v === 192 || v === 256 || v === 320;
+}
+
+/** MediaRecorder 用。未指定時は exportAudioBitrateKbps に追従 */
+function clampRecordAudioBitsPerSecond(
+  exportKbps: number,
+  recordKbps: number | null | undefined
+): number {
+  const effectiveKbps = recordKbps ?? exportKbps;
+  return Math.min(512_000, Math.max(128_000, Math.round(effectiveKbps * 1000)));
+}
 const JP_DEFAULT_FONT_FAMILY = "'Noto Sans JP', sans-serif";
 const isJapaneseLang = (lng: string | undefined | null): boolean => {
   const s = (lng ?? "").toLowerCase();
@@ -136,6 +157,19 @@ function isSrtFileByName(name: string): boolean {
 
 function isLyricsTextFileByName(name: string): boolean {
   return /\.(txt|lrc)$/i.test(name);
+}
+
+/** タイミング記録の Space: 歌詞入力などのテキスト編集時のみ無視（記録モード Switch の checkbox は対象外） */
+function isTypingTargetForSrtAuthorSpaceKey(el: HTMLElement | null): boolean {
+  if (!el) return false;
+  if (el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable) {
+    return true;
+  }
+  if (el.tagName === "INPUT") {
+    const type = ((el as HTMLInputElement).type || "text").toLowerCase();
+    return type !== "checkbox" && type !== "radio";
+  }
+  return false;
 }
 
 type CanvasLayoutKey = "1920x1080" | "1080x1920" | "1920x1920";
@@ -172,7 +206,7 @@ function setCookieValue(name: string, value: string, maxAgeSec: number): void {
   document.cookie = `${name}=${encodeURIComponent(value)}; path=/; max-age=${maxAgeSec}; samesite=lax`;
 }
 
-function buildDownloadMp4Name(audioName: string, fallbackBaseName: string): string {
+function buildDownloadBaseName(audioName: string, fallbackBaseName: string): string {
   const trimmed = (audioName ?? "").trim();
   const withoutExt = trimmed.replace(/\.[^.]+$/, "");
   const safeBase = withoutExt
@@ -180,8 +214,15 @@ function buildDownloadMp4Name(audioName: string, fallbackBaseName: string): stri
     .replace(/\s+/g, " ")
     .trim()
     .replace(/[. ]+$/g, "");
-  const base = safeBase !== "" ? safeBase : fallbackBaseName;
-  return `${base}.mp4`;
+  return safeBase !== "" ? safeBase : fallbackBaseName;
+}
+
+function buildDownloadMp4Name(audioName: string, fallbackBaseName: string): string {
+  return `${buildDownloadBaseName(audioName, fallbackBaseName)}.mp4`;
+}
+
+function buildDownloadSrtName(audioName: string, fallbackBaseName: string): string {
+  return `${buildDownloadBaseName(audioName, fallbackBaseName)}.srt`;
 }
 
 const hasWindow = () => {
@@ -228,6 +269,8 @@ const Home: NextPage = () => {
   const [subtitleEnabled, setSubtitleEnabled] = useState<boolean>(true);
   const [subtitleCues, setSubtitleCues] = useState<SubtitleCue[]>([]);
   const [subtitleStyle, setSubtitleStyle] = useState<SubtitleStyle>(DEFAULT_SUBTITLE_STYLE);
+  /** 字幕表示タイミング補正（秒）。プレビュー/録画の描画のみ。永続化しない */
+  const [subtitleDisplayTimingOffsetSec, setSubtitleDisplayTimingOffsetSec] = useState<number>(0);
   /** SRT 作成支援（歌詞貼り付け〜タイミング〜書き出し） */
   const [srtAuthorLyricsRaw, setSrtAuthorLyricsRaw] = useState<string>("");
   const [srtAuthorCues, setSrtAuthorCues] = useState<SubtitleCue[]>([]);
@@ -354,6 +397,7 @@ const Home: NextPage = () => {
   const audioCtxRef = useRef<AudioContext>(null);
   const streamDestinationRef = useRef<MediaStreamAudioDestinationNode>(null);
   const analyserRef = useRef<AnalyserNode>(null);
+  const clipGainRef = useRef<GainNode | null>(null);
   useEffect(() => {
     // AudioContext
     audioCtxRef.current = new AudioContext();
@@ -363,9 +407,14 @@ const Home: NextPage = () => {
     analyserNode.fftSize = 2048;
     analyserRef.current = analyserNode;
 
-    // MediaStreamAudioDestinationNode(動画出力用)
+    const clipGain = audioCtxRef.current.createGain();
+    clipGain.gain.value = 1;
+    clipGainRef.current = clipGain;
+    clipGain.connect(analyserNode);
+    analyserNode.connect(audioCtxRef.current.destination);
     const steamDest = audioCtxRef.current.createMediaStreamDestination();
     streamDestinationRef.current = steamDest;
+    analyserNode.connect(steamDest);
   }, []);
 
   // ブラウザ言語が日本語なら、日本語フォントをデフォルトに寄せる（保存済みは上書きしない）
@@ -499,7 +548,16 @@ const Home: NextPage = () => {
     "rain",
     "snow",
   ];
-  const EFFECT_TYPES_STRENGTH_LEGACY_HIDDEN: EffectType[] = ["vignette", "rainbow", "curtain"];
+  /** UI ボタン非表示（描画・保存キー互換は残す） */
+  const EFFECT_TYPES_UI_HIDDEN: EffectType[] = ["mirrorBall"];
+  const EFFECT_TYPES_STRENGTH_LEGACY_HIDDEN: EffectType[] = [
+    "vignette",
+    "rainbow",
+    "curtain",
+    ...EFFECT_TYPES_UI_HIDDEN,
+  ];
+  const effectTypeForUi = (saved: EffectType): EffectType =>
+    EFFECT_TYPES_UI_HIDDEN.includes(saved) ? "none" : saved;
   const ALL_EFFECT_STRENGTH_TYPES: EffectType[] = [
     ...EFFECT_TYPES_STRENGTH_UI,
     ...EFFECT_TYPES_STRENGTH_LEGACY_HIDDEN,
@@ -516,6 +574,7 @@ const Home: NextPage = () => {
     "dust",
     "rain",
     "snow",
+    "mirrorBall",
   ];
   const defaultEffectDensities = (): Partial<Record<EffectType, EffectDensity>> => {
     const o: Partial<Record<EffectType, EffectDensity>> = {};
@@ -532,16 +591,71 @@ const Home: NextPage = () => {
   const [shortOutputPreset, setShortOutputPreset] = useState<ShortOutputPreset>("all");
   const [shortStartSecStr, setShortStartSecStr] = useState<string>("0");
   const [shortDurationSecStr, setShortDurationSecStr] = useState<string>("");
+  const [shortFadeInSecStr, setShortFadeInSecStr] = useState<string>("0");
+  const [shortFadeOutSecStr, setShortFadeOutSecStr] = useState<string>("0");
 
   type WeatherAdjust = { angleDeg: number; amount: number; color: string };
   const DEFAULT_RAIN_WEATHER: WeatherAdjust = { angleDeg: 22, amount: 0.7, color: "#6ba3ff" };
   const DEFAULT_SNOW_WEATHER: WeatherAdjust = { angleDeg: 10, amount: 0.6, color: "#ffffff" };
+  type MirrorBallAdjust = {
+    ballX: number;
+    ballY: number;
+    rotationSpeed: number;
+    radius: number;
+    facetCount: number;
+    sparkle: number;
+    beamCount: number;
+    beamSpread: number;
+    ambient: number;
+    specular: number;
+    reflectivity: number;
+    lightX: number;
+    lightY: number;
+    lightColor: string;
+    lightIntensity: number;
+    secondaryEnabled: boolean;
+    secondaryX: number;
+    secondaryY: number;
+    secondaryColor: string;
+    secondaryIntensity: number;
+    audioSyncRotation: boolean;
+  };
+  const DEFAULT_MIRROR_BALL: MirrorBallAdjust = {
+    ballX: 0.5,
+    ballY: 0.28,
+    rotationSpeed: 14,
+    radius: 0.12,
+    facetCount: 32,
+    sparkle: 0.6,
+    beamCount: 18,
+    beamSpread: 26,
+    ambient: 0.62,
+    specular: 0.72,
+    reflectivity: 0.88,
+    lightX: 0.5,
+    lightY: 0.08,
+    lightColor: "#fff8dc",
+    lightIntensity: 0.85,
+    secondaryEnabled: false,
+    secondaryX: 0.18,
+    secondaryY: 0.22,
+    secondaryColor: "#b4d2ff",
+    secondaryIntensity: 0.45,
+    audioSyncRotation: false,
+  };
   const [rainWeather, setRainWeather] = useState<WeatherAdjust>(DEFAULT_RAIN_WEATHER);
   const [snowWeather, setSnowWeather] = useState<WeatherAdjust>(DEFAULT_SNOW_WEATHER);
+  const [mirrorBall, setMirrorBall] = useState<MirrorBallAdjust>(DEFAULT_MIRROR_BALL);
 
   const [settingsTab, setSettingsTab] = useState(0);
   const [rainColorInput, setRainColorInput] = useState<string>(DEFAULT_RAIN_WEATHER.color.toUpperCase());
   const [snowColorInput, setSnowColorInput] = useState<string>(DEFAULT_SNOW_WEATHER.color.toUpperCase());
+  const [mirrorBallLightColorInput, setMirrorBallLightColorInput] = useState<string>(
+    DEFAULT_MIRROR_BALL.lightColor.toUpperCase()
+  );
+  const [mirrorBallSecondaryColorInput, setMirrorBallSecondaryColorInput] = useState<string>(
+    DEFAULT_MIRROR_BALL.secondaryColor.toUpperCase()
+  );
   const isSpaceEffect = effectType === "space" || effectType === "spaceConstant" || effectType === "spaceAudio";
 
   // スペクトラム調整
@@ -624,6 +738,28 @@ const Home: NextPage = () => {
       base.effectTintColor = dustParticleColor;
       base.atmosphereVariant = atmosphereVariant;
       base.effectStrengthScale = Math.max(0.05, Math.min(1, atmosphereStrength / 100));
+    } else if (effectType === "mirrorBall") {
+      base.mirrorBallX = mirrorBall.ballX;
+      base.mirrorBallY = mirrorBall.ballY;
+      base.mirrorBallRotationSpeed = mirrorBall.rotationSpeed;
+      base.mirrorBallRadius = mirrorBall.radius;
+      base.mirrorBallFacetCount = mirrorBall.facetCount;
+      base.mirrorBallSparkle = mirrorBall.sparkle;
+      base.mirrorBallBeamCount = mirrorBall.beamCount;
+      base.mirrorBallBeamSpread = mirrorBall.beamSpread;
+      base.mirrorBallAmbient = mirrorBall.ambient;
+      base.mirrorBallSpecular = mirrorBall.specular;
+      base.mirrorBallReflectivity = mirrorBall.reflectivity;
+      base.mirrorBallLightX = mirrorBall.lightX;
+      base.mirrorBallLightY = mirrorBall.lightY;
+      base.mirrorBallLightColor = mirrorBall.lightColor;
+      base.mirrorBallLightIntensity = mirrorBall.lightIntensity;
+      base.mirrorBallSecondaryEnabled = mirrorBall.secondaryEnabled;
+      base.mirrorBallSecondaryX = mirrorBall.secondaryX;
+      base.mirrorBallSecondaryY = mirrorBall.secondaryY;
+      base.mirrorBallSecondaryColor = mirrorBall.secondaryColor;
+      base.mirrorBallSecondaryIntensity = mirrorBall.secondaryIntensity;
+      base.mirrorBallAudioSyncRotation = mirrorBall.audioSyncRotation;
     }
     return base;
   }, [
@@ -639,10 +775,13 @@ const Home: NextPage = () => {
     dustParticleColor,
     atmosphereVariant,
     atmosphereStrength,
+    mirrorBall,
   ]);
 
   const [recordVideoBitrateMbps, setRecordVideoBitrateMbps] = useState<number>(8);
-  const [exportAudioBitrateKbps, setExportAudioBitrateKbps] = useState<128 | 192 | 256>(192);
+  const [exportAudioBitrateKbps, setExportAudioBitrateKbps] = useState<ExportAudioBitrateKbps>(320);
+  /** 録画 WebM の音声ビットレート（kbps）。null のとき exportAudioBitrateKbps に追従 */
+  const [recordAudioBitrateKbps, setRecordAudioBitrateKbps] = useState<number | null>(384);
   /** 隠し: 字幕タブの SRT 作成支援パネルを表示（設定タブの「SRT」チェックで切替） */
   const [srtAuthorPanelEnabled, setSrtAuthorPanelEnabled] = useState<boolean>(false);
 
@@ -685,6 +824,11 @@ const Home: NextPage = () => {
     mwvSetItem("common_titleStyle", JSON.stringify(titleStyle));
     mwvSetItem("common_recordVideoBitrateMbps", String(recordVideoBitrateMbps));
     mwvSetItem("common_exportAudioBitrateKbps", String(exportAudioBitrateKbps));
+    if (recordAudioBitrateKbps != null) {
+      mwvSetItem("common_recordAudioBitrateKbps", String(recordAudioBitrateKbps));
+    } else {
+      mwvRemoveItem("common_recordAudioBitrateKbps");
+    }
   }, [
     effectType,
     effectDensities,
@@ -710,12 +854,18 @@ const Home: NextPage = () => {
     titleStyle,
     recordVideoBitrateMbps,
     exportAudioBitrateKbps,
+    recordAudioBitrateKbps,
   ]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     mwvSetItem("common_rainWeather", JSON.stringify(rainWeather));
   }, [rainWeather]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    mwvSetItem("common_mirrorBall", JSON.stringify(mirrorBall));
+  }, [mirrorBall]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -749,7 +899,9 @@ const Home: NextPage = () => {
     mwvSetItem("common_shortOutputPreset", shortOutputPreset);
     mwvSetItem("common_shortStartSecStr", shortStartSecStr);
     mwvSetItem("common_shortDurationSecStr", shortDurationSecStr);
-  }, [shortOutputPreset, shortStartSecStr, shortDurationSecStr]);
+    mwvSetItem("common_shortFadeInSecStr", shortFadeInSecStr);
+    mwvSetItem("common_shortFadeOutSecStr", shortFadeOutSecStr);
+  }, [shortOutputPreset, shortStartSecStr, shortDurationSecStr, shortFadeInSecStr, shortFadeOutSecStr]);
 
   const detectCanvasLayoutFromImage = useCallback((image: HTMLImageElement | null): CanvasLayout => {
     if (!image || !(image.naturalWidth > 0) || !(image.naturalHeight > 0)) return "1920x1080";
@@ -870,10 +1022,12 @@ const Home: NextPage = () => {
         titleStyle,
         recordVideoBitrateMbps,
         exportAudioBitrateKbps,
+        recordAudioBitrateKbps,
         srtAuthorPanelEnabled,
         rendererType,
         rainWeather,
         snowWeather,
+        mirrorBall,
         galleryTransitionMode,
         spaceParticleColor,
         spaceDirection,
@@ -891,6 +1045,8 @@ const Home: NextPage = () => {
         shortOutputPreset,
         shortStartSecStr,
         shortDurationSecStr,
+        shortFadeInSecStr,
+        shortFadeOutSecStr,
         galleryAutoEnabled,
         galleryAutoSec,
       },
@@ -932,9 +1088,11 @@ const Home: NextPage = () => {
       "common_atmosphereStrength",
       "common_recordVideoBitrateMbps",
       "common_exportAudioBitrateKbps",
+      "common_recordAudioBitrateKbps",
       "common_srtAuthorPanelEnabled",
       "common_rainWeather",
       "common_snowWeather",
+      "common_mirrorBall",
       "common_galleryAutoEnabled",
       "common_galleryAutoSec",
       "common_canvasSize",
@@ -945,6 +1103,8 @@ const Home: NextPage = () => {
       "common_shortOutputPreset",
       "common_shortStartSecStr",
       "common_shortDurationSecStr",
+      "common_shortFadeInSecStr",
+      "common_shortFadeOutSecStr",
       "common_rendererType",
     ].forEach((k) => mwvRemoveItem(k));
   };
@@ -972,8 +1132,9 @@ const Home: NextPage = () => {
           }
         }
         if (c.effectType && VALID_SAVED_EFFECT_TYPES.includes(c.effectType)) {
-          mwvSetItem("common_effectType", c.effectType);
-          setEffectType(c.effectType);
+          const resolved = effectTypeForUi(c.effectType);
+          mwvSetItem("common_effectType", resolved);
+          setEffectType(resolved);
         }
         if (c.effectDensities && typeof c.effectDensities === "object") {
           const merged = { ...effectDensities };
@@ -1165,9 +1326,19 @@ const Home: NextPage = () => {
             setRecordVideoBitrateMbps(n);
           }
         }
-        if (c.exportAudioBitrateKbps === 128 || c.exportAudioBitrateKbps === 192 || c.exportAudioBitrateKbps === 256) {
+        if (isExportAudioBitrateKbps(Number(c.exportAudioBitrateKbps))) {
           mwvSetItem("common_exportAudioBitrateKbps", String(c.exportAudioBitrateKbps));
           setExportAudioBitrateKbps(c.exportAudioBitrateKbps);
+        }
+        if (c.recordAudioBitrateKbps === null) {
+          mwvRemoveItem("common_recordAudioBitrateKbps");
+          setRecordAudioBitrateKbps(null);
+        } else if (c.recordAudioBitrateKbps !== undefined) {
+          const rk = Number(c.recordAudioBitrateKbps);
+          if (!isNaN(rk) && rk >= 128 && rk <= 512) {
+            mwvSetItem("common_recordAudioBitrateKbps", String(rk));
+            setRecordAudioBitrateKbps(rk);
+          }
         }
         if (c.srtAuthorPanelEnabled === true || c.srtAuthorPanelEnabled === false) {
           mwvSetItem("common_srtAuthorPanelEnabled", c.srtAuthorPanelEnabled ? "1" : "0");
@@ -1208,6 +1379,42 @@ const Home: NextPage = () => {
               color: /^#[0-9a-fA-F]{6}$/.test(sw.color) ? sw.color : DEFAULT_SNOW_WEATHER.color,
             });
           }
+        }
+        if (c.mirrorBall && typeof c.mirrorBall === "object") {
+          const mb = c.mirrorBall as Partial<MirrorBallAdjust>;
+          const clamp01 = (v: unknown, fallback: number) =>
+            typeof v === "number" && !isNaN(v) ? Math.max(0, Math.min(1, v)) : fallback;
+          const clampNum = (v: unknown, min: number, max: number, fallback: number) =>
+            typeof v === "number" && !isNaN(v) ? Math.max(min, Math.min(max, v)) : fallback;
+          setMirrorBall({
+            ballX: clamp01(mb.ballX, DEFAULT_MIRROR_BALL.ballX),
+            ballY: clamp01(mb.ballY, DEFAULT_MIRROR_BALL.ballY),
+            rotationSpeed: clampNum(mb.rotationSpeed, -180, 180, DEFAULT_MIRROR_BALL.rotationSpeed),
+            radius: clampNum(mb.radius, 0.04, 0.35, DEFAULT_MIRROR_BALL.radius),
+            facetCount: Math.round(clampNum(mb.facetCount, 8, 64, DEFAULT_MIRROR_BALL.facetCount)),
+            sparkle: clamp01(mb.sparkle, DEFAULT_MIRROR_BALL.sparkle),
+            beamCount: Math.round(clampNum(mb.beamCount, 4, 32, DEFAULT_MIRROR_BALL.beamCount)),
+            beamSpread: clampNum(mb.beamSpread, 8, 90, DEFAULT_MIRROR_BALL.beamSpread),
+            ambient: clamp01(mb.ambient, DEFAULT_MIRROR_BALL.ambient),
+            specular: clamp01(mb.specular, DEFAULT_MIRROR_BALL.specular),
+            reflectivity: clamp01(mb.reflectivity, DEFAULT_MIRROR_BALL.reflectivity),
+            lightX: clamp01(mb.lightX, DEFAULT_MIRROR_BALL.lightX),
+            lightY: clamp01(mb.lightY, DEFAULT_MIRROR_BALL.lightY),
+            lightColor:
+              typeof mb.lightColor === "string" && /^#[0-9a-fA-F]{6}$/.test(mb.lightColor)
+                ? mb.lightColor
+                : DEFAULT_MIRROR_BALL.lightColor,
+            lightIntensity: clamp01(mb.lightIntensity, DEFAULT_MIRROR_BALL.lightIntensity),
+            secondaryEnabled: mb.secondaryEnabled === true,
+            secondaryX: clamp01(mb.secondaryX, DEFAULT_MIRROR_BALL.secondaryX),
+            secondaryY: clamp01(mb.secondaryY, DEFAULT_MIRROR_BALL.secondaryY),
+            secondaryColor:
+              typeof mb.secondaryColor === "string" && /^#[0-9a-fA-F]{6}$/.test(mb.secondaryColor)
+                ? mb.secondaryColor
+                : DEFAULT_MIRROR_BALL.secondaryColor,
+            secondaryIntensity: clamp01(mb.secondaryIntensity, DEFAULT_MIRROR_BALL.secondaryIntensity),
+            audioSyncRotation: mb.audioSyncRotation === true,
+          });
         }
         if (
           c.canvasSize === "auto" ||
@@ -1259,6 +1466,14 @@ const Home: NextPage = () => {
           mwvSetItem("common_shortDurationSecStr", c.shortDurationSecStr);
           setShortDurationSecStr(c.shortDurationSecStr);
         }
+        if (typeof c.shortFadeInSecStr === "string") {
+          mwvSetItem("common_shortFadeInSecStr", c.shortFadeInSecStr);
+          setShortFadeInSecStr(c.shortFadeInSecStr);
+        }
+        if (typeof c.shortFadeOutSecStr === "string") {
+          mwvSetItem("common_shortFadeOutSecStr", c.shortFadeOutSecStr);
+          setShortFadeOutSecStr(c.shortFadeOutSecStr);
+        }
         if (c.galleryAutoEnabled === true || c.galleryAutoEnabled === false) {
           mwvSetItem("common_galleryAutoEnabled", c.galleryAutoEnabled ? "1" : "0");
           setGalleryAutoEnabled(c.galleryAutoEnabled);
@@ -1306,7 +1521,7 @@ const Home: NextPage = () => {
           }
         }
         if (as.effectType && VALID_SAVED_EFFECT_TYPES.includes(as.effectType as EffectType)) {
-          setEffectType(as.effectType as EffectType);
+          setEffectType(effectTypeForUi(as.effectType as EffectType));
         }
         if (as.effectDensities) {
           setEffectDensities((prev) => {
@@ -1375,6 +1590,14 @@ const Home: NextPage = () => {
   useEffect(() => {
     setSnowColorInput(snowWeather.color.toUpperCase());
   }, [snowWeather.color]);
+
+  useEffect(() => {
+    setMirrorBallLightColorInput(mirrorBall.lightColor.toUpperCase());
+  }, [mirrorBall.lightColor]);
+
+  useEffect(() => {
+    setMirrorBallSecondaryColorInput(mirrorBall.secondaryColor.toUpperCase());
+  }, [mirrorBall.secondaryColor]);
 
   useEffect(() => {
     setSpaceColorInput(spaceParticleColor.toUpperCase());
@@ -1663,9 +1886,12 @@ const Home: NextPage = () => {
           mediaElementSourceRef.current?.disconnect();
           const source = audioCtxRef.current.createMediaElementSource(video);
           mediaElementSourceRef.current = source;
-          source.connect(analyserRef.current);
-          analyserRef.current.connect(audioCtxRef.current.destination);
-          analyserRef.current.connect(streamDestinationRef.current);
+          const clipGain = clipGainRef.current;
+          if (clipGain) {
+            source.connect(clipGain);
+          } else {
+            source.connect(analyserRef.current);
+          }
 
           video.onended = () => {
             isPlaySoundRef.current = false;
@@ -1877,6 +2103,10 @@ const Home: NextPage = () => {
     if (ssStart != null) setShortStartSecStr(ssStart);
     const sds = mwvGetItem("common_shortDurationSecStr");
     if (sds != null) setShortDurationSecStr(sds);
+    const sfi = mwvGetItem("common_shortFadeInSecStr");
+    if (sfi != null) setShortFadeInSecStr(sfi);
+    const sfo = mwvGetItem("common_shortFadeOutSecStr");
+    if (sfo != null) setShortFadeOutSecStr(sfo);
 
     const gae = mwvGetItem("common_galleryAutoEnabled");
     if (gae === "0") setGalleryAutoEnabled(false);
@@ -1884,7 +2114,11 @@ const Home: NextPage = () => {
 
     const savedEffectType = mwvGetItem("common_effectType");
     if (savedEffectType && VALID_SAVED_EFFECT_TYPES.includes(savedEffectType as EffectType)) {
-      setEffectType(savedEffectType as EffectType);
+      const resolved = effectTypeForUi(savedEffectType as EffectType);
+      setEffectType(resolved);
+      if (resolved !== savedEffectType) {
+        mwvSetItem("common_effectType", resolved);
+      }
     }
 
     try {
@@ -2084,8 +2318,14 @@ const Home: NextPage = () => {
       if (!isNaN(n) && n >= 1 && n <= 40) setRecordVideoBitrateMbps(n);
     }
     const savedAudBr = mwvGetItem("common_exportAudioBitrateKbps");
-    if (savedAudBr === "128" || savedAudBr === "192" || savedAudBr === "256") {
-      setExportAudioBitrateKbps(Number(savedAudBr) as 128 | 192 | 256);
+    if (savedAudBr != null && savedAudBr !== "") {
+      const ak = Number(savedAudBr);
+      if (isExportAudioBitrateKbps(ak)) setExportAudioBitrateKbps(ak);
+    }
+    const savedRecAudBr = mwvGetItem("common_recordAudioBitrateKbps");
+    if (savedRecAudBr != null && savedRecAudBr !== "") {
+      const rk = Number(savedRecAudBr);
+      if (!isNaN(rk) && rk >= 128 && rk <= 512) setRecordAudioBitrateKbps(rk);
     }
     const savedSrtPanel = mwvGetItem("common_srtAuthorPanelEnabled");
     if (savedSrtPanel === "1") {
@@ -2150,6 +2390,46 @@ const Home: NextPage = () => {
             color: /^#[0-9a-fA-F]{6}$/.test(p.color) ? p.color : DEFAULT_SNOW_WEATHER.color,
           });
         }
+      }
+    } catch (_e) { /* ignore */ }
+
+    try {
+      const mb = mwvGetItem("common_mirrorBall");
+      if (mb) {
+        const p = JSON.parse(mb) as Partial<MirrorBallAdjust>;
+        const clamp01 = (v: unknown, fallback: number) =>
+          typeof v === "number" && !isNaN(v) ? Math.max(0, Math.min(1, v)) : fallback;
+        const clampNum = (v: unknown, min: number, max: number, fallback: number) =>
+          typeof v === "number" && !isNaN(v) ? Math.max(min, Math.min(max, v)) : fallback;
+        setMirrorBall({
+          ballX: clamp01(p.ballX, DEFAULT_MIRROR_BALL.ballX),
+          ballY: clamp01(p.ballY, DEFAULT_MIRROR_BALL.ballY),
+          rotationSpeed: clampNum(p.rotationSpeed, -180, 180, DEFAULT_MIRROR_BALL.rotationSpeed),
+          radius: clampNum(p.radius, 0.04, 0.35, DEFAULT_MIRROR_BALL.radius),
+          facetCount: Math.round(clampNum(p.facetCount, 8, 64, DEFAULT_MIRROR_BALL.facetCount)),
+          sparkle: clamp01(p.sparkle, DEFAULT_MIRROR_BALL.sparkle),
+          beamCount: Math.round(clampNum(p.beamCount, 4, 32, DEFAULT_MIRROR_BALL.beamCount)),
+          beamSpread: clampNum(p.beamSpread, 8, 90, DEFAULT_MIRROR_BALL.beamSpread),
+          ambient: clamp01(p.ambient, DEFAULT_MIRROR_BALL.ambient),
+          specular: clamp01(p.specular, DEFAULT_MIRROR_BALL.specular),
+          reflectivity: clamp01(p.reflectivity, DEFAULT_MIRROR_BALL.reflectivity),
+          lightX: clamp01(p.lightX, DEFAULT_MIRROR_BALL.lightX),
+          lightY: clamp01(p.lightY, DEFAULT_MIRROR_BALL.lightY),
+          lightColor:
+            typeof p.lightColor === "string" && /^#[0-9a-fA-F]{6}$/.test(p.lightColor)
+              ? p.lightColor
+              : DEFAULT_MIRROR_BALL.lightColor,
+          lightIntensity: clamp01(p.lightIntensity, DEFAULT_MIRROR_BALL.lightIntensity),
+          secondaryEnabled: p.secondaryEnabled === true,
+          secondaryX: clamp01(p.secondaryX, DEFAULT_MIRROR_BALL.secondaryX),
+          secondaryY: clamp01(p.secondaryY, DEFAULT_MIRROR_BALL.secondaryY),
+          secondaryColor:
+            typeof p.secondaryColor === "string" && /^#[0-9a-fA-F]{6}$/.test(p.secondaryColor)
+              ? p.secondaryColor
+              : DEFAULT_MIRROR_BALL.secondaryColor,
+          secondaryIntensity: clamp01(p.secondaryIntensity, DEFAULT_MIRROR_BALL.secondaryIntensity),
+          audioSyncRotation: p.audioSyncRotation === true,
+        });
       }
     } catch (_e) { /* ignore */ }
 
@@ -2256,6 +2536,7 @@ const Home: NextPage = () => {
         cues: subtitleCues,
         getCurrentTimeSec: getCurrentPlaybackTimeSec,
         style: subtitleStyle,
+        displayTimingOffsetSec: subtitleDisplayTimingOffsetSec,
       },
       titleOverlay: {
         enabled: titleEnabled,
@@ -2318,6 +2599,7 @@ const Home: NextPage = () => {
     subtitleEnabled,
     subtitleCues,
     subtitleStyle,
+    subtitleDisplayTimingOffsetSec,
     titleEnabled,
     titleText,
     titleStyle,
@@ -2684,6 +2966,29 @@ const Home: NextPage = () => {
     return { full: false, start, duration };
   }, [shortOutputPreset, shortStartSecStr, shortDurationSecStr, getMediaDurationSec]);
 
+  const applyPlaybackClipFade = useCallback(
+    (clip: ResolvedClip) => {
+      const gain = clipGainRef.current;
+      const ctx = audioCtxRef.current;
+      if (!gain || !ctx) return;
+      if (shortOutputPreset === "all" || clip.full) {
+        resetClipGain(gain, ctx);
+        return;
+      }
+      const mediaDur = getMediaDurationSec();
+      const explicitDur = parseExplicitDurationSec(shortDurationSecStr);
+      const schedule = resolveClipFadeSchedule(
+        clip,
+        mediaDur,
+        parseFadeSecStr(shortFadeInSecStr),
+        parseFadeSecStr(shortFadeOutSecStr),
+        explicitDur
+      );
+      scheduleClipGainFade(gain, ctx, schedule, ctx.currentTime);
+    },
+    [getMediaDurationSec, shortDurationSecStr, shortFadeInSecStr, shortFadeOutSecStr, shortOutputPreset]
+  );
+
   const clearPlaybackWindowTimer = useCallback(() => {
     if (playbackWindowTimerRef.current != null) {
       window.clearTimeout(playbackWindowTimerRef.current);
@@ -2882,10 +3187,20 @@ const Home: NextPage = () => {
       setSrtAuthorLineIndex(nextIdx);
       setSrtAuthorPhase("wait_start");
     }
-    if (isPlaySoundRef.current) {
-      onPlaySoundPlaybackRef.current();
-    }
   }, [getAuthoringTimeSec, isRecording, openSnackBar, pushSrtAuthorUndoSnapshot, t]);
+
+  const srtAuthorEnsurePlaybackForMark = useCallback((): boolean => {
+    if (isPlaySoundRef.current || isRecording) {
+      return true;
+    }
+    const clip = resolvePlaybackWindow();
+    if (clip.full === false && clip.duration <= 0) {
+      openSnackBar(t("snackbar.shortClipInvalid"));
+      return false;
+    }
+    onPlaySoundPlaybackRef.current();
+    return true;
+  }, [isRecording, openSnackBar, resolvePlaybackWindow, t]);
 
   const srtAuthorUndoLast = useCallback(() => {
     if (popSrtAuthorUndoSnapshot()) {
@@ -2903,11 +3218,12 @@ const Home: NextPage = () => {
     const blob = new Blob([body], { type: "text/plain;charset=utf-8" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = "subtitles.srt";
+    const fallbackBase = "subtitle_" + Math.random().toString(36).slice(-8);
+    a.download = buildDownloadSrtName(audioFileName, fallbackBase);
     a.click();
     URL.revokeObjectURL(a.href);
     openSnackBar(t("snackbar.subtitleAuthorExported"));
-  }, [openSnackBar, srtAuthorGlobalOffsetMs, t]);
+  }, [audioFileName, openSnackBar, srtAuthorGlobalOffsetMs, t]);
 
   const srtAuthorApplyToPreview = useCallback(() => {
     const shifted = shiftCuesBySeconds(srtAuthorCuesRef.current, srtAuthorGlobalOffsetMs / 1000);
@@ -2962,13 +3278,18 @@ const Home: NextPage = () => {
         return;
       }
       const el = e.target as HTMLElement | null;
-      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable)) {
+      if (isTypingTargetForSrtAuthorSpaceKey(el)) {
         return;
       }
       e.preventDefault();
       e.stopPropagation();
       if (srtAuthorPhaseRef.current === "wait_start") {
-        srtAuthorMarkStart();
+        if (!srtAuthorEnsurePlaybackForMark()) {
+          return;
+        }
+        queueMicrotask(() => {
+          srtAuthorMarkStart();
+        });
       }
     };
     const onKeyUp = (e: KeyboardEvent) => {
@@ -2976,7 +3297,7 @@ const Home: NextPage = () => {
         return;
       }
       const el = e.target as HTMLElement | null;
-      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable)) {
+      if (isTypingTargetForSrtAuthorSpaceKey(el)) {
         return;
       }
       e.preventDefault();
@@ -2991,7 +3312,13 @@ const Home: NextPage = () => {
       window.removeEventListener("keydown", onKeyDown, true);
       window.removeEventListener("keyup", onKeyUp, true);
     };
-  }, [srtAuthorPanelEnabled, srtAuthorRecordActive, srtAuthorMarkStart, srtAuthorMarkEnd]);
+  }, [
+    srtAuthorPanelEnabled,
+    srtAuthorRecordActive,
+    srtAuthorEnsurePlaybackForMark,
+    srtAuthorMarkStart,
+    srtAuthorMarkEnd,
+  ]);
 
   const setupAudioSourceForPlayback = (clip: ResolvedClip) => {
     if (videoElementRef.current) {
@@ -3028,9 +3355,12 @@ const Home: NextPage = () => {
       stopCanvas2DAnimation();
       stopWebGLAnimation();
     };
-    audioBufferSourceNode.connect(analyserRef.current);
-    analyserRef.current.connect(audioCtxRef.current.destination);
-    analyserRef.current.connect(streamDestinationRef.current);
+    const clipGain = clipGainRef.current;
+    if (clipGain) {
+      audioBufferSourceNode.connect(clipGain);
+    } else {
+      audioBufferSourceNode.connect(analyserRef.current);
+    }
     audioBufferSrcRef.current = audioBufferSourceNode;
     audioPlaybackOffsetSecRef.current = clip.full === false ? clip.start : 0;
   };
@@ -3039,6 +3369,9 @@ const Home: NextPage = () => {
     clearPlaybackWindowTimer();
     if (videoElementRef.current) {
       videoElementRef.current.pause();
+    }
+    if (clipGainRef.current && audioCtxRef.current) {
+      resetClipGain(clipGainRef.current, audioCtxRef.current);
     }
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
       mediaRecorderRef.current.stop();
@@ -3076,6 +3409,9 @@ const Home: NextPage = () => {
       if (videoElementRef.current) {
         videoElementRef.current.pause();
       }
+      if (clipGainRef.current && audioCtxRef.current) {
+        resetClipGain(clipGainRef.current, audioCtxRef.current);
+      }
       audioPlaybackStartCtxTimeRef.current = null;
       stopCanvas2DAnimation();
       stopWebGLAnimation();
@@ -3098,6 +3434,7 @@ const Home: NextPage = () => {
     if (videoElementRef.current) {
       audioPlaybackStartCtxTimeRef.current = null;
       videoElementRef.current.play().then(() => {
+        applyPlaybackClipFade(clip);
         if (clip.full === false && clip.duration > 0) {
           clearPlaybackWindowTimer();
           const durationSec = clip.duration;
@@ -3114,6 +3451,7 @@ const Home: NextPage = () => {
       } else {
         audioBufferSrcRef.current.start(0);
       }
+      applyPlaybackClipFade(clip);
     }
 
     isPlaySoundRef.current = true;
@@ -3124,14 +3462,7 @@ const Home: NextPage = () => {
   const srtAuthorOnBtnStartClick = useCallback(() => {
     if (!srtAuthorRecordActive) return;
     if (srtAuthorPhase !== "wait_start" || srtAuthorLineIndex >= srtAuthorCues.length) return;
-    if (!(isPlaySoundRef.current || isRecording)) {
-      const clip = resolvePlaybackWindow();
-      if (clip.full === false && clip.duration <= 0) {
-        openSnackBar(t("snackbar.shortClipInvalid"));
-        return;
-      }
-      onPlaySoundPlaybackRef.current();
-    }
+    if (!srtAuthorEnsurePlaybackForMark()) return;
     queueMicrotask(() => {
       srtAuthorMarkStart();
     });
@@ -3140,10 +3471,7 @@ const Home: NextPage = () => {
     srtAuthorPhase,
     srtAuthorLineIndex,
     srtAuthorCues.length,
-    resolvePlaybackWindow,
-    openSnackBar,
-    t,
-    isRecording,
+    srtAuthorEnsurePlaybackForMark,
     srtAuthorMarkStart,
   ]);
   // RecordMovieEvent
@@ -3175,6 +3503,8 @@ const Home: NextPage = () => {
       if (videoBps >= 1_000_000 && videoBps <= 80_000_000) {
         recorderOptions.videoBitsPerSecond = videoBps;
       }
+      const audioBps = clampRecordAudioBitsPerSecond(exportAudioBitrateKbps, recordAudioBitrateKbps);
+      recorderOptions.audioBitsPerSecond = audioBps;
       let recorder: MediaRecorder;
       try {
         recorder = new MediaRecorder(outputStream, recorderOptions);
@@ -3563,8 +3893,11 @@ const Home: NextPage = () => {
     setShortOutputPreset("all");
     setShortStartSecStr("0");
     setShortDurationSecStr("");
+    setShortFadeInSecStr("0");
+    setShortFadeOutSecStr("0");
     setRainWeather(DEFAULT_RAIN_WEATHER);
     setSnowWeather(DEFAULT_SNOW_WEATHER);
+    setMirrorBall(DEFAULT_MIRROR_BALL);
     setTargetLufs(-14);
     setTargetLufsCustom("-14");
     setSpectrumColorHex("#FFFFFF");
@@ -3581,9 +3914,12 @@ const Home: NextPage = () => {
     setSpaceColorInput(DEFAULT_SPACE_PARTICLE.toUpperCase());
     setSparkleColorInput(DEFAULT_SPARKLE_PARTICLE.toUpperCase());
     setDustColorInput(DEFAULT_DUST_PARTICLE.toUpperCase());
+    setMirrorBallLightColorInput(DEFAULT_MIRROR_BALL.lightColor.toUpperCase());
+    setMirrorBallSecondaryColorInput(DEFAULT_MIRROR_BALL.secondaryColor.toUpperCase());
     setSpectrumRainbowColorful(true);
     setRecordVideoBitrateMbps(8);
-    setExportAudioBitrateKbps(192);
+    setExportAudioBitrateKbps(320);
+    setRecordAudioBitrateKbps(384);
     exitConfirmRef.current = false;
     openSnackBar(t("snackbar.cleared"));
   };
@@ -4840,6 +5176,326 @@ const Home: NextPage = () => {
                         </Box>
                       </Box>
                     )}
+                    {effectType === "mirrorBall" && (
+                      <Box sx={{ width: "100%", maxWidth: 480, mt: 1.5, mx: "auto" }}>
+                        <Typography variant="caption" color="textSecondary" display="block">
+                          {t("effect.mirrorBallPosX", { value: Math.round(mirrorBall.ballX * 100) })}
+                        </Typography>
+                        <Slider
+                          value={mirrorBall.ballX}
+                          min={0.05}
+                          max={0.95}
+                          step={0.01}
+                          onChange={(_, v) => setMirrorBall((p) => ({ ...p, ballX: v as number }))}
+                        />
+                        <Typography variant="caption" color="textSecondary" display="block">
+                          {t("effect.mirrorBallPosY", { value: Math.round(mirrorBall.ballY * 100) })}
+                        </Typography>
+                        <Slider
+                          value={mirrorBall.ballY}
+                          min={0.08}
+                          max={0.92}
+                          step={0.01}
+                          onChange={(_, v) => setMirrorBall((p) => ({ ...p, ballY: v as number }))}
+                        />
+                        <Typography variant="caption" color="textSecondary" display="block">
+                          {t("effect.mirrorBallRotation", { value: mirrorBall.rotationSpeed.toFixed(0) })}
+                        </Typography>
+                        <Slider
+                          value={mirrorBall.rotationSpeed}
+                          min={-120}
+                          max={120}
+                          step={1}
+                          onChange={(_, v) => setMirrorBall((p) => ({ ...p, rotationSpeed: v as number }))}
+                        />
+                        <Typography variant="caption" color="textSecondary" display="block">
+                          {t("effect.mirrorBallRadius", { value: Math.round(mirrorBall.radius * 100) })}
+                        </Typography>
+                        <Slider
+                          value={mirrorBall.radius}
+                          min={0.04}
+                          max={0.35}
+                          step={0.01}
+                          onChange={(_, v) => setMirrorBall((p) => ({ ...p, radius: v as number }))}
+                        />
+                        <Typography variant="caption" color="textSecondary" display="block">
+                          {t("effect.mirrorBallFacets", { value: mirrorBall.facetCount })}
+                        </Typography>
+                        <Slider
+                          value={mirrorBall.facetCount}
+                          min={8}
+                          max={64}
+                          step={1}
+                          onChange={(_, v) => setMirrorBall((p) => ({ ...p, facetCount: v as number }))}
+                        />
+                        <Typography variant="caption" color="textSecondary" display="block">
+                          {t("effect.mirrorBallSparkle", { value: Math.round(mirrorBall.sparkle * 100) })}
+                        </Typography>
+                        <Slider
+                          value={mirrorBall.sparkle}
+                          min={0}
+                          max={1}
+                          step={0.01}
+                          onChange={(_, v) => setMirrorBall((p) => ({ ...p, sparkle: v as number }))}
+                        />
+                        <Typography variant="caption" color="textSecondary" display="block">
+                          {t("effect.mirrorBallBeams", { value: mirrorBall.beamCount })}
+                        </Typography>
+                        <Slider
+                          value={mirrorBall.beamCount}
+                          min={4}
+                          max={32}
+                          step={1}
+                          onChange={(_, v) => setMirrorBall((p) => ({ ...p, beamCount: v as number }))}
+                        />
+                        <Typography variant="caption" color="textSecondary" display="block">
+                          {t("effect.mirrorBallBeamSpread", { value: Math.round(mirrorBall.beamSpread) })}
+                        </Typography>
+                        <Slider
+                          value={mirrorBall.beamSpread}
+                          min={8}
+                          max={90}
+                          step={1}
+                          onChange={(_, v) => setMirrorBall((p) => ({ ...p, beamSpread: v as number }))}
+                        />
+                        <Typography variant="caption" color="textSecondary" display="block">
+                          {t("effect.mirrorBallAmbient", { value: Math.round(mirrorBall.ambient * 100) })}
+                        </Typography>
+                        <Slider
+                          value={mirrorBall.ambient}
+                          min={0}
+                          max={1}
+                          step={0.01}
+                          onChange={(_, v) => setMirrorBall((p) => ({ ...p, ambient: v as number }))}
+                        />
+                        <Typography variant="caption" color="textSecondary" display="block">
+                          {t("effect.mirrorBallSpecular", { value: Math.round(mirrorBall.specular * 100) })}
+                        </Typography>
+                        <Slider
+                          value={mirrorBall.specular}
+                          min={0.05}
+                          max={1}
+                          step={0.01}
+                          onChange={(_, v) => setMirrorBall((p) => ({ ...p, specular: v as number }))}
+                        />
+                        <Typography variant="caption" color="textSecondary" display="block">
+                          {t("effect.mirrorBallReflectivity", { value: Math.round(mirrorBall.reflectivity * 100) })}
+                        </Typography>
+                        <Slider
+                          value={mirrorBall.reflectivity}
+                          min={0.1}
+                          max={1}
+                          step={0.01}
+                          onChange={(_, v) => setMirrorBall((p) => ({ ...p, reflectivity: v as number }))}
+                        />
+                        <Divider sx={{ my: 1.5 }} />
+                        <Typography variant="caption" color="textSecondary" fontWeight={600} display="block">
+                          {t("effect.mirrorBallPrimaryLight")}
+                        </Typography>
+                        <Typography variant="caption" color="textSecondary" display="block">
+                          {t("effect.mirrorBallLightPosX", { value: Math.round(mirrorBall.lightX * 100) })}
+                        </Typography>
+                        <Slider
+                          value={mirrorBall.lightX}
+                          min={0}
+                          max={1}
+                          step={0.01}
+                          onChange={(_, v) => setMirrorBall((p) => ({ ...p, lightX: v as number }))}
+                        />
+                        <Typography variant="caption" color="textSecondary" display="block">
+                          {t("effect.mirrorBallLightPosY", { value: Math.round(mirrorBall.lightY * 100) })}
+                        </Typography>
+                        <Slider
+                          value={mirrorBall.lightY}
+                          min={0}
+                          max={1}
+                          step={0.01}
+                          onChange={(_, v) => setMirrorBall((p) => ({ ...p, lightY: v as number }))}
+                        />
+                        <Typography variant="caption" color="textSecondary" display="block">
+                          {t("effect.mirrorBallLightIntensity", { value: Math.round(mirrorBall.lightIntensity * 100) })}
+                        </Typography>
+                        <Slider
+                          value={mirrorBall.lightIntensity}
+                          min={0}
+                          max={1}
+                          step={0.01}
+                          onChange={(_, v) => setMirrorBall((p) => ({ ...p, lightIntensity: v as number }))}
+                        />
+                        <Box sx={{ mt: 1 }}>
+                          <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 0.5 }}>
+                            {t("effect.weatherColor")}
+                          </Typography>
+                          <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5, justifyContent: "center" }}>
+                            {DEFAULT_COLOR_PALETTE_20.map((c) => (
+                              <button
+                                key={`mb-light-${c}`}
+                                type="button"
+                                aria-label={`${t("effect.mirrorBallPrimaryLight")} ${c}`}
+                                onClick={() => {
+                                  setMirrorBall((p) => ({ ...p, lightColor: c }));
+                                  setMirrorBallLightColorInput(c.toUpperCase());
+                                }}
+                                style={{
+                                  width: 22,
+                                  height: 22,
+                                  borderRadius: 4,
+                                  background: c,
+                                  cursor: "pointer",
+                                  border:
+                                    mirrorBall.lightColor.toUpperCase() === c.toUpperCase()
+                                      ? "2px solid #111"
+                                      : "1px solid #999",
+                                }}
+                              />
+                            ))}
+                          </Box>
+                          <TextField
+                            size="small"
+                            label={t("effect.weatherColorCode")}
+                            value={mirrorBallLightColorInput}
+                            onChange={(e) => {
+                              const v = e.target.value.trim();
+                              setMirrorBallLightColorInput(v.startsWith("#") ? v.toUpperCase() : `#${v}`.toUpperCase());
+                              if (/^#[0-9A-F]{6}$/.test(v.startsWith("#") ? v.toUpperCase() : `#${v}`.toUpperCase())) {
+                                setMirrorBall((p) => ({
+                                  ...p,
+                                  lightColor: v.startsWith("#") ? v.toUpperCase() : `#${v}`.toUpperCase(),
+                                }));
+                              }
+                            }}
+                            error={
+                              mirrorBallLightColorInput.length > 0 &&
+                              !/^#?[0-9A-F]{6}$/.test(mirrorBallLightColorInput.replace(/^#/, ""))
+                            }
+                            helperText={
+                              mirrorBallLightColorInput.length > 0 &&
+                              !/^#?[0-9A-F]{6}$/.test(mirrorBallLightColorInput.replace(/^#/, ""))
+                                ? t("effect.weatherColorCodeInvalid")
+                                : " "
+                            }
+                            inputProps={{ inputMode: "text", pattern: "#?[0-9a-fA-F]{6}" }}
+                            sx={{ width: 220, mt: 1 }}
+                          />
+                        </Box>
+                        <Divider sx={{ my: 1.5 }} />
+                        <FormControlLabel
+                          control={
+                            <Switch
+                              checked={mirrorBall.secondaryEnabled}
+                              onChange={(_, c) => setMirrorBall((p) => ({ ...p, secondaryEnabled: c }))}
+                              size="small"
+                            />
+                          }
+                          label={t("effect.mirrorBallSecondaryLight")}
+                        />
+                        {mirrorBall.secondaryEnabled && (
+                          <>
+                            <Typography variant="caption" color="textSecondary" display="block">
+                              {t("effect.mirrorBallLightPosX", { value: Math.round(mirrorBall.secondaryX * 100) })}
+                            </Typography>
+                            <Slider
+                              value={mirrorBall.secondaryX}
+                              min={0}
+                              max={1}
+                              step={0.01}
+                              onChange={(_, v) => setMirrorBall((p) => ({ ...p, secondaryX: v as number }))}
+                            />
+                            <Typography variant="caption" color="textSecondary" display="block">
+                              {t("effect.mirrorBallLightPosY", { value: Math.round(mirrorBall.secondaryY * 100) })}
+                            </Typography>
+                            <Slider
+                              value={mirrorBall.secondaryY}
+                              min={0}
+                              max={1}
+                              step={0.01}
+                              onChange={(_, v) => setMirrorBall((p) => ({ ...p, secondaryY: v as number }))}
+                            />
+                            <Typography variant="caption" color="textSecondary" display="block">
+                              {t("effect.mirrorBallSecondaryIntensity", {
+                                value: Math.round(mirrorBall.secondaryIntensity * 100),
+                              })}
+                            </Typography>
+                            <Slider
+                              value={mirrorBall.secondaryIntensity}
+                              min={0}
+                              max={1}
+                              step={0.01}
+                              onChange={(_, v) => setMirrorBall((p) => ({ ...p, secondaryIntensity: v as number }))}
+                            />
+                            <Box sx={{ mt: 1 }}>
+                              <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 0.5 }}>
+                                {t("effect.weatherColor")}
+                              </Typography>
+                              <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5, justifyContent: "center" }}>
+                                {DEFAULT_COLOR_PALETTE_20.map((c) => (
+                                  <button
+                                    key={`mb-sec-${c}`}
+                                    type="button"
+                                    aria-label={`${t("effect.mirrorBallSecondaryLight")} ${c}`}
+                                    onClick={() => {
+                                      setMirrorBall((p) => ({ ...p, secondaryColor: c }));
+                                      setMirrorBallSecondaryColorInput(c.toUpperCase());
+                                    }}
+                                    style={{
+                                      width: 22,
+                                      height: 22,
+                                      borderRadius: 4,
+                                      background: c,
+                                      cursor: "pointer",
+                                      border:
+                                        mirrorBall.secondaryColor.toUpperCase() === c.toUpperCase()
+                                          ? "2px solid #111"
+                                          : "1px solid #999",
+                                    }}
+                                  />
+                                ))}
+                              </Box>
+                              <TextField
+                                size="small"
+                                label={t("effect.weatherColorCode")}
+                                value={mirrorBallSecondaryColorInput}
+                                onChange={(e) => {
+                                  const v = e.target.value.trim();
+                                  setMirrorBallSecondaryColorInput(
+                                    v.startsWith("#") ? v.toUpperCase() : `#${v}`.toUpperCase()
+                                  );
+                                  if (/^#[0-9A-F]{6}$/.test(v.startsWith("#") ? v.toUpperCase() : `#${v}`.toUpperCase())) {
+                                    setMirrorBall((p) => ({
+                                      ...p,
+                                      secondaryColor: v.startsWith("#") ? v.toUpperCase() : `#${v}`.toUpperCase(),
+                                    }));
+                                  }
+                                }}
+                                error={
+                                  mirrorBallSecondaryColorInput.length > 0 &&
+                                  !/^#?[0-9A-F]{6}$/.test(mirrorBallSecondaryColorInput.replace(/^#/, ""))
+                                }
+                                helperText={
+                                  mirrorBallSecondaryColorInput.length > 0 &&
+                                  !/^#?[0-9A-F]{6}$/.test(mirrorBallSecondaryColorInput.replace(/^#/, ""))
+                                    ? t("effect.weatherColorCodeInvalid")
+                                    : " "
+                                }
+                                inputProps={{ inputMode: "text", pattern: "#?[0-9a-fA-F]{6}" }}
+                                sx={{ width: 220, mt: 1 }}
+                              />
+                            </Box>
+                          </>
+                        )}
+                        <FormControlLabel
+                          sx={{ mt: 1 }}
+                          control={
+                            <Switch
+                              checked={mirrorBall.audioSyncRotation}
+                              onChange={(_, c) => setMirrorBall((p) => ({ ...p, audioSyncRotation: c }))}
+                              size="small"
+                            />
+                          }
+                          label={t("effect.mirrorBallAudioSync")}
+                        />
+                      </Box>
+                    )}
                   </AccordionDetails>
                 </Accordion>
               </Box>
@@ -5445,6 +6101,24 @@ const Home: NextPage = () => {
                   step={0.05}
                   onChange={(_, v) => setSubtitleStyle((prev) => ({ ...prev, animationDurationSec: v as number }))}
                 />
+                <Typography gutterBottom>
+                  {t("subtitle.displayTimingOffset", {
+                    value:
+                      subtitleDisplayTimingOffsetSec >= 0
+                        ? `+${subtitleDisplayTimingOffsetSec.toFixed(2)}`
+                        : subtitleDisplayTimingOffsetSec.toFixed(2),
+                  })}
+                </Typography>
+                <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 0.5 }}>
+                  {t("subtitle.displayTimingOffsetHint")}
+                </Typography>
+                <Slider
+                  value={subtitleDisplayTimingOffsetSec}
+                  min={-2}
+                  max={2}
+                  step={0.05}
+                  onChange={(_, v) => setSubtitleDisplayTimingOffsetSec(v as number)}
+                />
               </Box>
             )}
 
@@ -5518,67 +6192,98 @@ const Home: NextPage = () => {
                 <Typography variant="body2" sx={{ mb: 1, textAlign: "center", fontWeight: 500 }}>
                   {t("shortOutput.title")}
                 </Typography>
-                <Box sx={{ display: "flex", gap: 1, justifyContent: "center", flexWrap: "wrap", alignItems: "center" }}>
-                  <Button
-                    variant={shortOutputPreset === "all" ? "contained" : "outlined"}
-                    onClick={() => setShortOutputPreset("all")}
-                    size="small"
-                    sx={{ height: 36 }}
-                  >
-                    {t("shortOutput.all")}
-                  </Button>
-                  <Button
-                    variant={shortOutputPreset === "youtube" ? "contained" : "outlined"}
-                    onClick={() => {
-                      setShortOutputPreset("youtube");
-                      setShortDurationSecStr("180");
-                    }}
-                    size="small"
-                    sx={{ height: 36 }}
-                  >
-                    {t("shortOutput.youtube")}
-                  </Button>
-                  <Button
-                    variant={shortOutputPreset === "tiktok" ? "contained" : "outlined"}
-                    onClick={() => {
-                      setShortOutputPreset("tiktok");
-                      setShortDurationSecStr("60");
-                    }}
-                    size="small"
-                    sx={{ height: 36 }}
-                  >
-                    {t("shortOutput.tiktok")}
-                  </Button>
-                  <Button
-                    variant={shortOutputPreset === "niconico" ? "contained" : "outlined"}
-                    onClick={() => {
-                      setShortOutputPreset("niconico");
-                      setShortDurationSecStr("300");
-                    }}
-                    size="small"
-                    sx={{ height: 36 }}
-                  >
-                    {t("shortOutput.niconico")}
-                  </Button>
-                  <TextField
-                    label={t("shortOutput.startSec")}
-                    size="small"
-                    value={shortStartSecStr}
-                    onChange={(e) => setShortStartSecStr(e.target.value)}
-                    disabled={shortOutputPreset === "all"}
-                    sx={{ width: 120, "& .MuiInputBase-root": { height: 36 } }}
-                    inputProps={{ inputMode: "decimal" }}
-                  />
-                  <TextField
-                    label={t("shortOutput.durationSec")}
-                    size="small"
-                    value={shortDurationSecStr}
-                    onChange={(e) => setShortDurationSecStr(e.target.value)}
-                    disabled={shortOutputPreset === "all"}
-                    placeholder={shortOutputPreset === "all" ? "" : t("shortOutput.durationPlaceholder")}
-                    sx={{ width: 140, "& .MuiInputBase-root": { height: 36 } }}
-                    inputProps={{ inputMode: "decimal" }}
-                  />
+                <Box
+                  sx={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 1,
+                    alignItems: "center",
+                  }}
+                >
+                  <Box sx={{ display: "flex", gap: 1, justifyContent: "center", flexWrap: "wrap", alignItems: "center" }}>
+                    <Button
+                      variant={shortOutputPreset === "all" ? "contained" : "outlined"}
+                      onClick={() => setShortOutputPreset("all")}
+                      size="small"
+                      sx={{ height: 36 }}
+                    >
+                      {t("shortOutput.all")}
+                    </Button>
+                    <Button
+                      variant={shortOutputPreset === "youtube" ? "contained" : "outlined"}
+                      onClick={() => {
+                        setShortOutputPreset("youtube");
+                        setShortDurationSecStr("180");
+                      }}
+                      size="small"
+                      sx={{ height: 36, textTransform: "none" }}
+                    >
+                      {t("shortOutput.youtube")}
+                    </Button>
+                    <Button
+                      variant={shortOutputPreset === "tiktok" ? "contained" : "outlined"}
+                      onClick={() => {
+                        setShortOutputPreset("tiktok");
+                        setShortDurationSecStr("60");
+                      }}
+                      size="small"
+                      sx={{ height: 36 }}
+                    >
+                      {t("shortOutput.tiktok")}
+                    </Button>
+                    <Button
+                      variant={shortOutputPreset === "niconico" ? "contained" : "outlined"}
+                      onClick={() => {
+                        setShortOutputPreset("niconico");
+                        setShortDurationSecStr("300");
+                      }}
+                      size="small"
+                      sx={{ height: 36, textTransform: "none" }}
+                    >
+                      {t("shortOutput.niconico")}
+                    </Button>
+                  </Box>
+                  <Box sx={{ display: "flex", gap: 1, justifyContent: "center", flexWrap: "wrap", alignItems: "center" }}>
+                    <TextField
+                      label={t("shortOutput.startSec")}
+                      size="small"
+                      value={shortStartSecStr}
+                      onChange={(e) => setShortStartSecStr(e.target.value)}
+                      disabled={shortOutputPreset === "all"}
+                      sx={{ width: 120, "& .MuiInputBase-root": { height: 36 } }}
+                      inputProps={{ inputMode: "decimal" }}
+                    />
+                    <TextField
+                      label={t("shortOutput.durationSec")}
+                      size="small"
+                      value={shortDurationSecStr}
+                      onChange={(e) => setShortDurationSecStr(e.target.value)}
+                      disabled={shortOutputPreset === "all"}
+                      placeholder={shortOutputPreset === "all" ? "" : t("shortOutput.durationPlaceholder")}
+                      sx={{ width: 140, "& .MuiInputBase-root": { height: 36 } }}
+                      inputProps={{ inputMode: "decimal" }}
+                    />
+                  </Box>
+                  <Box sx={{ display: "flex", gap: 1, justifyContent: "center", flexWrap: "wrap", alignItems: "center" }}>
+                    <TextField
+                      label={t("shortOutput.fadeInSec")}
+                      size="small"
+                      value={shortFadeInSecStr}
+                      onChange={(e) => setShortFadeInSecStr(e.target.value)}
+                      disabled={shortOutputPreset === "all"}
+                      sx={{ width: 120, "& .MuiInputBase-root": { height: 36 } }}
+                      inputProps={{ inputMode: "decimal", min: 0, step: 0.1 }}
+                    />
+                    <TextField
+                      label={t("shortOutput.fadeOutSec")}
+                      size="small"
+                      value={shortFadeOutSecStr}
+                      onChange={(e) => setShortFadeOutSecStr(e.target.value)}
+                      disabled={shortOutputPreset === "all"}
+                      sx={{ width: 120, "& .MuiInputBase-root": { height: 36 } }}
+                      inputProps={{ inputMode: "decimal", min: 0, step: 0.1 }}
+                    />
+                  </Box>
                 </Box>
                 {shortOutputPreset !== "all" && (
                   <Typography variant="caption" color="textSecondary" display="block" sx={{ mt: 0.5, textAlign: "center" }}>
@@ -5633,6 +6338,39 @@ const Home: NextPage = () => {
                 <Typography variant="subtitle2" color="primary" sx={{ mb: 1 }}>
                   {t("videoQuality.title")}
                 </Typography>
+                <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 1 }}>
+                  {t("videoQuality.presetSectionHint")}
+                </Typography>
+                <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap", mb: 2 }}>
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    onClick={() => {
+                      setTargetLufs(-14);
+                      setTargetLufsCustom("-14");
+                      setExportAudioBitrateKbps(320);
+                      setRecordAudioBitrateKbps(384);
+                      setRecordVideoBitrateMbps(8);
+                    }}
+                    sx={{ textTransform: "none", height: 36 }}
+                  >
+                    {t("videoQuality.presetDistribution")}
+                  </Button>
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    onClick={() => {
+                      setTargetLufs(-14);
+                      setTargetLufsCustom("-14");
+                      setExportAudioBitrateKbps(320);
+                      setRecordAudioBitrateKbps(384);
+                      setRecordVideoBitrateMbps(14);
+                    }}
+                    sx={{ textTransform: "none", height: 36 }}
+                  >
+                    {t("videoQuality.presetHifi")}
+                  </Button>
+                </Box>
                 <Typography variant="body2" sx={{ mb: 2 }}>
                   {t("videoQuality.outputResolution", {
                     width: getCanvasDimensions(activeCanvasLayout).width,
@@ -5655,20 +6393,33 @@ const Home: NextPage = () => {
                 <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 2 }}>
                   {t("videoQuality.recordContainerFixedMp4")}
                 </Typography>
-                <FormControl size="small" fullWidth sx={{ mb: 2, maxWidth: 360 }}>
+                <FormControl size="small" fullWidth sx={{ mb: 1, maxWidth: 360 }}>
                   <InputLabel>{t("videoQuality.audioBitrate")}</InputLabel>
                   <Select
                     value={exportAudioBitrateKbps}
                     label={t("videoQuality.audioBitrate")}
-                    onChange={(e) =>
-                      setExportAudioBitrateKbps(Number(e.target.value) as 128 | 192 | 256)
-                    }
+                    onChange={(e) => {
+                      const v = Number(e.target.value);
+                      if (isExportAudioBitrateKbps(v)) {
+                        setExportAudioBitrateKbps(v);
+                        setRecordAudioBitrateKbps(null);
+                      }
+                    }}
                   >
                     <MenuItem value={128}>128 kbps</MenuItem>
                     <MenuItem value={192}>192 kbps</MenuItem>
                     <MenuItem value={256}>256 kbps</MenuItem>
+                    <MenuItem value={320}>320 kbps</MenuItem>
                   </Select>
                 </FormControl>
+                <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 2 }}>
+                  {t("videoQuality.audioBitrateHint")}
+                </Typography>
+                {recordAudioBitrateKbps != null && recordAudioBitrateKbps !== exportAudioBitrateKbps && (
+                  <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 2 }}>
+                    {t("videoQuality.recordAudioBitrate", { value: recordAudioBitrateKbps })}
+                  </Typography>
+                )}
                 <FormControlLabel
                   control={
                     <Checkbox

@@ -483,34 +483,32 @@ export const drawBars = (
   }
 
   if (!analyser) {
+    ctx.restore();
     animationFrameId = requestAnimationFrame(function () {
       drawBars(canvas, imageCtx, mode, analyser, adjustments, effect, isEffectActive, spectrumSettings);
     });
     return animationFrameId;
   }
 
-  // 折れ線/波形モード: データ取り込みを SPECTRUM_THROTTLE_TARGET_FPS に合わせて間引く
+  // 折れ線/波形モード: スペアナ本体のみ間引く（エフェクト・字幕は毎フレーム＝WebGLと同じ）
   const now = performance.now();
   const interval = 1000 / SPECTRUM_THROTTLE_TARGET_FPS;
+  let skipSpectrumDraw = false;
   if (mode === 1) {
     const last = (drawBars as any)._lastTimeMode1 ?? 0;
     if (now - last < interval) {
-      animationFrameId = requestAnimationFrame(function () {
-        drawBars(canvas, imageCtx, mode, analyser, adjustments, effect, isEffectActive, spectrumSettings);
-      });
-      return animationFrameId;
+      skipSpectrumDraw = true;
+    } else {
+      (drawBars as any)._lastTimeMode1 = now;
     }
-    (drawBars as any)._lastTimeMode1 = now;
   }
   if (mode === 5) {
     const last = (drawBars as any)._lastTimeMode5 ?? 0;
     if (now - last < interval) {
-      animationFrameId = requestAnimationFrame(function () {
-        drawBars(canvas, imageCtx, mode, analyser, adjustments, effect, isEffectActive, spectrumSettings);
-      });
-      return animationFrameId;
+      skipSpectrumDraw = true;
+    } else {
+      (drawBars as any)._lastTimeMode5 = now;
     }
-    (drawBars as any)._lastTimeMode5 = now;
   }
 
   const bufferLength = analyser.frequencyBinCount; // analyser.fftSizeの半分になる(1024)
@@ -544,6 +542,7 @@ export const drawBars = (
   const useRainbow34 = settings.spectrumRainbowColorful !== false;
   const visualOpacity = getVisualOpacity(settings.opacity);
 
+  if (!skipSpectrumDraw) {
   ctx.save();
   ctx.translate(canvasWidth / 2 + offsetXPixels, canvasHeight / 2 + offsetYPixels);
   ctx.scale(effAdj.scaleX, effAdj.scaleY);
@@ -1213,11 +1212,12 @@ export const drawBars = (
 
   // 調整パラメータの適用を解除
   ctx.restore();
+  }
 
   // 最初のsave()に対応するrestore()
   ctx.restore();
 
-  // エフェクトオーバーレイ（このブロックは isEffectActive 時のみ到達＝音源連動）
+  // エフェクトオーバーレイ（背景→スペアナの上。字幕/UIより下）
   if (effect && effect.type !== "none") {
     let effectForOverlay: EffectParams = effect;
     // 主役埋もれ対策: 雨/ほこり/scanlines はスペアナ表示中に自動減衰
