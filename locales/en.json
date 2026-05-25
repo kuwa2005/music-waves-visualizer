@@ -14,7 +14,7 @@
     "addImage": "Add image",
     "selectAudio": "Select Music File",
     "unselected": "Not selected",
-    "caption": "Still images, audio, and subtitles are auto-detected. Use the music picker for MP4 audio, or a single MP4 under “Select image(s)” for a video background (do not mix with stills in one drop)."
+    "caption": "Still images, audio, and subtitles are auto-detected. MP4 loads as a background from “Select image(s)” and as audio from the music picker. Drag-and-drop asks which use you want."
   },
   "spectrum": {
     "title": "Spectrum Analyzer",
@@ -299,7 +299,14 @@
     "cancel": "Cancel",
     "clearGalleryForVideoTitle": "Switch to video background?",
     "clearGalleryForVideoBody": "Your multi-image gallery will be cleared and the selected MP4 will load as the background video.",
-    "confirmReplaceWithVideo": "Clear and load"
+    "confirmReplaceWithVideo": "Clear and load",
+    "droppedVideoChoiceTitle": "How should this MP4 be loaded?",
+    "droppedVideoChoiceBody": "The dropped MP4 can be loaded either as a background video or as an audio source.",
+    "loadDroppedVideoAsBackground": "Load as background video",
+    "loadDroppedVideoAsAudio": "Load as audio",
+    "srtAuthorApplyConfirmTitle": "Timing recording complete",
+    "srtAuthorApplyConfirmBody": "Timing recording is complete. Apply it to subtitles?",
+    "srtAuthorApplyConfirmApply": "Apply"
   },
   "snackbar": {
     "imageLoaded": "Image loaded",

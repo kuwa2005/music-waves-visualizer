@@ -141,6 +141,13 @@ const isJapaneseLang = (lng: string | undefined | null): boolean => {
   const s = (lng ?? "").toLowerCase();
   return s === "ja" || s.startsWith("ja-");
 };
+const SRT_AUTHOR_TIME_STEP_SEC = 0.01;
+const SRT_AUTHOR_TIME_REPEAT_DELAY_MS = 200;
+const SRT_AUTHOR_TIME_REPEAT_INTERVAL_MS = 45;
+const VIDEO_BACKGROUND_PREVIEW_FPS = 30;
+const RECORDING_MAX_FPS = 60;
+type SrtAuthorCueTimeKey = "startSec" | "endSec";
+
 function normalizeHexColorInput(input: string): string {
   const raw = input.trim();
   if (!raw) return "";
@@ -288,11 +295,23 @@ const Home: NextPage = () => {
   const srtAuthorActiveCueRowRef = useRef<HTMLDivElement | null>(null);
   const srtAuthorNextCueRowRef = useRef<HTMLDivElement | null>(null);
   const srtAuthorCuesRef = useRef<SubtitleCue[]>([]);
+  const srtAuthorTimeRepeatRef = useRef<{
+    timeoutId: ReturnType<typeof setTimeout> | null;
+    intervalId: ReturnType<typeof setInterval> | null;
+  } | null>(null);
   const [titleText, setTitleText] = useState<string>("");
   const [titleEnabled, setTitleEnabled] = useState<boolean>(true);
   const [titleStyle, setTitleStyle] = useState<TitleStyle>(DEFAULT_TITLE_STYLE);
   const [fps, setFps] = useState<number>(0);
   const [isRecording, setIsRecording] = useState<boolean>(false);
+  const isRecordingRef = useRef(false);
+  const setRecordingActive = useCallback((recording: boolean) => {
+    isRecordingRef.current = recording;
+    setIsRecording(recording);
+  }, []);
+  useEffect(() => {
+    isRecordingRef.current = isRecording;
+  }, [isRecording]);
 
   // エンコード進捗
   const [encodeStatus, setEncodeStatus] = useState<"idle" | "loading" | "converting">("idle");
@@ -466,20 +485,52 @@ const Home: NextPage = () => {
 
   const syncBackgroundOnlyVideo = useCallback(() => {
     const v = backgroundOnlyVideoRef.current;
-    if (!v || !(v.duration > 0)) return;
+    const duration = v?.duration ?? 0;
+    if (!v || !Number.isFinite(duration) || duration <= 0) return;
+    const isAudioTimelineActive =
+      isPlaySoundRef.current || (isRecording && audioPlaybackStartCtxTimeRef.current != null);
     const t = getCurrentPlaybackTimeSec();
-    const end = Math.max(0, v.duration - 0.04);
-    const clamped = Math.min(Math.max(0, t), end);
-    const drift = Math.abs(v.currentTime - clamped);
-    // シークを詰めすぎるとフレームがちらつくため、ある程度のズレまで許容
-    if (drift > 0.12) {
+    const epsilon = Math.min(0.04, duration / 4);
+    const start = t <= 0 ? 0 : epsilon;
+    const end = Math.max(0, duration - epsilon);
+    const looped = ((Math.max(0, t) % duration) + duration) % duration;
+    const target = t <= 0 ? 0 : Math.min(Math.max(looped, start), Math.max(start, end));
+    const rawDrift = Math.abs(v.currentTime - target);
+    const drift = Math.min(rawDrift, Math.max(0, duration - rawDrift));
+
+    if (!isAudioTimelineActive) {
+      if (!v.paused) {
+        try {
+          v.pause();
+        } catch {
+          /* ignore */
+        }
+      }
+      if (!Number.isFinite(v.currentTime) || Math.abs(v.currentTime) > 0.05) {
+        try {
+          v.currentTime = 0;
+        } catch {
+          /* ignore */
+        }
+      }
+      return;
+    }
+
+    // 背景MP4は通常再生に任せ、デコードを止める currentTime 書き換えは大きなズレだけに限定する。
+    const seekThreshold = v.paused ? 0.08 : 0.45;
+    if (!v.seeking && drift > seekThreshold) {
       try {
-        v.currentTime = clamped;
+        v.currentTime = target;
       } catch {
         /* ignore */
       }
     }
-  }, [getCurrentPlaybackTimeSec]);
+    if (v.paused) {
+      v.play().catch(() => {
+        /* ignore */
+      });
+    }
+  }, [getCurrentPlaybackTimeSec, isRecording]);
 
   const disposeStandaloneBackgroundVideo = useCallback(() => {
     const v = backgroundOnlyVideoRef.current;
@@ -1712,6 +1763,13 @@ const Home: NextPage = () => {
   const [backgroundVideoLayoutCache, setBackgroundVideoLayoutCache] = useState<CanvasLayout | null>(null);
   const [dialogClearGalleryForVideo, setDialogClearGalleryForVideo] = useState(false);
   const pendingVideoBackgroundFileRef = useRef<File | null>(null);
+  const [dialogDroppedVideoChoice, setDialogDroppedVideoChoice] = useState(false);
+  const [dialogSrtAuthorApplyConfirm, setDialogSrtAuthorApplyConfirm] = useState(false);
+  const pendingDroppedVideoChoiceRef = useRef<{
+    videoFile: File;
+    audioFile: File | null;
+    subtitleFile: File | null;
+  } | null>(null);
   const [videoBackgroundRepaintNonce, setVideoBackgroundRepaintNonce] = useState(0);
 
   useEffect(() => {
@@ -1868,9 +1926,16 @@ const Home: NextPage = () => {
 
   const loadVideoAsAudioSource = useCallback(
     (file: File, options?: { visualBackgroundSameElement?: boolean }) => {
-      disposeStandaloneBackgroundVideo();
+      const useVideoAsBackground = options?.visualBackgroundSameElement === true;
+      const wasUsingAudioVideoForBackground =
+        backgroundMediaMode === "video" && reuseAudioVideoForBackground;
+      if (useVideoAsBackground) {
+        disposeStandaloneBackgroundVideo();
+      }
       setReuseAudioVideoForBackground(false);
-      setBackgroundVideoLayoutCache(null);
+      if (useVideoAsBackground || wasUsingAudioVideoForBackground) {
+        setBackgroundVideoLayoutCache(null);
+      }
       const g = gateVideoAsMediaFile(file);
       if (snackbarFileGate(g, "video")) {
         return;
@@ -1923,8 +1988,10 @@ const Home: NextPage = () => {
               setModeAdjustments(loaded ?? { scaleX: 1.0, scaleY: 1.0, offsetX: 0, offsetY: 0 });
             }
           } else {
-            setBackgroundMediaMode("none");
-            setBackgroundVideoFileName("");
+            if (wasUsingAudioVideoForBackground) {
+              setBackgroundMediaMode("none");
+              setBackgroundVideoFileName("");
+            }
           }
           setVideoBackgroundRepaintNonce((n) => n + 1);
           openSnackBar(t("snackbar.videoAudioLoaded"));
@@ -1939,12 +2006,14 @@ const Home: NextPage = () => {
       };
     },
     [
+      backgroundMediaMode,
       canvasSize,
       disposeStandaloneBackgroundVideo,
       loadSettings,
       mode,
       openSnackBar,
       primeCanvasForVideoElement,
+      reuseAudioVideoForBackground,
       snackbarFileGate,
       t,
     ]
@@ -1952,61 +2021,53 @@ const Home: NextPage = () => {
 
   const applyBackgroundMp4File = useCallback(
     (file: File) => {
-      const hasBuffer = decodedAudioBufferRef.current != null;
-      const av = videoElementRef.current;
-      const sameName = !!(av && audioFileName === file.name);
-
-      if (hasBuffer || (av && !sameName)) {
-        const g = gateVideoAsMediaFile(file);
-        if (snackbarFileGate(g, "video")) {
-          return;
-        }
-        disposeStandaloneBackgroundVideo();
-        const video = document.createElement("video");
-        video.preload = "auto";
-        video.crossOrigin = "anonymous";
-        video.src = URL.createObjectURL(file);
-        video.onloadedmetadata = () => {
-          try {
-            backgroundOnlyVideoRef.current = video;
-            setReuseAudioVideoForBackground(false);
-            setImageGallery((prev) => {
-              prev.forEach((p) => URL.revokeObjectURL(p.objectUrl));
-              return [];
-            });
-            setGalleryIndex(0);
-            setBackgroundMediaMode("video");
-            setBackgroundVideoFileName(file.name);
-            const lay = detectLayoutFromAspectRatio(
-              (video.videoWidth || 1) / (video.videoHeight || 1)
-            );
-            setBackgroundVideoLayoutCache(canvasSize === "auto" ? lay : null);
-            primeCanvasForVideoElement(video);
-            if (canvasSize === "auto") {
-              const loaded = loadSettings(lay, mode);
-              setModeAdjustments(loaded ?? { scaleX: 1.0, scaleY: 1.0, offsetX: 0, offsetY: 0 });
-            }
-            exitConfirmRef.current = true;
-            setVideoBackgroundRepaintNonce((n) => n + 1);
-            openSnackBar(t("snackbar.videoBackgroundLoaded"));
-          } catch (_e) {
-            openSnackBar(t("snackbar.videoLoadFailed"));
-          }
-        };
-        video.onerror = () => {
-          openSnackBar(t("snackbar.videoLoadFailed"));
-        };
+      const g = gateVideoAsMediaFile(file);
+      if (snackbarFileGate(g, "video")) {
         return;
       }
-
-      loadVideoAsAudioSource(file, { visualBackgroundSameElement: true });
+      disposeStandaloneBackgroundVideo();
+      const video = document.createElement("video");
+      video.preload = "auto";
+      video.crossOrigin = "anonymous";
+      video.muted = true;
+      video.loop = true;
+      video.playsInline = true;
+      video.src = URL.createObjectURL(file);
+      video.onloadedmetadata = () => {
+        try {
+          backgroundOnlyVideoRef.current = video;
+          setReuseAudioVideoForBackground(false);
+          setImageGallery((prev) => {
+            prev.forEach((p) => URL.revokeObjectURL(p.objectUrl));
+            return [];
+          });
+          setGalleryIndex(0);
+          setBackgroundMediaMode("video");
+          setBackgroundVideoFileName(file.name);
+          const lay = detectLayoutFromAspectRatio(
+            (video.videoWidth || 1) / (video.videoHeight || 1)
+          );
+          setBackgroundVideoLayoutCache(canvasSize === "auto" ? lay : null);
+          primeCanvasForVideoElement(video);
+          if (canvasSize === "auto") {
+            const loaded = loadSettings(lay, mode);
+            setModeAdjustments(loaded ?? { scaleX: 1.0, scaleY: 1.0, offsetX: 0, offsetY: 0 });
+          }
+          exitConfirmRef.current = true;
+          setVideoBackgroundRepaintNonce((n) => n + 1);
+          openSnackBar(t("snackbar.videoBackgroundLoaded"));
+        } catch (_e) {
+          openSnackBar(t("snackbar.videoLoadFailed"));
+        }
+      };
+      video.onerror = () => {
+        openSnackBar(t("snackbar.videoLoadFailed"));
+      };
     },
     [
-      audioFileName,
       canvasSize,
       disposeStandaloneBackgroundVideo,
       loadSettings,
-      loadVideoAsAudioSource,
       mode,
       openSnackBar,
       primeCanvasForVideoElement,
@@ -2545,6 +2606,11 @@ const Home: NextPage = () => {
         isPlaying: isPlaySound || isRecording,
         playbackTimeSec: getCurrentPlaybackTimeSec(),
       },
+      getTargetFps: () => {
+        if (isRecordingRef.current) return RECORDING_MAX_FPS;
+        if (backgroundMediaMode === "video") return VIDEO_BACKGROUND_PREVIEW_FPS;
+        return null;
+      },
       ...spectrumVideoBackground,
     };
 
@@ -2604,21 +2670,22 @@ const Home: NextPage = () => {
     titleText,
     titleStyle,
     getCurrentPlaybackTimeSec,
+    backgroundMediaMode,
     spectrumVideoBackground,
   ]);
 
   // FPS表示更新（1秒ごとに更新）
   useEffect(() => {
+    if (!isDeveloperMode) {
+      return;
+    }
     const fpsInterval = setInterval(() => {
       // レンダラータイプに応じてFPSを取得
-      if (rendererType === 'webgl') {
-        setFps(getFPSWebGL());
-      } else {
-        setFps(getFPS());
-      }
+      const nextFps = rendererType === 'webgl' ? getFPSWebGL() : getFPS();
+      setFps((prev) => (prev === nextFps ? prev : nextFps));
     }, 1000);
     return () => clearInterval(fpsInterval);
-  }, [rendererType]);
+  }, [isDeveloperMode, rendererType]);
 
   const primeCanvasForImage = (image: HTMLImageElement) => {
     if (!canvasRef.current) return;
@@ -2748,7 +2815,8 @@ const Home: NextPage = () => {
       return;
     }
     try {
-      disposeStandaloneBackgroundVideo();
+      const wasUsingAudioVideoForBackground =
+        backgroundMediaMode === "video" && reuseAudioVideoForBackground;
       if (videoElementRef.current) {
         videoElementRef.current.onerror = null;
         videoElementRef.current.onloadedmetadata = null;
@@ -2767,9 +2835,11 @@ const Home: NextPage = () => {
       mediaElementSourceRef.current?.disconnect();
       mediaElementSourceRef.current = null;
       setReuseAudioVideoForBackground(false);
-      setBackgroundMediaMode("none");
-      setBackgroundVideoFileName("");
-      setBackgroundVideoLayoutCache(null);
+      if (wasUsingAudioVideoForBackground) {
+        setBackgroundMediaMode("none");
+        setBackgroundVideoFileName("");
+        setBackgroundVideoLayoutCache(null);
+      }
       const arraybuffer = await file.arrayBuffer();
       decodedAudioBufferRef.current = await audioCtxRef.current.decodeAudioData(
         arraybuffer
@@ -2795,6 +2865,19 @@ const Home: NextPage = () => {
       setSubtitleCues(cues);
       setSubtitleFileName(file.name);
       setSubtitleEnabled(true);
+      if (srtAuthorPanelEnabled) {
+        const authorCues = cues.map((cue) => ({ ...cue }));
+        setSrtAuthorCues(authorCues);
+        setSrtAuthorLyricsRaw(authorCues.map((cue) => cue.text.replace(/\n+/g, " ").trim()).join("\n"));
+        setSrtAuthorLineIndex(0);
+        setSrtAuthorPhase("wait_start");
+        setSrtAuthorRecordActive(false);
+        setDialogSrtAuthorApplyConfirm(false);
+        srtAuthorUndoRef.current = [];
+        srtAuthorCuesRef.current = authorCues;
+        srtAuthorLineIndexRef.current = 0;
+        srtAuthorPhaseRef.current = "wait_start";
+      }
       openSnackBar(t("snackbar.subtitleLoaded", { count: cues.length }));
       if (rendererType === "webgl") {
         setRendererType("canvas2d");
@@ -2897,16 +2980,8 @@ const Home: NextPage = () => {
     for (const file of files) {
       if (isSrtFileByName(file.name) && !subtitleFile) {
         subtitleFile = file;
-      } else if (!mixedStillsAndVideo && videoFiles.length <= 1) {
-        if (isVideoFileByName(file.name) && !audioFile) {
-          audioFile = file;
-        } else if (isAudioFileByName(file.name) && !isVideoFileByName(file.name) && !audioFile) {
-          audioFile = file;
-        }
-      } else if (mixedStillsAndVideo || videoFiles.length > 1) {
-        if (isAudioFileByName(file.name) && !isVideoFileByName(file.name) && !audioFile) {
-          audioFile = file;
-        }
+      } else if (isAudioFileByName(file.name) && !isVideoFileByName(file.name) && !audioFile) {
+        audioFile = file;
       }
     }
 
@@ -2914,15 +2989,45 @@ const Home: NextPage = () => {
       loadGalleryImagesFromFiles(imageFiles, true);
     }
 
+    if (!mixedStillsAndVideo && videoFiles.length === 1) {
+      pendingDroppedVideoChoiceRef.current = {
+        videoFile: videoFiles[0]!,
+        audioFile,
+        subtitleFile,
+      };
+      setDialogDroppedVideoChoice(true);
+      return;
+    }
+
     if (audioFile) {
-      if (isVideoFileByName(audioFile.name)) {
-        loadVideoAsAudioSource(audioFile);
-      } else {
-        await loadAudioFile(audioFile);
-      }
+      await loadAudioFile(audioFile);
     }
     if (subtitleFile) {
       await loadSubtitleFile(subtitleFile);
+    }
+  };
+
+  const handleDroppedVideoChoice = async (
+    choice: "background" | "audio" | "cancel"
+  ) => {
+    const pending = pendingDroppedVideoChoiceRef.current;
+    pendingDroppedVideoChoiceRef.current = null;
+    setDialogDroppedVideoChoice(false);
+    if (!pending) return;
+
+    if (choice === "background") {
+      if (pending.audioFile) {
+        await loadAudioFile(pending.audioFile);
+      }
+      applyBackgroundMp4File(pending.videoFile);
+    } else if (choice === "audio") {
+      loadVideoAsAudioSource(pending.videoFile);
+    } else if (pending.audioFile) {
+      await loadAudioFile(pending.audioFile);
+    }
+
+    if (pending.subtitleFile) {
+      await loadSubtitleFile(pending.subtitleFile);
     }
   };
 
@@ -3067,6 +3172,52 @@ const Home: NextPage = () => {
     return true;
   }, []);
 
+  const updateSrtAuthorCueTime = useCallback((index: number, field: SrtAuthorCueTimeKey, value: number) => {
+    setSrtAuthorCues((prev) => {
+      const next = [...prev];
+      if (!next[index]) return prev;
+      next[index] = { ...next[index], [field]: value };
+      return next;
+    });
+  }, []);
+
+  const nudgeSrtAuthorCueTime = useCallback((index: number, field: SrtAuthorCueTimeKey, delta: number) => {
+    setSrtAuthorCues((prev) => {
+      const next = [...prev];
+      const cur = next[index];
+      if (!cur) return prev;
+      const current = cur[field];
+      const base = Number.isFinite(current) ? current : 0;
+      next[index] = { ...cur, [field]: Number((base + delta).toFixed(2)) };
+      return next;
+    });
+  }, []);
+
+  const stopSrtAuthorTimeRepeat = useCallback(() => {
+    const repeat = srtAuthorTimeRepeatRef.current;
+    if (!repeat) return;
+    if (repeat.timeoutId !== null) clearTimeout(repeat.timeoutId);
+    if (repeat.intervalId !== null) clearInterval(repeat.intervalId);
+    srtAuthorTimeRepeatRef.current = null;
+  }, []);
+
+  const startSrtAuthorTimeRepeat = useCallback(
+    (index: number, field: SrtAuthorCueTimeKey, delta: number) => {
+      stopSrtAuthorTimeRepeat();
+      nudgeSrtAuthorCueTime(index, field, delta);
+      const timeoutId = setTimeout(() => {
+        const intervalId = setInterval(() => {
+          nudgeSrtAuthorCueTime(index, field, delta);
+        }, SRT_AUTHOR_TIME_REPEAT_INTERVAL_MS);
+        srtAuthorTimeRepeatRef.current = { timeoutId: null, intervalId };
+      }, SRT_AUTHOR_TIME_REPEAT_DELAY_MS);
+      srtAuthorTimeRepeatRef.current = { timeoutId, intervalId: null };
+    },
+    [nudgeSrtAuthorCueTime, stopSrtAuthorTimeRepeat]
+  );
+
+  useEffect(() => stopSrtAuthorTimeRepeat, [stopSrtAuthorTimeRepeat]);
+
   const srtAuthorReflectLyrics = useCallback(() => {
     const mediaDur = getMediaDurationSec();
     if (!(mediaDur > 0)) {
@@ -3169,20 +3320,19 @@ const Home: NextPage = () => {
       return;
     }
     pushSrtAuthorUndoSnapshot();
-    setSrtAuthorCues((prev) => {
-      const next = [...prev];
-      const cur = next[idx];
-      if (!cur) return prev;
-      const endSec = Math.max(tsec, cur.startSec + 0.05);
-      next[idx] = { ...cur, endSec };
-      return next;
-    });
+    const nextCues = [...cues];
+    const cur = nextCues[idx];
+    if (!cur) return;
+    const endSec = Math.max(tsec, cur.startSec + 0.05);
+    nextCues[idx] = { ...cur, endSec };
+    setSrtAuthorCues(nextCues);
+    srtAuthorCuesRef.current = nextCues;
     const nextIdx = idx + 1;
     if (nextIdx >= cues.length) {
       setSrtAuthorLineIndex(nextIdx);
       setSrtAuthorPhase("wait_start");
       setSrtAuthorRecordActive(false);
-      openSnackBar(t("snackbar.subtitleAuthorRecordComplete"));
+      setDialogSrtAuthorApplyConfirm(true);
     } else {
       setSrtAuthorLineIndex(nextIdx);
       setSrtAuthorPhase("wait_start");
@@ -3489,7 +3639,7 @@ const Home: NextPage = () => {
     // 録画セットアップ（MediaRecorder初期化）
     setTimeout(() => {
       const audioStream = streamDestinationRef.current.stream;
-      const canvasStream = canvasRef.current.captureStream();
+      const canvasStream = canvasRef.current.captureStream(RECORDING_MAX_FPS);
       const outputStream = new MediaStream();
       [audioStream, canvasStream].forEach((stream) => {
         stream.getTracks().forEach(function (track: MediaStreamTrack) {
@@ -3542,7 +3692,7 @@ const Home: NextPage = () => {
         const recordedMimeType =
           recorder.mimeType && recorder.mimeType.length > 0 ? recorder.mimeType : "video/webm";
         mediaRecorderRef.current = null;
-        setIsRecording(false);
+        setRecordingActive(false);
         const movieName = "movie_" + Math.random().toString(36).slice(-8);
         const downloadMp4Name = buildDownloadMp4Name(audioFileName, movieName);
         const webmName = movieName + ".webm";
@@ -3604,7 +3754,7 @@ const Home: NextPage = () => {
       });
       const clip = resolvePlaybackWindow();
       if (clip.full === false && clip.duration <= 0) {
-        setIsRecording(false);
+        setRecordingActive(false);
         setRecordMovieDisabled(false);
         openSnackBar(t("snackbar.shortClipInvalid"));
         return;
@@ -3620,7 +3770,7 @@ const Home: NextPage = () => {
               originalOnEnded.call(videoElementRef.current);
             }
             safeStopRecorder();
-            setIsRecording(false);
+            setRecordingActive(false);
             isPlaySoundRef.current = false;
             setIsPlaySound(false);
           };
@@ -3633,7 +3783,7 @@ const Home: NextPage = () => {
 
       const startRecorder = () => {
         if (recorder.state !== "inactive") return;
-        setIsRecording(true);
+        setRecordingActive(true);
         mediaRecorderRef.current = recorder;
         recorder.start();
         mwvMilestone("record: MediaRecorder.start", {
@@ -3666,7 +3816,7 @@ const Home: NextPage = () => {
               /* ignore */
             }
             safeStopRecorder();
-            setIsRecording(false);
+            setRecordingActive(false);
             isPlaySoundRef.current = false;
             setIsPlaySound(false);
           };
@@ -3877,7 +4027,7 @@ const Home: NextPage = () => {
     setIsPlaySound(false);
     setPlaySoundDisabled(true);
     setRecordMovieDisabled(true);
-    setIsRecording(false);
+    setRecordingActive(false);
     setEncodeStatus("idle");
     setEncodeProgress(0);
     setMode(0);
@@ -3923,6 +4073,87 @@ const Home: NextPage = () => {
     exitConfirmRef.current = false;
     openSnackBar(t("snackbar.cleared"));
   };
+
+  const renderSrtAuthorTimeStepButton = (
+    index: number,
+    field: SrtAuthorCueTimeKey,
+    delta: number,
+    label: string
+  ) => (
+    <Box
+      component="button"
+      type="button"
+      aria-label={label}
+      onPointerDown={(e) => {
+        e.preventDefault();
+        startSrtAuthorTimeRepeat(index, field, delta);
+      }}
+      onPointerUp={stopSrtAuthorTimeRepeat}
+      onPointerCancel={stopSrtAuthorTimeRepeat}
+      onPointerLeave={stopSrtAuthorTimeRepeat}
+      onBlur={stopSrtAuthorTimeRepeat}
+      onKeyDown={(e) => {
+        if (e.key !== "Enter" && e.key !== " ") return;
+        e.preventDefault();
+        nudgeSrtAuthorCueTime(index, field, delta);
+      }}
+      sx={{
+        width: 18,
+        height: 18,
+        minWidth: 18,
+        p: 0,
+        border: 1,
+        borderColor: "divider",
+        borderRadius: 0.5,
+        bgcolor: "background.paper",
+        color: "text.secondary",
+        fontSize: "0.55rem",
+        lineHeight: "16px",
+        cursor: "pointer",
+        "&:hover": { bgcolor: "action.hover" },
+        "&:active": { bgcolor: "action.selected" },
+      }}
+    >
+      {delta > 0 ? "▲" : "▼"}
+    </Box>
+  );
+
+  const renderSrtAuthorTimeField = (
+    cue: SubtitleCue,
+    index: number,
+    field: SrtAuthorCueTimeKey,
+    label: string
+  ) => (
+    <Box sx={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 18px", gap: 0.25, width: { xs: "100%", sm: 94 } }}>
+      <TextField
+        size="small"
+        type="text"
+        inputProps={{ inputMode: "decimal" }}
+        label={label}
+        value={Number.isFinite(cue[field]) ? cue[field].toFixed(2) : ""}
+        onChange={(e) => {
+          const v = parseFloat(e.target.value.replace(",", "."));
+          if (!Number.isFinite(v)) return;
+          updateSrtAuthorCueTime(index, field, v);
+        }}
+        sx={{
+          minWidth: 0,
+          "& .MuiInputBase-input": {
+            px: 0.75,
+            fontSize: "0.72rem",
+            lineHeight: 1.25,
+          },
+          "& .MuiInputLabel-root": {
+            fontSize: "0.72rem",
+          },
+        }}
+      />
+      <Box sx={{ display: "flex", flexDirection: "column", gap: "1px", alignSelf: "center" }}>
+        {renderSrtAuthorTimeStepButton(index, field, SRT_AUTHOR_TIME_STEP_SEC, `${label} +${SRT_AUTHOR_TIME_STEP_SEC}`)}
+        {renderSrtAuthorTimeStepButton(index, field, -SRT_AUTHOR_TIME_STEP_SEC, `${label} -${SRT_AUTHOR_TIME_STEP_SEC}`)}
+      </Box>
+    </Box>
+  );
 
   return (
     <ThemeProvider theme={muiTheme}>
@@ -4081,7 +4312,9 @@ const Home: NextPage = () => {
                   textAlign: "left",
                 }}
               >
-                {imageGallery.length === 0
+                {backgroundMediaMode === "video" && backgroundVideoFileName
+                  ? backgroundVideoFileName
+                  : imageGallery.length === 0
                   ? t("dropZone.unselected")
                   : imageGallery.length === 1
                     ? imageFileName
@@ -5888,7 +6121,7 @@ const Home: NextPage = () => {
                           }
                           sx={{
                             display: "grid",
-                            gridTemplateColumns: { xs: "1fr", sm: "72px 72px 1fr 40px" },
+                            gridTemplateColumns: { xs: "1fr", sm: "94px 94px minmax(0, 1fr) 40px" },
                             gap: 0.5,
                             alignItems: "center",
                             mb: 0.5,
@@ -5897,40 +6130,8 @@ const Home: NextPage = () => {
                             borderRadius: 0.5,
                           }}
                         >
-                          <TextField
-                            size="small"
-                            type="number"
-                            inputProps={{ step: 0.01 }}
-                            label={t("subtitle.author.startSec")}
-                            value={Number.isFinite(cue.startSec) ? cue.startSec.toFixed(2) : ""}
-                            onChange={(e) => {
-                              const v = parseFloat(e.target.value.replace(",", "."));
-                              if (!Number.isFinite(v)) return;
-                              setSrtAuthorCues((prev) => {
-                                const next = [...prev];
-                                if (!next[index]) return prev;
-                                next[index] = { ...next[index], startSec: v };
-                                return next;
-                              });
-                            }}
-                          />
-                          <TextField
-                            size="small"
-                            type="number"
-                            inputProps={{ step: 0.01 }}
-                            label={t("subtitle.author.endSec")}
-                            value={Number.isFinite(cue.endSec) ? cue.endSec.toFixed(2) : ""}
-                            onChange={(e) => {
-                              const v = parseFloat(e.target.value.replace(",", "."));
-                              if (!Number.isFinite(v)) return;
-                              setSrtAuthorCues((prev) => {
-                                const next = [...prev];
-                                if (!next[index]) return prev;
-                                next[index] = { ...next[index], endSec: v };
-                                return next;
-                              });
-                            }}
-                          />
+                          {renderSrtAuthorTimeField(cue, index, "startSec", t("subtitle.author.startSec"))}
+                          {renderSrtAuthorTimeField(cue, index, "endSec", t("subtitle.author.endSec"))}
                           <TextField
                             size="small"
                             fullWidth
@@ -5944,6 +6145,14 @@ const Home: NextPage = () => {
                                 next[index] = { ...next[index], text: v };
                                 return next;
                               });
+                            }}
+                            sx={{
+                              "& .MuiInputBase-input": {
+                                fontSize: "0.82rem",
+                              },
+                              "& .MuiInputLabel-root": {
+                                fontSize: "0.82rem",
+                              },
                             }}
                           />
                           <IconButton
@@ -6698,6 +6907,30 @@ const Home: NextPage = () => {
       </main>
 
       <Dialog
+        open={dialogSrtAuthorApplyConfirm}
+        onClose={() => setDialogSrtAuthorApplyConfirm(false)}
+      >
+        <DialogTitle>{t("dialog.srtAuthorApplyConfirmTitle")}</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2">{t("dialog.srtAuthorApplyConfirmBody")}</Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDialogSrtAuthorApplyConfirm(false)}>
+            {t("dialog.cancel")}
+          </Button>
+          <Button
+            variant="contained"
+            onClick={() => {
+              setDialogSrtAuthorApplyConfirm(false);
+              srtAuthorApplyToPreview();
+            }}
+          >
+            {t("dialog.srtAuthorApplyConfirmApply")}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog
         open={dialogClearGalleryForVideo}
         onClose={() => {
           pendingVideoBackgroundFileRef.current = null;
@@ -6729,6 +6962,32 @@ const Home: NextPage = () => {
             }}
           >
             {t("dialog.confirmReplaceWithVideo")}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog
+        open={dialogDroppedVideoChoice}
+        onClose={() => {
+          void handleDroppedVideoChoice("cancel");
+        }}
+      >
+        <DialogTitle>{t("dialog.droppedVideoChoiceTitle")}</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2">{t("dialog.droppedVideoChoiceBody")}</Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => void handleDroppedVideoChoice("cancel")}>
+            {t("dialog.cancel")}
+          </Button>
+          <Button onClick={() => void handleDroppedVideoChoice("audio")}>
+            {t("dialog.loadDroppedVideoAsAudio")}
+          </Button>
+          <Button
+            variant="contained"
+            onClick={() => void handleDroppedVideoChoice("background")}
+          >
+            {t("dialog.loadDroppedVideoAsBackground")}
           </Button>
         </DialogActions>
       </Dialog>

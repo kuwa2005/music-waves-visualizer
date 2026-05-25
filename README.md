@@ -21,12 +21,12 @@ Static build with SEO-friendly absolute URLs for that host: `npm run build:html:
 - **File loading**: Drag & drop or buttons for still images, audio, subtitle files, and a single MP4/video background
 - **Multi-image gallery**: Add multiple still images, auto-advance them during playback/recording, and apply transitions such as crossfade, wipe, slide, zoom, checker, and flash
 - **Spectrum visualizers**: Frequency and loudness modes including bars, circle, symmetric bars, dots, fill, glyco, loudness pulse, VU meter, pulse ring, center orb, breathing background, particles, geometry morph, oscilloscope, and Lissajous-style curves
-- **Title and subtitles**: Canvas title overlay plus SRT subtitle import, styling, animation, and built-in subtitle authoring/timing tools from pasted lyrics
+- **Title and subtitles**: Canvas title overlay plus SRT subtitle import, styling, animation, and optional hidden subtitle authoring/timing tools from pasted lyrics
 - **Video background support**: Use a single MP4 as the background visual, or extract audio/stills from video files where appropriate (see [docs/VIDEO_BACKGROUND.md](./docs/VIDEO_BACKGROUND.md))
 - **Resolution and tuning**: Auto/manual layouts (16:9 / 9:16 / 1:1), per-layout scale/position, waveform color/style presets, LUFS normalization, bitrate controls, and Canvas 2D / WebGL renderer selection
 - **Effects**: Space, vignette, rainbow, curtain, sparkle, atmosphere, rain, snow, and scanlines with per-effect parameters
 - **Clip length limit**: Presets and manual ranges for preview/recording windows, including YouTube, TikTok, and NicoNico-oriented lengths
-- **Video generation**: MP4 output plus a fast-generation path when the alternative encoder route is available
+- **Video generation**: MP4 output plus a fast-generation path when the alternative encoder route is available; normal recording quality is preserved up to 60 fps
 - **Settings management**: Export/import settings JSON, persistent saved values, and one-click clear
 - **Client persistence**: Most settings are saved in first-party browser cookies, with migration from older localStorage keys on first visit
 - **UI extras**: Dark/light mode toggle and bilingual Japanese / English UI
@@ -115,12 +115,12 @@ MIT License. See [LICENSE](./LICENSE). Dependencies: [NOTICE](./NOTICE).
 - **ファイル読み込み**: 静止画・音楽・字幕をドラッグ&ドロップまたはボタンから読み込み。単一 MP4 を背景動画として使うことも可能
 - **複数画像ギャラリー**: 追加画像の読み込み、自動切替、クロスフェード・ワイプ・ズーム・フラッシュなどのトランジションに対応
 - **スペクトラムアナライザー**: 周波数系と音圧系の両方を搭載。バー、円形、対称バー、ドット、面、グライコ、パルス、VU、リング、オーブ、背景ブリージング、粒子、ジオメトリ変形、オシロスコープ、リサージュ系などを選択可能
-- **タイトル・字幕**: タイトル文字のオーバーレイ、SRT 字幕の読み込み・装飾・アニメーション、歌詞からの字幕作成/タイミング記録に対応
+- **タイトル・字幕**: タイトル文字のオーバーレイ、SRT 字幕の読み込み・装飾・アニメーション、歌詞からの字幕作成/タイミング記録（任意の隠し機能）に対応
 - **背景動画対応**: 静止画ギャラリーの代わりに単一 MP4 を背景として使用可能。動画から音声や静止画を取り込む導線もあり（詳細は [docs/VIDEO_BACKGROUND.md](./docs/VIDEO_BACKGROUND.md)）
 - **解像度・表示・音量調整**: 自動/手動レイアウト、倍率・位置、波形カラー/スタイル、LUFS 正規化、ビットレート、Canvas 2D / WebGL の切り替えに対応
 - **エフェクト**: 宇宙空間、ビネット、レインボー、カーテン、きらきら、空気感、雨、雪、スキャンラインをパラメータ付きで利用可能
 - **動画長制限**: YouTube / TikTok / ニコニコ向けの長さプリセットと、開始位置・秒数の手動指定に対応
-- **動画生成**: MP4 出力に加えて、条件が合えば高速生成ルートも利用可能
+- **動画生成**: MP4 出力に加えて、条件が合えば高速生成ルートも利用可能。通常録画の品質は最大 60fps まで維持
 - **設定管理**: JSON のエクスポート/インポート、保存済み設定の利用、ワンクリッククリア
 - **設定保持**: 主要な設定はファーストパーティ Cookie に保存され、初回アクセス時に旧 localStorage から移行
 - **UI**: ダーク/ライト切り替えと、日本語/英語のバイリンガル表示

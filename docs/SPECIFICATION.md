@@ -13,8 +13,9 @@ Music Waves Visualizer is a web application that creates audio waveform videos b
 - **Display adjustment**: Scale and position per mode (saved per resolved layout)
 - **Clip length limit (short platforms)**: When enabled, **Start (sec)** and **Duration (sec)** define the preview/recording window. Preset buttons only **fill suggested durations**; they do not hard-cap playback. **Empty duration** = play from start **to end of media**.
 - **Client persistence**: Most settings use **first-party cookies** (`SameSite=Lax`), with one-time migration from legacy **localStorage** keys. **Not persisted**: loaded media files, **title body text**, **SRT file content** (subtitle/title style toggles may be saved).
+- **Subtitles**: SRT import, styling, animation, display timing offset, and an optional hidden authoring panel for pasted lyrics and timing recording.
 - **Preview**: Real-time waveform while playing
-- **Video generation**: Record and output as MP4
+- **Video generation**: Record and output as MP4; drawing/capture is capped at max 60 fps for stable frame pacing.
 
 ### 1.2 Demo
 
@@ -60,6 +61,7 @@ Effects are shown during preview/recording only. Strength: weak / medium / stron
 - Tab order: **Spectrum Analyzer / Effects / Audio / Subtitles / Title / Clip Length / Settings** (labels depend on locale)
 - Spectrum and effect adjustment sections are collapsible (default collapsed)
 - Resolution controls are located in **Settings** tab; the chosen preset (including **Auto** resolved to 16:9 / 9:16 / 1:1) is persisted
+- Hidden SRT authoring is toggled from the **SRT** checkbox in the Settings tab under bitrate settings. When enabled, the Subtitle tab shows **Subtitle authoring (hidden feature)** / **字幕作成支援（隠し機能）**.
 
 ## 5. Settings Export/Import
 
@@ -89,7 +91,8 @@ Effects are shown during preview/recording only. Strength: weak / medium / stron
 - **Video background**: One `<video>` element (either **reused** from the music MP4 or a **second** element when music is `AudioBuffer` / different file). Canvas draws with `drawVideoCover` (`lib/drawVideoCover.ts`) after optional `syncBackgroundOnlyVideo` (`pages/index.tsx`).
 - **UI constraints**: No still+MP4 in the same **Choose image** selection; no multiple MP4s for background; **Add image** is stills only and blocked during video-background mode. See [VIDEO_BACKGROUND.md](./VIDEO_BACKGROUND.md).
 - **Renderer**: Video background forces **Canvas 2D** for the spectrum loop until WebGL gains a video texture path ([#36](https://github.com/kuwa2005/music-waves-visualizer/issues/36)).
-- **Recording**: `recordMimePreference` (auto / VP9 / VP8 / H.264-in-WebM); recorded `Blob` type matches `MediaRecorder.mimeType`. FFmpeg / alpha follow-up: [#35](https://github.com/kuwa2005/music-waves-visualizer/issues/35).
+- **Preview FPS**: Video-background preview is throttled to **30 fps** to reduce UI load. This preview-only throttle does not reduce recording quality.
+- **Recording**: Browser capture and renderer draw pacing are capped at max **60 fps** (`captureStream(60)` path) before FFmpeg converts the temporary recording to MP4. FFmpeg / alpha follow-up: [#35](https://github.com/kuwa2005/music-waves-visualizer/issues/35).
 - **Sync**: Separate-file drift reduction: [#34](https://github.com/kuwa2005/music-waves-visualizer/issues/34).
 
 ---
@@ -99,4 +102,5 @@ Effects are shown during preview/recording only. Strength: weak / medium / stron
 - スペクトラムは内部で7モードあるが、**UI では OFF＋5種**（折れ線・波形上下対称のボタンは非表示。描画は残す）。
 - **きらきら**はラジアルグロウなし（星形のみ）。**空気感（ほこり）**は単色の小さな円で表現（Canvas/WebGL で方針を揃えた記述は上記）。
 - **設定の保存**は第一党 Cookie が主。クリップは開始＋長さで区間指定（長さ空欄＝末尾まで）。
+- **SRT 作成支援**は設定タブの **SRT** チェックで表示する隠し機能。プレビュー時の動画背景は 30fps に間引くが、録画品質は最大 60fps まで維持する。
 - **MP4 の音楽／背景動画の分離**は [VIDEO_BACKGROUND.md](./VIDEO_BACKGROUND.md) と [仕様書.md](./仕様書.md) §3.1 を参照。

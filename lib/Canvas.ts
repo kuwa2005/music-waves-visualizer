@@ -62,7 +62,42 @@ export type SpectrumSettings = {
   syncBackgroundVideo?: () => void;
   /** 背景を透明クリア（映像なし・合成用オーバーレイ） */
   clearBackgroundTransparent?: boolean;
+  /** Canvas 2D/WebGL描画ループの目標fps。未指定は requestAnimationFrame のまま。 */
+  targetFps?: number | null;
+  /** targetFps をフレームごとに動的解決する（録画開始直後の同期判定用）。 */
+  getTargetFps?: () => number | null | undefined;
+  /** targetFps / getTargetFps を適用するかをフレームごとに判定する。 */
+  isTargetFpsEnabled?: () => boolean;
 };
+
+export function resolveSpectrumTargetFps(settings: SpectrumSettings): number | null {
+  if (settings.isTargetFpsEnabled?.() === false) return null;
+  const targetFps = settings.getTargetFps ? settings.getTargetFps() : settings.targetFps;
+  return typeof targetFps === "number" && targetFps > 0 ? targetFps : null;
+}
+
+export function updateSpectrumFrameThrottle(
+  now: number,
+  targetFps: number,
+  lastFrameTime: number
+): { shouldDraw: boolean; lastFrameTime: number } {
+  const frameInterval = 1000 / targetFps;
+  const tolerance = Math.min(2, frameInterval * 0.12);
+  if (lastFrameTime <= 0) {
+    return { shouldDraw: true, lastFrameTime: now };
+  }
+
+  const elapsed = now - lastFrameTime;
+  if (elapsed < frameInterval - tolerance) {
+    return { shouldDraw: false, lastFrameTime };
+  }
+  if (elapsed > frameInterval * 4) {
+    return { shouldDraw: true, lastFrameTime: now };
+  }
+
+  const intervals = Math.max(1, Math.floor((elapsed + tolerance) / frameInterval));
+  return { shouldDraw: true, lastFrameTime: lastFrameTime + intervals * frameInterval };
+}
 
 const SPECTRUM_PRESET_RGB: Record<Exclude<SpectrumColorPresetKey, "custom">, [number, number, number]> = {
   white: [255, 255, 255],
@@ -287,6 +322,7 @@ export const GLYCO_GRADIENT_SETS: Record<string, (i: number, n: number) => [numb
 let fpsCounter = 0;
 let fpsLastTime = performance.now();
 let currentFPS = 0;
+let drawBarsLastFrameTime = 0;
 
 // アニメーションフレームID
 let animationFrameId: number | null = null;
@@ -309,6 +345,7 @@ export function stopCanvas2DAnimation(): void {
     cancelAnimationFrame(animationFrameId);
     animationFrameId = null;
   }
+  drawBarsLastFrameTime = 0;
 }
 
 // オフスクリーンキャンバスのキャッシュ（画像処理の最適化）
@@ -319,7 +356,19 @@ interface ImageCache {
   canvasHeight: number;
 }
 
+interface BackgroundVideoFrameCache {
+  canvas: HTMLCanvasElement;
+  video: HTMLVideoElement;
+  canvasWidth: number;
+  canvasHeight: number;
+  lastCaptureMs: number;
+}
+
 let imageCache: ImageCache | null = null;
+let backgroundVideoFrameCache: BackgroundVideoFrameCache | null = null;
+
+const BACKGROUND_VIDEO_CACHE_INTERVAL_MS = 100;
+const BACKGROUND_VIDEO_LOOP_EDGE_SEC = 0.16;
 
 // 画像のハッシュを生成（簡易版）
 function getImageHash(image: HTMLImageElement, canvasWidth: number, canvasHeight: number): string {
@@ -331,6 +380,79 @@ function getImageHash(image: HTMLImageElement, canvasWidth: number, canvasHeight
 // キャッシュをクリア（キャンバスサイズ変更時などに使用）
 export function clearImageCache(): void {
   imageCache = null;
+  backgroundVideoFrameCache = null;
+}
+
+function drawBackgroundVideoFrame(
+  ctx: CanvasRenderingContext2D,
+  video: HTMLVideoElement,
+  canvasWidth: number,
+  canvasHeight: number
+): void {
+  ctx.fillStyle = "rgba(34, 34, 34, 1.0)";
+  ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+  drawVideoCover(ctx, video, canvasWidth, canvasHeight);
+}
+
+function cacheBackgroundVideoFrame(
+  video: HTMLVideoElement,
+  canvasWidth: number,
+  canvasHeight: number,
+  force = false
+): void {
+  const cacheValid =
+    backgroundVideoFrameCache &&
+    backgroundVideoFrameCache.video === video &&
+    backgroundVideoFrameCache.canvasWidth === canvasWidth &&
+    backgroundVideoFrameCache.canvasHeight === canvasHeight;
+  const now = performance.now();
+  if (
+    cacheValid &&
+    !force &&
+    now - backgroundVideoFrameCache!.lastCaptureMs < BACKGROUND_VIDEO_CACHE_INTERVAL_MS
+  ) {
+    return;
+  }
+  const cache = cacheValid
+    ? backgroundVideoFrameCache!.canvas
+    : document.createElement("canvas");
+  if (!cacheValid) {
+    cache.width = canvasWidth;
+    cache.height = canvasHeight;
+  }
+  const cacheCtx = cache.getContext("2d", {
+    alpha: true,
+    desynchronized: false,
+    willReadFrequently: false,
+  });
+  if (!cacheCtx) return;
+  drawBackgroundVideoFrame(cacheCtx, video, canvasWidth, canvasHeight);
+  backgroundVideoFrameCache = { canvas: cache, video, canvasWidth, canvasHeight, lastCaptureMs: now };
+}
+
+function isNearVideoLoopEdge(video: HTMLVideoElement): boolean {
+  const duration = video.duration;
+  if (!Number.isFinite(duration) || duration <= 0) return false;
+  const edge = Math.min(BACKGROUND_VIDEO_LOOP_EDGE_SEC, duration / 4);
+  return video.currentTime <= edge || duration - video.currentTime <= edge;
+}
+
+function drawCachedBackgroundVideoFrame(
+  ctx: CanvasRenderingContext2D,
+  video: HTMLVideoElement,
+  canvasWidth: number,
+  canvasHeight: number
+): boolean {
+  if (
+    !backgroundVideoFrameCache ||
+    backgroundVideoFrameCache.video !== video ||
+    backgroundVideoFrameCache.canvasWidth !== canvasWidth ||
+    backgroundVideoFrameCache.canvasHeight !== canvasHeight
+  ) {
+    return false;
+  }
+  ctx.drawImage(backgroundVideoFrameCache.canvas, 0, 0);
+  return true;
 }
 
 // オフスクリーンキャンバスに画像を描画（画像が変更された時のみ実行）
@@ -418,6 +540,23 @@ export const drawBars = (
     lineWidthCircle: 3.2,
     lineWidthSymWave: 3.6,
   };
+  const scheduleNextFrame = () => {
+    animationFrameId = requestAnimationFrame(function () {
+      drawBars(canvas, imageCtx, mode, analyser, adjustments, effect, isEffectActive, spectrumSettings);
+    });
+    return animationFrameId;
+  };
+  const targetFps = resolveSpectrumTargetFps(settings);
+  if (targetFps) {
+    const now = performance.now();
+    const throttle = updateSpectrumFrameThrottle(now, targetFps, drawBarsLastFrameTime);
+    if (!throttle.shouldDraw) {
+      return scheduleNextFrame();
+    }
+    drawBarsLastFrameTime = throttle.lastFrameTime;
+  } else {
+    drawBarsLastFrameTime = 0;
+  }
   // 安定表示優先: desynchronized は動画背景でのちらつきを誘発する環境がある
   const ctx = canvas.getContext("2d", {
     alpha: true,
@@ -426,10 +565,7 @@ export const drawBars = (
   });
   
   if (!ctx) {
-    animationFrameId = requestAnimationFrame(function () {
-      drawBars(canvas, imageCtx, mode, analyser, adjustments, effect, isEffectActive, spectrumSettings);
-    });
-    return animationFrameId;
+    return scheduleNextFrame();
   }
   
   const canvasWidth = canvas.width;
@@ -452,11 +588,12 @@ export const drawBars = (
     const vw = bgVideo.videoWidth || 0;
     const vh = bgVideo.videoHeight || 0;
     const canDrawFrame =
-      bgVideo.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && vw > 0 && vh > 0;
+      !bgVideo.seeking && bgVideo.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && vw > 0 && vh > 0;
     if (canDrawFrame) {
-      ctx.fillStyle = "rgba(34, 34, 34, 1.0)";
-      ctx.fillRect(0, 0, canvasWidth, canvasHeight);
-      drawVideoCover(ctx, bgVideo, canvasWidth, canvasHeight);
+      drawBackgroundVideoFrame(ctx, bgVideo, canvasWidth, canvasHeight);
+      cacheBackgroundVideoFrame(bgVideo, canvasWidth, canvasHeight, isNearVideoLoopEdge(bgVideo));
+    } else if (drawCachedBackgroundVideoFrame(ctx, bgVideo, canvasWidth, canvasHeight)) {
+      // seek 中は直前の背景フレームを保持し、ループ境界の黒フレームを避ける。
     } else if (settings.clearBackgroundTransparent) {
       ctx.clearRect(0, 0, canvasWidth, canvasHeight);
     } else {
@@ -484,10 +621,7 @@ export const drawBars = (
 
   if (!analyser) {
     ctx.restore();
-    animationFrameId = requestAnimationFrame(function () {
-      drawBars(canvas, imageCtx, mode, analyser, adjustments, effect, isEffectActive, spectrumSettings);
-    });
-    return animationFrameId;
+    return scheduleNextFrame();
   }
 
   // 折れ線/波形モード: スペアナ本体のみ間引く（エフェクト・字幕は毎フレーム＝WebGLと同じ）
@@ -1246,8 +1380,5 @@ export const drawBars = (
     fpsLastTime = currentTime;
   }
 
-  animationFrameId = requestAnimationFrame(function () {
-    drawBars(canvas, imageCtx, mode, analyser, adjustments, effect, isEffectActive, spectrumSettings);
-  });
-  return animationFrameId;
+  return scheduleNextFrame();
 };

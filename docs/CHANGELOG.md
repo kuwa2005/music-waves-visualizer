@@ -6,12 +6,15 @@
 - **Mirror ball effect**: Canvas 2D + WebGL overlay (`lib/Effects.ts`, `lib/Canvas.ts`, `lib/WebGLRenderer.ts`). UI picker entry is **hidden** via `EFFECT_TYPES_UI_HIDDEN` in `pages/index.tsx`; settings remain in cookies/export when type is `mirrorBall`.
 - **Clip fade in/out**: `lib/clipAudioFade.ts` — GainNode scheduling for clip window; fade-out only when explicit duration matches trimmed segment. UI: fade-in / fade-out seconds on **Clip length** tab (3-row layout: presets, start+duration, fades).
 - **Subtitle display timing offset**: ±2 s slider on Subtitle tab; preview/recording only (`displayTimingOffsetSec` in `lib/subtitles.ts`), **not** persisted to cookies or export.
+- **Hidden SRT authoring panel**: Settings tab checkbox **SRT** (under bitrate settings) reveals the subtitle authoring tools; loading an `.srt` while enabled also populates the editor.
 - **MP4 audio Tier A**: `MediaRecorder` `audioBitsPerSecond` (default record **384 kbps**); MP4 AAC up to **320 kbps**; presets **配信用** / **高音質** set LUFS -14, AAC 320, record 384, video **8** / **14 Mbps**.
 
 ### Changed
-- **SRT authoring (timing record)**: Space on keydown marks start (starts playback if idle); keyup marks end **without** toggling play/pause. Record-mode Switch is not treated as a typing target for Space. Cue list scroll follow retained.
+- **SRT authoring (hidden feature)**: Section title is now **字幕作成支援（隠し機能）** / **Subtitle authoring (hidden feature)**. Start begins preview playback and timing record; End stops preview playback; active/current and next cue rows stay visible; timing inputs and lyric editor sizing were tuned; custom ▲/▼ hold-repeat controls now use a 200 ms initial delay and 45 ms repeat interval.
+- **SRT authoring completion**: Finishing the final lyric asks whether to apply the recorded cues to preview/internal subtitle memory.
 - **SRT download filename**: Same base name as MP4 via `buildDownloadBaseName` / `buildDownloadSrtName`.
-- **Spectrum throttle (Canvas 2D)**: Modes 1 & 5 skip only spectrum draw; effects/subtitles update every frame (aligned with WebGL).
+- **Frame pacing / FPS**: Video-background preview is throttled to **30 fps** only during preview. Recording/video generation uses a **max 60 fps** draw and `captureStream` path for Canvas 2D/WebGL, preserving normal output quality up to 60 fps. Frame throttling was adjusted to avoid periodic stutter; FPS state updates run only in developer mode and skip redundant React updates.
+- **Spectrum throttle (Canvas 2D/WebGL)**: Modes 1 & 5 skip only spectrum draw; effects/subtitles update every frame, and both renderers share target-fps frame pacing.
 - **Defaults aligned with presets**: Target LUFS **-14**, record audio **384 kbps**, export AAC **320 kbps**; distribution **8 Mbps** / hi-fi **14 Mbps** video.
 - Removed unused `pages/api/hello.ts` sample API route.
 

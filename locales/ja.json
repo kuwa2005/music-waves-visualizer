@@ -14,7 +14,7 @@
     "addImage": "画像を追加",
     "selectAudio": "音楽ファイルを選ぶ",
     "unselected": "未選択",
-    "caption": "静止画・音楽・字幕を自動判定します。MP4 は音楽側で音声として読み込むか、「画像を選ぶ」で 1 本だけ選ぶと背景動画になります（静止画と混在不可）。"
+    "caption": "静止画・音楽・字幕を自動判定します。MP4 は「画像を選ぶ」で背景動画、音楽側で音声として読み込みます。ドラッグ&ドロップ時は用途を選択できます。"
   },
   "spectrum": {
     "title": "スペクトラムアナライザー",
@@ -299,7 +299,14 @@
     "cancel": "キャンセル",
     "clearGalleryForVideoTitle": "動画背景に切り替えますか？",
     "clearGalleryForVideoBody": "複数枚の静止画ギャラリーはクリアされ、選択した 1 本の MP4 を背景動画として読み込みます。",
-    "confirmReplaceWithVideo": "クリアして読み込む"
+    "confirmReplaceWithVideo": "クリアして読み込む",
+    "droppedVideoChoiceTitle": "MP4 をどう読み込みますか？",
+    "droppedVideoChoiceBody": "ドロップされた MP4 は、背景動画としても音声ソースとしても読み込めます。",
+    "loadDroppedVideoAsBackground": "背景動画として読み込む",
+    "loadDroppedVideoAsAudio": "音声として読み込む",
+    "srtAuthorApplyConfirmTitle": "タイミング記録完了",
+    "srtAuthorApplyConfirmBody": "タイミング記録が完了しました。字幕に反映しますか？",
+    "srtAuthorApplyConfirmApply": "反映"
   },
   "snackbar": {
     "imageLoaded": "画像を読み込みました",

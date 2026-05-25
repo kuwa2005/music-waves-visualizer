@@ -27,11 +27,19 @@ For drag & drop rules in the UI, see [locales](../locales/) copy under `dropZone
 
 ---
 
+## Frame pacing / FPS policy
+
+- **Preview only**: video-background preview is throttled to **30 fps** to keep the UI responsive.
+- **Recording / generation**: draw pacing and `canvas.captureStream()` are capped at **max 60 fps** for Canvas 2D and WebGL paths.
+- The 30 fps preview throttle does **not** reduce normal video generation quality; recordings are preserved up to 60 fps.
+
+---
+
 ## Recording (MP4 fixed output)
 
 - User-facing output is fixed to **MP4 only**.
 - Alpha/transparency is intentionally **not supported**.
-- Internally the browser records to WebM first (`MediaRecorder`) and then converts to MP4 via FFmpeg in the app.
+- Internally the browser records to WebM first (`MediaRecorder`, max 60 fps capture) and then converts to MP4 via FFmpeg in the app.
 - Recording codec selection UI was removed to keep the conversion path stable.
 
 ---
@@ -61,6 +69,7 @@ For drag & drop rules in the UI, see [locales](../locales/) copy under `dropZone
 - **音楽用 MP4**: 「音楽を選ぶ」や D&D で、静止画と混ざっていなければ従来どおり **音声**として利用。
 - **背景動画用 MP4**: 「画像を選ぶ」で **1 本だけ**（同一選択に静止画を混在させない）。ギャラリーが複数枚のときは **確認ダイアログ**の後に静止画を捨てて動画背景へ。
 - **画像を追加**: **静止画のみ**。動画背景モード中は追加不可。
+- **FPS 方針**: 動画背景プレビューのみ 30fps に間引き、録画・生成は最大 60fps まで維持。
 - **同期・ドリフト**: 別ファイルの音声と映像の同期改善は **#34**。録画コーデック・透過・FFmpeg は **#35**。WebGL での動画背景は **#36**。
 
 詳細な文言は UI の `locales/ja.json` / `en.json` を参照してください。

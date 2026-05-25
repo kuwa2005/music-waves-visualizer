@@ -13,6 +13,8 @@ import {
   glycoAdjustedLevel,
   GLYCO_BAR_VERTICAL_SCALE,
   SPECTRUM_THROTTLE_TARGET_FPS,
+  resolveSpectrumTargetFps,
+  updateSpectrumFrameThrottle,
   spectrumLinearBarLowGain,
 } from './Canvas';
 import {
@@ -219,6 +221,7 @@ let glContext: WebGLRendererContext | null = null;
 let fpsCounter = 0;
 let fpsLastTime = performance.now();
 let currentFPS = 0;
+let renderFrameLastFrameTime = 0;
 
 // アニメーションフレームID管理
 let animationFrameId: number | null = null;
@@ -1064,6 +1067,19 @@ function renderFrame(): void {
   const mode = latestMode;
   const analyser = latestAnalyser;
   const adjustments = latestAdjustments;
+
+  const targetFps = latestSpectrumSettings ? resolveSpectrumTargetFps(latestSpectrumSettings) : null;
+  if (targetFps) {
+    const now = performance.now();
+    const throttle = updateSpectrumFrameThrottle(now, targetFps, renderFrameLastFrameTime);
+    if (!throttle.shouldDraw) {
+      animationFrameId = requestAnimationFrame(renderFrame);
+      return;
+    }
+    renderFrameLastFrameTime = throttle.lastFrameTime;
+  } else {
+    renderFrameLastFrameTime = 0;
+  }
 
   // 最初のフレームのみログ出力
   if (fpsCounter === 0) {
@@ -2573,6 +2589,7 @@ export function stopWebGLAnimation(): void {
     animationFrameId = null;
   }
   isAnimating = false;
+  renderFrameLastFrameTime = 0;
 }
 
 /**
@@ -2602,6 +2619,7 @@ export function cleanupWebGL(): void {
     animationFrameId = null;
   }
   isAnimating = false;
+  renderFrameLastFrameTime = 0;
 
   if (glContext) {
     const { gl, program, textureProgram, positionBuffer, colorBuffer, texCoordBuffer, imageTexture } = glContext;
