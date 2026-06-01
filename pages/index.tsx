@@ -2,7 +2,16 @@ import "./@types/window.d";
 import type { NextPage } from "next";
 import styles from "../styles/Home.module.scss";
 
-import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from "react";
+import {
+  useState,
+  useRef,
+  useEffect,
+  useLayoutEffect,
+  useCallback,
+  useMemo,
+  type ComponentProps,
+  type MouseEvent,
+} from "react";
 import {
   Button,
   Accordion,
@@ -14,6 +23,7 @@ import {
   Select,
   SelectChangeEvent,
   Slider,
+  Slider as MuiSlider,
   Box,
   Typography,
   TextField,
@@ -45,6 +55,8 @@ import {
   Undo,
   Lightbulb,
   LightbulbOutlined,
+  AccessTime,
+  HourglassBottom,
 } from "@mui/icons-material";
 import i18n from "i18next";
 import { CustomSnackbar } from "../components/CustomSnackbar";
@@ -56,6 +68,9 @@ import {
   GLYCO_COLOR_SETS,
   GLYCO_GRADIENT_SETS,
   legacySpectrumPresetToHex,
+  SPECTRUM_DOT_SIZE_MIN,
+  SPECTRUM_DOT_SIZE_MAX,
+  SPECTRUM_DOT_SIZE_DEFAULT,
 } from "../lib/Canvas";
 import { DEFAULT_COLOR_PALETTE_20 } from "../lib/colorPalette";
 import {
@@ -67,7 +82,19 @@ import {
   type GalleryTransitionUserMode,
 } from "../lib/galleryImageTransition";
 import { drawBarsWebGL, getFPSWebGL, cleanupWebGL, stopWebGLAnimation, clearWebGLImageCache } from "../lib/WebGLRenderer";
-import type { EffectType, EffectDensity, EffectParams } from "../lib/Effects";
+import {
+  getSpectrumPivotOverlayPercent,
+  getSpaceCenterOverlayPercent,
+  overlayPercentToModeOffsets,
+} from "../lib/spectrumAdjustments";
+import {
+  densityToWaterRippleIntensity,
+  waterRippleSpawnRateFromIntensity,
+  type EffectType,
+  type EffectDensity,
+  type EffectParams,
+  type WaterRippleVariant,
+} from "../lib/Effects";
 import { getGpuInfo, getGpuDisplayName, type GpuInfo } from "../lib/GpuDetector";
 import {
   QuickVideoEncoder,
@@ -77,6 +104,7 @@ import {
 } from "../lib/QuickVideoEncoder";
 import { isWebCodecsSupported, checkHardwareEncoderSupport } from "../lib/WebCodecsEncoder";
 import { generateMp4Video } from "../lib/Ffmpeg";
+import { imageElementToThumbnailJpeg } from "../lib/mp4Thumbnail";
 import { mwvError, mwvLog, mwvMilestone } from "../lib/mwvConsole";
 import {
   gateImageFile,
@@ -114,10 +142,68 @@ import {
   resolveClipFadeSchedule,
   scheduleClipGainFade,
 } from "../lib/clipAudioFade";
+import { resetScreenEffectRuntime } from "../lib/drawStillScreenBackground";
+import {
+  DEFAULT_SCREEN_MOTION,
+  formatMotionSpeedLabel,
+  getMotionTimingLabelSeconds,
+  normalizeScreenMotion,
+  parseScreenMotion,
+  resolveImageFadePlaybackTiming,
+  resolveImageTimelineFadeAlpha,
+  SCREEN_MOTION_BRIGHTNESS_STRENGTH_MAX,
+  SCREEN_MOTION_BRIGHTNESS_STRENGTH_MIN,
+  SCREEN_MOTION_CHORUS_ZOOM_PERCENT_MAX,
+  SCREEN_MOTION_CHORUS_ZOOM_PERCENT_MIN,
+  SCREEN_MOTION_FLASH_COOLDOWN_MAX_MS,
+  SCREEN_MOTION_FLASH_COOLDOWN_MIN_MS,
+  SCREEN_MOTION_FLASH_DURATION_MAX_SEC,
+  SCREEN_MOTION_FLASH_DURATION_MIN_SEC,
+  SCREEN_MOTION_FLASH_INTENSITY_MAX,
+  SCREEN_MOTION_FLASH_INTENSITY_MIN,
+  SCREEN_MOTION_FLASH_THRESHOLD_MAX,
+  SCREEN_MOTION_FLASH_THRESHOLD_MIN,
+  SCREEN_MOTION_IMAGE_FADE_MAX_SEC,
+  SCREEN_MOTION_IMAGE_FADE_MIN_SEC,
+  SCREEN_MOTION_IMAGE_FADE_STEP,
+  SCREEN_MOTION_PAN_MAX,
+  SCREEN_MOTION_PAN_MIN,
+  SCREEN_MOTION_SENSITIVITY_STEP_MAX,
+  SCREEN_MOTION_SENSITIVITY_STEP_MIN,
+  SCREEN_MOTION_SHAKE_STRENGTH_MAX,
+  SCREEN_MOTION_SHAKE_STRENGTH_MIN,
+  SCREEN_MOTION_SPEED_MAX,
+  SCREEN_MOTION_SPEED_MIN,
+  SCREEN_MOTION_SPEED_STEP,
+  SCREEN_MOTION_ZOOM_MAX_PERCENT,
+  SCREEN_MOTION_ZOOM_MIN_PERCENT,
+  type ScreenMotionSettings,
+} from "../lib/screenMotion";
 
 type ShortOutputPreset = "all" | "tiktok" | "youtube" | "niconico";
 type ExportAudioBitrateKbps = 128 | 192 | 256 | 320;
 type ResolvedClip = { full: true } | { full: false; start: number; duration: number };
+
+function formatPlaybackMmSs(sec: number): string {
+  if (!Number.isFinite(sec) || sec < 0) return "0:00";
+  const total = Math.floor(sec);
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+/** プレビュー用リッチシークバー: MUI Slider つまみ直径 */
+const PREVIEW_SEEK_THUMB_PX = 18;
+
+/**
+ * プレビュー区間内の相対秒 → 0〜1（min=0, max=previewTimeline.duration と同一）。
+ * 進捗 fill は MuiSlider-track のみ。thumb / track / 時刻表示はすべてこの比率で揃える。
+ */
+function previewSeekTrackRatio(value: number, duration: number): number {
+  if (!Number.isFinite(duration) || duration <= 0) return 0;
+  return Math.max(0, Math.min(1, value / duration));
+}
+
 const MODE_COOKIE_KEY = "mwv_mode";
 /** ライト／ダーク UI 切替（`light` | `dark`）。電球点灯＝ライトモード */
 const UI_SCHEME_COOKIE = "mwv_ui_scheme";
@@ -126,6 +212,11 @@ const TARGET_LUFS_NONE_COOKIE = "__none__";
 
 function isExportAudioBitrateKbps(v: number): v is ExportAudioBitrateKbps {
   return v === 128 || v === 192 || v === 256 || v === 320;
+}
+
+function clampGlycoRotationDeg(value: number): number {
+  const rounded = Math.round(value * 10) / 10;
+  return Math.max(-180, Math.min(180, rounded));
 }
 
 /** MediaRecorder 用。未指定時は exportAudioBitrateKbps に追従 */
@@ -232,6 +323,34 @@ function buildDownloadSrtName(audioName: string, fallbackBaseName: string): stri
   return `${buildDownloadBaseName(audioName, fallbackBaseName)}.srt`;
 }
 
+
+type ResettableSliderProps = ComponentProps<typeof MuiSlider> & {
+  onResetToDefault?: () => void;
+};
+
+const SLIDER_MARKS_NO_POINTER_SX = {
+  "& .MuiSlider-markLabel": { pointerEvents: "none" },
+  "& .MuiSlider-mark": { pointerEvents: "none" },
+} as const;
+
+function ResettableSlider({ onResetToDefault, onDoubleClick, sx, ...props }: ResettableSliderProps) {
+  const handleDoubleClick = useCallback(
+    (event: MouseEvent<HTMLSpanElement>) => {
+      onDoubleClick?.(event);
+      if (event.defaultPrevented) return;
+      onResetToDefault?.();
+    },
+    [onDoubleClick, onResetToDefault]
+  );
+  const mergedSx =
+    sx === undefined
+      ? SLIDER_MARKS_NO_POINTER_SX
+      : Array.isArray(sx)
+        ? [SLIDER_MARKS_NO_POINTER_SX, ...sx]
+        : [SLIDER_MARKS_NO_POINTER_SX, sx];
+  return <MuiSlider {...props} sx={mergedSx} onDoubleClick={handleDoubleClick} />;
+}
+
 const hasWindow = () => {
   return typeof window === "object";
 };
@@ -262,6 +381,8 @@ const Home: NextPage = () => {
   /** ライト／ダーク。初期は固定でハイドレーション一致（Cookie は useLayoutEffect で適用） */
   const [uiScheme, setUiScheme] = useState<"light" | "dark">("light");
   const [isPlaySound, setIsPlaySound] = useState<boolean>(false);
+  /** シークバー表示更新（timeupdate / 再生中の audio タイムライン） */
+  const [previewPlaybackTick, setPreviewPlaybackTick] = useState(0);
   /** プレビュー再生の有効判定（state より先に同期し、同一ターン内のタイミング取りに使う） */
   const isPlaySoundRef = useRef(false);
   useEffect(() => {
@@ -278,6 +399,7 @@ const Home: NextPage = () => {
   const [subtitleStyle, setSubtitleStyle] = useState<SubtitleStyle>(DEFAULT_SUBTITLE_STYLE);
   /** 字幕表示タイミング補正（秒）。プレビュー/録画の描画のみ。永続化しない */
   const [subtitleDisplayTimingOffsetSec, setSubtitleDisplayTimingOffsetSec] = useState<number>(0);
+  /** 字幕表示タイミング補正（秒）。プレビュー/録画の描画のみ。永続化しない */
   /** SRT 作成支援（歌詞貼り付け〜タイミング〜書き出し） */
   const [srtAuthorLyricsRaw, setSrtAuthorLyricsRaw] = useState<string>("");
   const [srtAuthorCues, setSrtAuthorCues] = useState<SubtitleCue[]>([]);
@@ -324,7 +446,6 @@ const Home: NextPage = () => {
 
   // GPU関連State
   const [gpuInfo, setGpuInfo] = useState<GpuInfo | null>(null);
-  // 起動時は互換性優先で Canvas 2D を標準にする
   const [rendererType, setRendererType] = useState<'canvas2d' | 'webgl'>('canvas2d');
   const exitConfirmRef = useRef(false);
   const [webCodecsSupported, setWebCodecsSupported] = useState<boolean>(false);
@@ -598,6 +719,8 @@ const Home: NextPage = () => {
     "dust",
     "rain",
     "snow",
+    "waterRipple",
+    "mirrorBall",
   ];
   /** UI ボタン非表示（描画・保存キー互換は残す） */
   const EFFECT_TYPES_UI_HIDDEN: EffectType[] = ["mirrorBall"];
@@ -648,6 +771,10 @@ const Home: NextPage = () => {
   type WeatherAdjust = { angleDeg: number; amount: number; color: string };
   const DEFAULT_RAIN_WEATHER: WeatherAdjust = { angleDeg: 22, amount: 0.7, color: "#6ba3ff" };
   const DEFAULT_SNOW_WEATHER: WeatherAdjust = { angleDeg: 10, amount: 0.6, color: "#ffffff" };
+  const DEFAULT_WATER_RIPPLE_COLOR = "#d4f7ff";
+  const DEFAULT_WATER_RIPPLE_INTENSITY = 0.5;
+  const DEFAULT_WATER_RIPPLE_VARIANT: WaterRippleVariant = "ripple";
+  const DEFAULT_WATER_RIPPLE_LIGHT_MODE = true;
   type MirrorBallAdjust = {
     ballX: number;
     ballY: number;
@@ -696,9 +823,40 @@ const Home: NextPage = () => {
   };
   const [rainWeather, setRainWeather] = useState<WeatherAdjust>(DEFAULT_RAIN_WEATHER);
   const [snowWeather, setSnowWeather] = useState<WeatherAdjust>(DEFAULT_SNOW_WEATHER);
+  const [waterRippleIntensity, setWaterRippleIntensity] = useState<number>(DEFAULT_WATER_RIPPLE_INTENSITY);
+  const [waterRippleColor, setWaterRippleColor] = useState<string>(DEFAULT_WATER_RIPPLE_COLOR);
+  const [waterRippleVariant, setWaterRippleVariant] = useState<WaterRippleVariant>(DEFAULT_WATER_RIPPLE_VARIANT);
+  const [waterRippleLightMode, setWaterRippleLightMode] = useState<boolean>(DEFAULT_WATER_RIPPLE_LIGHT_MODE);
+  const [waterRippleColorInput, setWaterRippleColorInput] = useState<string>(
+    DEFAULT_WATER_RIPPLE_COLOR.toUpperCase()
+  );
   const [mirrorBall, setMirrorBall] = useState<MirrorBallAdjust>(DEFAULT_MIRROR_BALL);
 
   const [settingsTab, setSettingsTab] = useState(0);
+  const [screenMotion, setScreenMotion] = useState<ScreenMotionSettings>(DEFAULT_SCREEN_MOTION);
+
+  const patchScreenMotion = useCallback((patch: Partial<ScreenMotionSettings>) => {
+    setScreenMotion((prev) => normalizeScreenMotion({ ...prev, ...patch }));
+  }, []);
+
+  const renderSentenceLines = useCallback((text: string) => {
+    const parts = text
+      .split("。")
+      .map((part) => part.trim())
+      .filter((part) => part.length > 0);
+    if (parts.length <= 1) return text;
+    return (
+      <>
+        {parts.map((part, idx) => (
+          <span key={`${part}-${idx}`}>
+            {part}。
+            {idx < parts.length - 1 && <br />}
+          </span>
+        ))}
+      </>
+    );
+  }, []);
+
   const [rainColorInput, setRainColorInput] = useState<string>(DEFAULT_RAIN_WEATHER.color.toUpperCase());
   const [snowColorInput, setSnowColorInput] = useState<string>(DEFAULT_SNOW_WEATHER.color.toUpperCase());
   const [mirrorBallLightColorInput, setMirrorBallLightColorInput] = useState<string>(
@@ -714,6 +872,7 @@ const Home: NextPage = () => {
   const [lineWidthWaveform, setLineWidthWaveform] = useState<number>(3.2);  // mode1
   const [lineWidthCircle, setLineWidthCircle] = useState<number>(3.2);      // mode2
   const [lineWidthSymWave, setLineWidthSymWave] = useState<number>(3.6);    // mode5
+  const [dotSizeLevel, setDotSizeLevel] = useState<number>(SPECTRUM_DOT_SIZE_DEFAULT); // mode4
   const [circleRotationRpm, setCircleRotationRpm] = useState<number | null>(null); // mode2: null=OFF, 0=停止
   type LoudnessParams = { gain: number; gamma: number; attack: number; release: number };
   type WmpTrailParams = { trailLength: number; trailDecay: number; additive: number };
@@ -746,6 +905,7 @@ const Home: NextPage = () => {
     edm: { gain: 1.9, gamma: 0.7, attack: 0.34, release: 0.06 },
   };
   const [glycoColorSet, setGlycoColorSet] = useState<string>("amber");
+  const [glycoRotationDeg, setGlycoRotationDeg] = useState<number>(0);
   const DEFAULT_SPECTRUM_HEX = "#FFFFFF";
   const DEFAULT_SPACE_PARTICLE = "#E0EEFF";
   const DEFAULT_SPARKLE_PARTICLE = "#FFFFFF";
@@ -762,10 +922,57 @@ const Home: NextPage = () => {
   const [dustColorInput, setDustColorInput] = useState<string>(DEFAULT_DUST_PARTICLE.toUpperCase());
   const [spaceDirection, setSpaceDirection] = useState<"forward" | "backward">("forward");
   const [spaceSpeed, setSpaceSpeed] = useState<number>(1);
+  const [spaceCenterX, setSpaceCenterX] = useState<number>(0.5);
+  const [spaceCenterY, setSpaceCenterY] = useState<number>(0.5);
+  const [showSpaceCenterGuide, setShowSpaceCenterGuide] = useState<boolean>(false);
+  const [showSpectrumOffsetGuide, setShowSpectrumOffsetGuide] = useState<boolean>(false);
   const [sparkleVariant, setSparkleVariant] = useState<"normal" | "heart" | "star">("normal");
   const [atmosphereVariant, setAtmosphereVariant] = useState<"dust" | "sparks" | "fireflies">("dust");
   const [atmosphereStrength, setAtmosphereStrength] = useState<number>(45);
   const [spectrumRainbowColorful, setSpectrumRainbowColorful] = useState<boolean>(true);
+  type WaveFamilyParams = {
+    height: number; width: number; thickness: number; smoothness: number; flowSpeed: number; glow: number; opacity: number;
+    lowRatio: number; midRatio: number; highRatio: number;
+  };
+  type ParticleSpectrumParams = {
+    pattern: "soft" | "star" | "spark" | "mist";
+    count: number; size: number; life: number; speed: number; spawnX: number; spawnY: number; spread: number;
+    opacity: number; glow: number; buoyancy: number; lowRatio: number; midRatio: number; highRatio: number; boost: number;
+  };
+  type RadialSpectrumParams = {
+    bars: number; length: number; thickness: number; radius: number; centerGap: number; glow: number;
+    lowSensitivity: number; highSensitivity: number; kickScale: number; returnSpeed: number; backgroundZoom: number;
+    rotate: boolean; rotateSpeed: number;
+  };
+  type RetroEqParams = {
+    style: "bars" | "dots"; bars: number; barWidth: number; barGap: number; dotSize: number; dotGap: number;
+    bgColor: string; levelLowColor: string; levelMidColor: string; levelHighColor: string;
+    noise: number; scanline: number; chroma: number; jitter: number; trail: number; decay: number; crtOn: boolean; vhsOn: boolean;
+    backgroundDimColor: string; backgroundDimAmount: number;
+  };
+  const DEFAULT_WAVE_FAMILY_PARAMS: WaveFamilyParams = {
+    height: 0.34, width: 0.92, thickness: 2.2, smoothness: 0.72, flowSpeed: 0.45, glow: 0.45, opacity: 0.62,
+    lowRatio: 1.15, midRatio: 1.0, highRatio: 0.85,
+  };
+  const DEFAULT_PARTICLE_SPECTRUM_PARAMS: ParticleSpectrumParams = {
+    pattern: "soft", count: 70, size: 1.45, life: 1.4, speed: 0.8, spawnX: 0.5, spawnY: 0.58, spread: 0.42,
+    opacity: 0.58, glow: 0.48, buoyancy: 0.3, lowRatio: 1.1, midRatio: 1.0, highRatio: 0.95, boost: 0.85,
+  };
+  const DEFAULT_RADIAL_SPECTRUM_PARAMS: RadialSpectrumParams = {
+    bars: 112, length: 0.72, thickness: 1.75, radius: 0.26, centerGap: 0.42, glow: 0.9, lowSensitivity: 1.35, highSensitivity: 0.82,
+    kickScale: 0.22, returnSpeed: 0.12, backgroundZoom: 0.03, rotate: false, rotateSpeed: 0.2,
+  };
+  const DEFAULT_RETRO_EQ_PARAMS: RetroEqParams = {
+    style: "bars", bars: 64, barWidth: 1, barGap: 1, dotSize: 1, dotGap: 1, bgColor: "#081108",
+    levelLowColor: "#28E060", levelMidColor: "#F0C030", levelHighColor: "#F04A30",
+    noise: 0.28, scanline: 0.5, chroma: 0.28, jitter: 0.24, trail: 0.36, decay: 0.2, crtOn: false, vhsOn: false,
+    backgroundDimColor: "#000000", backgroundDimAmount: 0,
+  };
+  const [waveFamilyParams, setWaveFamilyParams] = useState<WaveFamilyParams>(DEFAULT_WAVE_FAMILY_PARAMS);
+  const [particleSpectrumParams, setParticleSpectrumParams] =
+    useState<ParticleSpectrumParams>(DEFAULT_PARTICLE_SPECTRUM_PARAMS);
+  const [radialSpectrumParams, setRadialSpectrumParams] = useState<RadialSpectrumParams>(DEFAULT_RADIAL_SPECTRUM_PARAMS);
+  const [retroEqParams, setRetroEqParams] = useState<RetroEqParams>(DEFAULT_RETRO_EQ_PARAMS);
 
   const effectForCanvas = useMemo((): EffectParams | undefined => {
     if (effectType === "none") return undefined;
@@ -782,6 +989,8 @@ const Home: NextPage = () => {
       base.effectTintColor = spaceParticleColor;
       base.spaceDirection = spaceDirection;
       base.spaceSpeed = spaceSpeed;
+      base.spaceCenterX = spaceCenterX;
+      base.spaceCenterY = spaceCenterY;
     } else if (effectType === "sparkle") {
       base.effectTintColor = sparkleParticleColor;
       base.sparkleVariant = sparkleVariant;
@@ -789,6 +998,11 @@ const Home: NextPage = () => {
       base.effectTintColor = dustParticleColor;
       base.atmosphereVariant = atmosphereVariant;
       base.effectStrengthScale = Math.max(0.05, Math.min(1, atmosphereStrength / 100));
+    } else if (effectType === "waterRipple") {
+      base.waterRippleIntensity = waterRippleIntensity;
+      base.waterRippleColor = waterRippleColor;
+      base.waterRippleVariant = waterRippleVariant;
+      base.waterRippleLightMode = waterRippleLightMode;
     } else if (effectType === "mirrorBall") {
       base.mirrorBallX = mirrorBall.ballX;
       base.mirrorBallY = mirrorBall.ballY;
@@ -818,9 +1032,15 @@ const Home: NextPage = () => {
     effectDensity,
     rainWeather,
     snowWeather,
+    waterRippleIntensity,
+    waterRippleColor,
+    waterRippleVariant,
+    waterRippleLightMode,
     spaceParticleColor,
     spaceDirection,
     spaceSpeed,
+    spaceCenterX,
+    spaceCenterY,
     sparkleParticleColor,
     sparkleVariant,
     dustParticleColor,
@@ -851,18 +1071,29 @@ const Home: NextPage = () => {
     mwvSetItem("common_effectType", effectType);
     mwvSetItem("common_effectDensities", JSON.stringify(effectDensities));
     mwvSetItem("common_glycoColorSet", glycoColorSet);
+    mwvSetItem("common_glycoRotationDeg", String(clampGlycoRotationDeg(glycoRotationDeg)));
     mwvSetItem("common_spectrumOpacityPercent", String(spectrumOpacityPercent));
     mwvSetItem("common_spectrumColorHex", spectrumColorHex);
     mwvSetItem("common_galleryTransitionMode", galleryTransitionMode);
     mwvSetItem("common_spaceParticleColor", spaceParticleColor);
     mwvSetItem("common_spaceDirection", spaceDirection);
     mwvSetItem("common_spaceSpeed", String(spaceSpeed));
+    mwvSetItem("common_spaceCenterX", String(spaceCenterX));
+    mwvSetItem("common_spaceCenterY", String(spaceCenterY));
+    mwvSetItem("common_spaceCenterX", String(spaceCenterX));
+    mwvSetItem("common_spaceCenterY", String(spaceCenterY));
+    mwvSetItem("common_spaceCenterX", String(spaceCenterX));
+    mwvSetItem("common_spaceCenterY", String(spaceCenterY));
     mwvSetItem("common_sparkleParticleColor", sparkleParticleColor);
     mwvSetItem("common_sparkleVariant", sparkleVariant);
     mwvSetItem("common_dustParticleColor", dustParticleColor);
     mwvSetItem("common_atmosphereVariant", atmosphereVariant);
     mwvSetItem("common_atmosphereStrength", String(atmosphereStrength));
     mwvSetItem("common_spectrumRainbowColorful", spectrumRainbowColorful ? "1" : "0");
+    mwvSetItem("common_waveFamilyParams", JSON.stringify(waveFamilyParams));
+    mwvSetItem("common_particleSpectrumParams", JSON.stringify(particleSpectrumParams));
+    mwvSetItem("common_radialSpectrumParams", JSON.stringify(radialSpectrumParams));
+    mwvSetItem("common_retroEqParams", JSON.stringify(retroEqParams));
     mwvSetItem(
       "common_circleRotationRpm",
       circleRotationRpm == null ? "off" : String(Math.max(-10, Math.min(10, Math.round(circleRotationRpm))))
@@ -873,6 +1104,7 @@ const Home: NextPage = () => {
     mwvSetItem("common_subtitleStyle", JSON.stringify(subtitleStyle));
     mwvSetItem("common_titleEnabled", titleEnabled ? "1" : "0");
     mwvSetItem("common_titleStyle", JSON.stringify(titleStyle));
+    mwvSetItem("common_screenMotion", JSON.stringify(screenMotion));
     mwvSetItem("common_recordVideoBitrateMbps", String(recordVideoBitrateMbps));
     mwvSetItem("common_exportAudioBitrateKbps", String(exportAudioBitrateKbps));
     if (recordAudioBitrateKbps != null) {
@@ -880,22 +1112,31 @@ const Home: NextPage = () => {
     } else {
       mwvRemoveItem("common_recordAudioBitrateKbps");
     }
+    mwvSetItem("common_rendererType", rendererType);
   }, [
+    rendererType,
     effectType,
     effectDensities,
     glycoColorSet,
+    glycoRotationDeg,
     spectrumOpacityPercent,
     spectrumColorHex,
     galleryTransitionMode,
     spaceParticleColor,
     spaceDirection,
     spaceSpeed,
+    spaceCenterX,
+    spaceCenterY,
     sparkleParticleColor,
     sparkleVariant,
     dustParticleColor,
     atmosphereVariant,
     atmosphereStrength,
     spectrumRainbowColorful,
+    waveFamilyParams,
+    particleSpectrumParams,
+    radialSpectrumParams,
+    retroEqParams,
     circleRotationRpm,
     loudnessParamsByMode,
     wmpTrailParamsByMode,
@@ -903,6 +1144,7 @@ const Home: NextPage = () => {
     subtitleStyle,
     titleEnabled,
     titleStyle,
+    screenMotion,
     recordVideoBitrateMbps,
     exportAudioBitrateKbps,
     recordAudioBitrateKbps,
@@ -920,8 +1162,31 @@ const Home: NextPage = () => {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
+    mwvSetItem("common_mirrorBall", JSON.stringify(mirrorBall));
+  }, [mirrorBall]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
     mwvSetItem("common_snowWeather", JSON.stringify(snowWeather));
   }, [snowWeather]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    mwvSetItem("common_waterRippleIntensity", String(waterRippleIntensity));
+  }, [waterRippleIntensity]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    mwvSetItem("common_waterRippleColor", waterRippleColor);
+  }, [waterRippleColor]);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    mwvSetItem("common_waterRippleVariant", waterRippleVariant);
+  }, [waterRippleVariant]);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    mwvSetItem("common_waterRippleLightMode", waterRippleLightMode ? "1" : "0");
+  }, [waterRippleLightMode]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -940,10 +1205,16 @@ const Home: NextPage = () => {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
+    mwvSetItem("common_srtAuthorPanelEnabled", srtAuthorPanelEnabled ? "1" : "0");
+  }, [srtAuthorPanelEnabled]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
     mwvSetItem("common_lineWidthWaveform", String(lineWidthWaveform));
     mwvSetItem("common_lineWidthCircle", String(lineWidthCircle));
     mwvSetItem("common_lineWidthSymWave", String(lineWidthSymWave));
-  }, [lineWidthWaveform, lineWidthCircle, lineWidthSymWave]);
+    mwvSetItem("common_dotSizeLevel", String(dotSizeLevel));
+  }, [lineWidthWaveform, lineWidthCircle, lineWidthSymWave, dotSizeLevel]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1005,15 +1276,16 @@ const Home: NextPage = () => {
     }
   };
 
-  const clampModeAdjustments = useCallback(
-    (adj: ModeAdjustments): ModeAdjustments => ({
-      scaleX: Math.min(5, Math.max(0.1, adj.scaleX)),
-      scaleY: Math.min(5, Math.max(0.1, adj.scaleY)),
-      offsetX: Math.min(150, Math.max(-150, Math.round(adj.offsetX))),
-      offsetY: Math.min(150, Math.max(-150, Math.round(adj.offsetY))),
-    }),
-    []
-  );
+  const clampModeAdjustments = useCallback((adj: ModeAdjustments): ModeAdjustments => {
+    const clampOffset = (v: number) =>
+      Math.min(150, Math.max(-150, Math.round(Number.isFinite(v) ? v : 0)));
+    return {
+      scaleX: Math.min(5, Math.max(0.1, Number.isFinite(adj.scaleX) ? adj.scaleX : 1)),
+      scaleY: Math.min(5, Math.max(0.1, Number.isFinite(adj.scaleY) ? adj.scaleY : 1)),
+      offsetX: clampOffset(adj.offsetX),
+      offsetY: clampOffset(adj.offsetY),
+    };
+  }, []);
 
   // レイアウト×モードの設定を読み込み
   const loadSettings = useCallback(
@@ -1049,7 +1321,7 @@ const Home: NextPage = () => {
     const spectrumSettings: Record<string, Record<string, ModeAdjustments>> = {};
     LAYOUTS.forEach((layout) => {
       const layoutData: Record<string, ModeAdjustments> = {};
-      [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16].forEach((m) => {
+      [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21].forEach((m) => {
         const loaded = loadSettings(layout, m);
         layoutData[String(m)] = loaded ?? DEFAULT_ADJUSTMENTS;
       });
@@ -1061,6 +1333,7 @@ const Home: NextPage = () => {
         effectType,
         effectDensities,
         glycoColorSet,
+        glycoRotationDeg,
         spectrumOpacityPercent,
         spectrumColorHex,
         spectrumRainbowColorful,
@@ -1078,11 +1351,17 @@ const Home: NextPage = () => {
         rendererType,
         rainWeather,
         snowWeather,
+        waterRippleIntensity,
+        waterRippleColor,
+        waterRippleVariant,
+        waterRippleLightMode,
         mirrorBall,
         galleryTransitionMode,
         spaceParticleColor,
         spaceDirection,
         spaceSpeed,
+        spaceCenterX,
+        spaceCenterY,
         sparkleParticleColor,
         sparkleVariant,
         dustParticleColor,
@@ -1090,9 +1369,15 @@ const Home: NextPage = () => {
         atmosphereStrength,
         canvasSize,
         settingsTab,
+        screenMotion,
         lineWidthWaveform,
         lineWidthCircle,
         lineWidthSymWave,
+        dotSizeLevel,
+        waveFamilyParams,
+        particleSpectrumParams,
+        radialSpectrumParams,
+        retroEqParams,
         shortOutputPreset,
         shortStartSecStr,
         shortDurationSecStr,
@@ -1109,13 +1394,14 @@ const Home: NextPage = () => {
   // 全設定をクリア（インポート前の一括リセット用）
   const clearAllSettings = () => {
     LAYOUTS.forEach((layout) => {
-      [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16].forEach((m) => mwvRemoveItem(getSettingsKey(layout, m)));
+      [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21].forEach((m) => mwvRemoveItem(getSettingsKey(layout, m)));
     });
     [
       "common_targetLufs",
       "common_effectType",
       "common_effectDensities",
       "common_glycoColorSet",
+      "common_glycoRotationDeg",
       "common_spectrumOpacityPercent",
       "common_spectrumColorPreset",
       "common_spectrumCustomHex",
@@ -1132,6 +1418,12 @@ const Home: NextPage = () => {
       "common_spaceParticleColor",
       "common_spaceDirection",
       "common_spaceSpeed",
+      "common_spaceCenterX",
+      "common_spaceCenterY",
+      "common_spaceCenterX",
+      "common_spaceCenterY",
+      "common_spaceCenterX",
+      "common_spaceCenterY",
       "common_sparkleParticleColor",
       "common_sparkleVariant",
       "common_dustParticleColor",
@@ -1139,21 +1431,36 @@ const Home: NextPage = () => {
       "common_atmosphereStrength",
       "common_recordVideoBitrateMbps",
       "common_exportAudioBitrateKbps",
+      "common_srtAuthorPanelEnabled",
+      "common_recordAudioBitrateKbps",
       "common_recordAudioBitrateKbps",
       "common_srtAuthorPanelEnabled",
       "common_rainWeather",
       "common_snowWeather",
+      "common_waterRippleIntensity",
+      "common_waterRippleColor",
+      "common_waterRippleVariant",
+      "common_waterRippleLightMode",
       "common_mirrorBall",
       "common_galleryAutoEnabled",
       "common_galleryAutoSec",
       "common_canvasSize",
       "common_settingsTab",
+      "common_settingsTab_screenMigrated",
+      "common_screenMotion",
       "common_lineWidthWaveform",
       "common_lineWidthCircle",
       "common_lineWidthSymWave",
+      "common_dotSizeLevel",
+      "common_waveFamilyParams",
+      "common_particleSpectrumParams",
+      "common_radialSpectrumParams",
+      "common_retroEqParams",
       "common_shortOutputPreset",
       "common_shortStartSecStr",
       "common_shortDurationSecStr",
+      "common_shortFadeInSecStr",
+      "common_shortFadeOutSecStr",
       "common_shortFadeInSecStr",
       "common_shortFadeOutSecStr",
       "common_rendererType",
@@ -1197,9 +1504,26 @@ const Home: NextPage = () => {
           mwvSetItem("common_effectDensities", JSON.stringify(merged));
           setEffectDensities(merged);
         }
-        if (c.glycoColorSet && (GLYCO_COLOR_SETS[c.glycoColorSet] || GLYCO_GRADIENT_SETS[c.glycoColorSet] || c.glycoColorSet === "verticalEQ" || c.glycoColorSet === "verticalEQFixed")) {
+        if (
+          c.glycoColorSet &&
+          (
+            GLYCO_COLOR_SETS[c.glycoColorSet] ||
+            GLYCO_GRADIENT_SETS[c.glycoColorSet] ||
+            c.glycoColorSet === "verticalEQ" ||
+            c.glycoColorSet === "verticalEQFixed" ||
+            c.glycoColorSet === "palette"
+          )
+        ) {
           mwvSetItem("common_glycoColorSet", c.glycoColorSet);
           setGlycoColorSet(c.glycoColorSet);
+        }
+        if (c.glycoRotationDeg !== undefined) {
+          const n = Number(c.glycoRotationDeg);
+          if (!isNaN(n)) {
+            const clamped = clampGlycoRotationDeg(n);
+            mwvSetItem("common_glycoRotationDeg", String(clamped));
+            setGlycoRotationDeg(clamped);
+          }
         }
         if (c.spectrumOpacityPercent !== undefined) {
           const v = Number(c.spectrumOpacityPercent);
@@ -1248,6 +1572,16 @@ const Home: NextPage = () => {
           const v = Math.max(0.2, Math.min(3, c.spaceSpeed));
           mwvSetItem("common_spaceSpeed", String(v));
           setSpaceSpeed(v);
+        }
+        if (typeof c.spaceCenterX === "number") {
+          const v = Math.max(0.05, Math.min(0.95, c.spaceCenterX));
+          mwvSetItem("common_spaceCenterX", String(v));
+          setSpaceCenterX(v);
+        }
+        if (typeof c.spaceCenterY === "number") {
+          const v = Math.max(0.08, Math.min(0.92, c.spaceCenterY));
+          mwvSetItem("common_spaceCenterY", String(v));
+          setSpaceCenterY(v);
         }
         if (c.sparkleVariant === "normal" || c.sparkleVariant === "heart" || c.sparkleVariant === "star") {
           mwvSetItem("common_sparkleVariant", c.sparkleVariant);
@@ -1399,9 +1733,8 @@ const Home: NextPage = () => {
           }
         }
         if (c.rendererType === "canvas2d" || c.rendererType === "webgl") {
-          // 今後は Canvas2D 固定運用
-          mwvSetItem("common_rendererType", "canvas2d");
-          setRendererType("canvas2d");
+          mwvSetItem("common_rendererType", c.rendererType);
+          setRendererType(c.rendererType);
         }
         if (c.rainWeather && typeof c.rainWeather === "object") {
           const rw = c.rainWeather as WeatherAdjust;
@@ -1416,6 +1749,28 @@ const Home: NextPage = () => {
               color: /^#[0-9a-fA-F]{6}$/.test(rw.color) ? rw.color : DEFAULT_RAIN_WEATHER.color,
             });
           }
+        }
+        if (typeof c.waterRippleIntensity === "number" && !isNaN(c.waterRippleIntensity)) {
+          setWaterRippleIntensity(Math.max(0, Math.min(1, c.waterRippleIntensity)));
+          mwvSetItem("common_waterRippleIntensity", String(Math.max(0, Math.min(1, c.waterRippleIntensity))));
+        } else if (c.effectDensities?.waterRipple === 1 || c.effectDensities?.waterRipple === 2 || c.effectDensities?.waterRipple === 3) {
+          const migrated = densityToWaterRippleIntensity(c.effectDensities.waterRipple);
+          setWaterRippleIntensity(migrated);
+          mwvSetItem("common_waterRippleIntensity", String(migrated));
+        }
+        if (typeof c.waterRippleColor === "string" && /^#[0-9a-fA-F]{6}$/.test(c.waterRippleColor)) {
+          const hx = c.waterRippleColor.toUpperCase();
+          setWaterRippleColor(hx);
+          setWaterRippleColorInput(hx);
+          mwvSetItem("common_waterRippleColor", hx);
+        }
+        if (c.waterRippleVariant === "ripple" || c.waterRippleVariant === "heart" || c.waterRippleVariant === "firework") {
+          setWaterRippleVariant(c.waterRippleVariant);
+          mwvSetItem("common_waterRippleVariant", c.waterRippleVariant);
+        }
+        if (typeof c.waterRippleLightMode === "boolean") {
+          setWaterRippleLightMode(c.waterRippleLightMode);
+          mwvSetItem("common_waterRippleLightMode", c.waterRippleLightMode ? "1" : "0");
         }
         if (c.snowWeather && typeof c.snowWeather === "object") {
           const sw = c.snowWeather as WeatherAdjust;
@@ -1477,9 +1832,20 @@ const Home: NextPage = () => {
           setCanvasSize(c.canvasSize);
           effectiveCanvasSizeForAdj = c.canvasSize;
         }
-        if (typeof c.settingsTab === "number" && c.settingsTab >= 0 && c.settingsTab <= 6) {
-          mwvSetItem("common_settingsTab", String(c.settingsTab));
-          setSettingsTab(c.settingsTab);
+        if (typeof c.screenMotion === "object" && c.screenMotion != null) {
+          const parsed = normalizeScreenMotion(parseScreenMotion(c.screenMotion));
+          mwvSetItem("common_screenMotion", JSON.stringify(parsed));
+          setScreenMotion(parsed);
+        }
+        if (typeof c.settingsTab === "number") {
+          let tab = c.settingsTab;
+          if (c.screenMotion == null && tab >= 2) {
+            tab = Math.min(7, tab + 1);
+          }
+          if (tab >= 0 && tab <= 7) {
+            mwvSetItem("common_settingsTab", String(tab));
+            setSettingsTab(tab);
+          }
         }
         if (typeof c.lineWidthWaveform === "number") {
           const n = c.lineWidthWaveform;
@@ -1504,6 +1870,34 @@ const Home: NextPage = () => {
             mwvSetItem("common_lineWidthSymWave", String(v));
             setLineWidthSymWave(v);
           }
+        }
+        if (typeof c.dotSizeLevel === "number") {
+          const n = c.dotSizeLevel;
+          if (!isNaN(n)) {
+            const v = Math.max(SPECTRUM_DOT_SIZE_MIN, Math.min(SPECTRUM_DOT_SIZE_MAX, Math.round(n)));
+            mwvSetItem("common_dotSizeLevel", String(v));
+            setDotSizeLevel(v);
+          }
+        }
+        if (c.waveFamilyParams && typeof c.waveFamilyParams === "object") {
+          const next = { ...DEFAULT_WAVE_FAMILY_PARAMS, ...c.waveFamilyParams };
+          mwvSetItem("common_waveFamilyParams", JSON.stringify(next));
+          setWaveFamilyParams(next);
+        }
+        if (c.particleSpectrumParams && typeof c.particleSpectrumParams === "object") {
+          const next = { ...DEFAULT_PARTICLE_SPECTRUM_PARAMS, ...c.particleSpectrumParams };
+          mwvSetItem("common_particleSpectrumParams", JSON.stringify(next));
+          setParticleSpectrumParams(next);
+        }
+        if (c.radialSpectrumParams && typeof c.radialSpectrumParams === "object") {
+          const next = { ...DEFAULT_RADIAL_SPECTRUM_PARAMS, ...c.radialSpectrumParams };
+          mwvSetItem("common_radialSpectrumParams", JSON.stringify(next));
+          setRadialSpectrumParams(next);
+        }
+        if (c.retroEqParams && typeof c.retroEqParams === "object") {
+          const next = { ...DEFAULT_RETRO_EQ_PARAMS, ...c.retroEqParams };
+          mwvSetItem("common_retroEqParams", JSON.stringify(next));
+          setRetroEqParams(next);
         }
         if (c.shortOutputPreset === "all" || c.shortOutputPreset === "tiktok" || c.shortOutputPreset === "youtube" || c.shortOutputPreset === "niconico") {
           mwvSetItem("common_shortOutputPreset", c.shortOutputPreset);
@@ -1587,6 +1981,14 @@ const Home: NextPage = () => {
         } else if (as.effectDensity != null && as.effectType) {
           setEffectDensities((prev) => ({ ...prev, [as.effectType]: as.effectDensity }));
         }
+        if (as.glycoRotationDeg !== undefined) {
+          const n = Number(as.glycoRotationDeg);
+          if (!isNaN(n)) {
+            const clamped = clampGlycoRotationDeg(n);
+            mwvSetItem("common_glycoRotationDeg", String(clamped));
+            setGlycoRotationDeg(clamped);
+          }
+        }
       }
       // 旧形式 spectrumSettings_{mode}_{layout} または spectrumSettings_{layout}_{mode} の互換
       Object.keys(data).forEach((key) => {
@@ -1624,15 +2026,48 @@ const Home: NextPage = () => {
 
   const handleAdjustmentChange = (key: keyof ModeAdjustments, value: number) => {
     setModeAdjustments((prev) => {
-      const newAdjustments = {
+      const newAdjustments = clampModeAdjustments({
         ...prev,
         [key]: value,
-      };
-      // 設定を自動保存
+      });
       saveSettings(activeCanvasLayout, mode, newAdjustments);
       return newAdjustments;
     });
   };
+
+  const beginSpaceCenterGuide = useCallback(() => setShowSpaceCenterGuide(true), []);
+  const endSpaceCenterGuide = useCallback(() => setShowSpaceCenterGuide(false), []);
+  const beginSpectrumOffsetGuide = useCallback(() => setShowSpectrumOffsetGuide(true), []);
+  const endSpectrumOffsetGuide = useCallback(() => setShowSpectrumOffsetGuide(false), []);
+
+  const handleOffsetSliderChange = useCallback(
+    (key: "offsetX" | "offsetY", value: number) => {
+      handleAdjustmentChange(key, value);
+      if (mode === 2) {
+        setShowSpectrumOffsetGuide(true);
+      }
+    },
+    [handleAdjustmentChange, mode]
+  );
+
+  const handleOffsetSliderCommitted = useCallback(() => {
+    if (mode === 2) {
+      setShowSpectrumOffsetGuide(false);
+    }
+  }, [mode]);
+
+  /** 円形モードのみ: スライダー操作の開始/終了で●表示（marks は ResettableSlider で透過） */
+  const spectrumOffsetSliderGuideProps =
+    mode === 2
+      ? {
+          onMouseDown: () => setShowSpectrumOffsetGuide(true),
+          onTouchStart: () => setShowSpectrumOffsetGuide(true),
+          onFocus: () => setShowSpectrumOffsetGuide(true),
+          onMouseUp: handleOffsetSliderCommitted,
+          onTouchEnd: handleOffsetSliderCommitted,
+          onBlur: handleOffsetSliderCommitted,
+        }
+      : {};
 
   useEffect(() => {
     setRainColorInput(rainWeather.color.toUpperCase());
@@ -1641,6 +2076,18 @@ const Home: NextPage = () => {
   useEffect(() => {
     setSnowColorInput(snowWeather.color.toUpperCase());
   }, [snowWeather.color]);
+
+  useEffect(() => {
+    setWaterRippleColorInput(waterRippleColor.toUpperCase());
+  }, [waterRippleColor]);
+
+  useEffect(() => {
+    setMirrorBallLightColorInput(mirrorBall.lightColor.toUpperCase());
+  }, [mirrorBall.lightColor]);
+
+  useEffect(() => {
+    setMirrorBallSecondaryColorInput(mirrorBall.secondaryColor.toUpperCase());
+  }, [mirrorBall.secondaryColor]);
 
   useEffect(() => {
     setMirrorBallLightColorInput(mirrorBall.lightColor.toUpperCase());
@@ -1700,6 +2147,7 @@ const Home: NextPage = () => {
     const map: Record<number, string> = {
       [-1]: "spectrum.descOff",
       0: "spectrum.descFreqBar",
+      1: "spectrum.descLine",
       2: "spectrum.descCircle",
       3: "spectrum.descSymBar",
       4: "spectrum.descDot",
@@ -1714,6 +2162,11 @@ const Home: NextPage = () => {
       14: "spectrum.descGeomMorph",
       15: "spectrum.descOscilloscope",
       16: "spectrum.descLissajous",
+      17: "spectrum.descWaveCenter",
+      18: "spectrum.descWaveMirror",
+      19: "spectrum.descWaveLayers",
+      20: "spectrum.descParticleSpectrum",
+      21: "spectrum.descRadialSpectrum",
     };
     return map[m] ?? "spectrum.descOff";
   };
@@ -1723,7 +2176,7 @@ const Home: NextPage = () => {
     saveSettings(activeCanvasLayout, mode, modeAdjustments);
     setMode(newMode);
     const loaded = loadSettings(activeCanvasLayout, newMode);
-    if (loaded) setModeAdjustments(loaded);
+    setModeAdjustments(loaded ?? DEFAULT_ADJUSTMENTS);
   };
 
   const onChangeCanvasSize = (event: SelectChangeEvent<string>) => {
@@ -1750,6 +2203,16 @@ const Home: NextPage = () => {
 
   // Canvas
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const previewCanvasStageRef = useRef<HTMLDivElement>(null);
+  const spectrumGuideDraggingRef = useRef(false);
+
+  useEffect(() => {
+    setShowSpectrumOffsetGuide(false);
+    spectrumGuideDraggingRef.current = false;
+  }, [mode]);
+
+  const desktopTwoPaneRef = useRef<HTMLDivElement | null>(null);
+  const desktopLeftInputsRef = useRef<HTMLDivElement | null>(null);
   const [imageGallery, setImageGallery] = useState<GalleryImageEntry[]>([]);
   const [galleryIndex, setGalleryIndex] = useState(0);
   const [galleryAutoEnabled, setGalleryAutoEnabled] = useState(false);
@@ -1893,6 +2356,136 @@ const Home: NextPage = () => {
     backgroundVideoLayoutCache,
     resolveCanvasLayout,
   ]);
+
+  const previewGuideCanvasDims = getCanvasDimensions(activeCanvasLayout);
+  const spectrumOffsetGuidePos = useMemo(
+    () =>
+      getSpectrumPivotOverlayPercent(
+        previewGuideCanvasDims.width,
+        previewGuideCanvasDims.height,
+        modeAdjustments,
+        mode
+      ),
+    [previewGuideCanvasDims.width, previewGuideCanvasDims.height, modeAdjustments, mode]
+  );
+
+  const applySpectrumOffsetFromGuidePointer = useCallback(
+    (clientX: number, clientY: number) => {
+      const stage = previewCanvasStageRef.current;
+      if (!stage) return;
+      const rect = stage.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return;
+      const leftPercent = ((clientX - rect.left) / rect.width) * 100;
+      const topPercent = ((clientY - rect.top) / rect.height) * 100;
+      const { offsetX, offsetY } = overlayPercentToModeOffsets(
+        leftPercent,
+        topPercent,
+        previewGuideCanvasDims.width,
+        previewGuideCanvasDims.height,
+        modeAdjustments,
+        mode
+      );
+      setModeAdjustments((prev) => {
+        const next = { ...prev, offsetX, offsetY };
+        saveSettings(activeCanvasLayout, mode, next);
+        return next;
+      });
+    },
+    [previewGuideCanvasDims.width, previewGuideCanvasDims.height, modeAdjustments, mode, activeCanvasLayout]
+  );
+
+  const handleSpectrumGuidePointerDown = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      event.currentTarget.setPointerCapture(event.pointerId);
+      spectrumGuideDraggingRef.current = true;
+      setShowSpectrumOffsetGuide(true);
+      applySpectrumOffsetFromGuidePointer(event.clientX, event.clientY);
+    },
+    [applySpectrumOffsetFromGuidePointer]
+  );
+
+  const handleSpectrumGuidePointerMove = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      if (!spectrumGuideDraggingRef.current) return;
+      applySpectrumOffsetFromGuidePointer(event.clientX, event.clientY);
+    },
+    [applySpectrumOffsetFromGuidePointer]
+  );
+
+  const handleSpectrumGuidePointerUp = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (spectrumGuideDraggingRef.current) {
+      spectrumGuideDraggingRef.current = false;
+      try {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      } catch {
+        /* ignore */
+      }
+      setShowSpectrumOffsetGuide(false);
+    }
+  }, []);
+
+  const spaceCenterGuidePos = useMemo(
+    () => getSpaceCenterOverlayPercent(spaceCenterX, spaceCenterY),
+    [spaceCenterX, spaceCenterY]
+  );
+
+
+  const webglBlockedBySubtitleOrTitle = useMemo(
+    () =>
+      (subtitleEnabled && subtitleCues.length > 0) ||
+      (titleEnabled && titleText.trim().length > 0),
+    [subtitleEnabled, subtitleCues.length, titleEnabled, titleText]
+  );
+  const webglBlockedByVideoBackground = backgroundMediaMode === "video";
+  const webglSwitchDisabled =
+    isQuickEncoding || isRecording || webglBlockedBySubtitleOrTitle || webglBlockedByVideoBackground;
+
+  const applyRendererType = useCallback(
+    (next: "canvas2d" | "webgl", options?: { silent?: boolean }) => {
+      if (next === "webgl") {
+        if (webglBlockedBySubtitleOrTitle) {
+          if (!options?.silent) openSnackBar(t("snackbar.subtitleCanvasFallback"));
+          return;
+        }
+        if (webglBlockedByVideoBackground) {
+          if (!options?.silent) openSnackBar(t("snackbar.videoBackgroundCanvasFallback"));
+          return;
+        }
+        if (gpuInfo && !gpuInfo.isWebGLSupported && !options?.silent) {
+          openSnackBar(t("gpu.webglUnsupportedHint"));
+        }
+      } else if (rendererType === "webgl") {
+        stopWebGLAnimation();
+      }
+      setRendererType(next);
+      if (typeof window !== "undefined") {
+        mwvSetItem("common_rendererType", next);
+      }
+    },
+    [
+      webglBlockedBySubtitleOrTitle,
+      webglBlockedByVideoBackground,
+      gpuInfo,
+      rendererType,
+      openSnackBar,
+      t,
+    ]
+  );
+
+  const handleRendererSwitchChange = useCallback(
+    (_event: React.ChangeEvent<HTMLInputElement>, checked: boolean) => {
+      applyRendererType(checked ? "webgl" : "canvas2d");
+    },
+    [applyRendererType]
+  );
+
+  /** MP4 埋め込み用: 静止画背景があればギャラリー表示中の画像から JPEG を生成 */
+  const buildMp4ThumbnailJpeg = useCallback(async (): Promise<Uint8Array | null> => {
+    if (backgroundMediaMode !== "stills" || !imageCtx) return null;
+    const dims = getCanvasDimensions(activeCanvasLayout);
+    return imageElementToThumbnailJpeg(imageCtx, undefined, dims.width, dims.height);
+  }, [backgroundMediaMode, imageCtx, activeCanvasLayout, getCanvasDimensions]);
 
   const primeCanvasForVideoElement = useCallback(
     (video: HTMLVideoElement) => {
@@ -2112,8 +2705,8 @@ const Home: NextPage = () => {
 
     const savedModeCookie = getCookieValue(MODE_COOKIE_KEY);
     let modeVal = savedModeCookie ? parseInt(savedModeCookie, 10) : 0;
-    // UI 非表示のモード（折れ線=1・波形上下対称=5）は周波数バーへ
-    if (modeVal === 1 || modeVal === 5) {
+    // UI 非表示のモード（波形上下対称=5）は周波数バーへ
+    if (modeVal === 5) {
       modeVal = 0;
       setCookieValue(MODE_COOKIE_KEY, "0", 60 * 60 * 24 * 365);
     }
@@ -2134,10 +2727,27 @@ const Home: NextPage = () => {
       setCanvasSize(savedCanvas as CanvasSize);
     }
 
+    const savedScreenMotion = mwvGetItem("common_screenMotion");
+    if (savedScreenMotion) {
+      try {
+        setScreenMotion(normalizeScreenMotion(parseScreenMotion(JSON.parse(savedScreenMotion))));
+      } catch {
+        /* ignore */
+      }
+    }
     const savedSettingsTab = mwvGetItem("common_settingsTab");
     if (savedSettingsTab != null) {
       const n = parseInt(savedSettingsTab, 10);
-      if (!isNaN(n) && n >= 0 && n <= 6) setSettingsTab(n);
+      if (!isNaN(n) && n >= 0) {
+        const migrated = mwvGetItem("common_settingsTab_screenMigrated") === "1";
+        if (!migrated && n >= 2 && n <= 6) {
+          setSettingsTab(Math.min(7, n + 1));
+          mwvSetItem("common_settingsTab", String(Math.min(7, n + 1)));
+          mwvSetItem("common_settingsTab_screenMigrated", "1");
+        } else if (n <= 7) {
+          setSettingsTab(n);
+        }
+      }
     }
 
     const lwW = mwvGetItem("common_lineWidthWaveform");
@@ -2154,6 +2764,29 @@ const Home: NextPage = () => {
     if (lwS != null) {
       const n = parseFloat(lwS);
       if (!isNaN(n)) setLineWidthSymWave(Math.max(1, Math.min(8, n)));
+    }
+    const savedDotSizeLevel = mwvGetItem("common_dotSizeLevel");
+    if (savedDotSizeLevel != null) {
+      const n = parseInt(savedDotSizeLevel, 10);
+      if (!isNaN(n)) {
+        setDotSizeLevel(Math.max(SPECTRUM_DOT_SIZE_MIN, Math.min(SPECTRUM_DOT_SIZE_MAX, n)));
+      }
+    }
+    const savedWaveFamilyParams = mwvGetItem("common_waveFamilyParams");
+    if (savedWaveFamilyParams) {
+      try { setWaveFamilyParams({ ...DEFAULT_WAVE_FAMILY_PARAMS, ...(JSON.parse(savedWaveFamilyParams) as Partial<WaveFamilyParams>) }); } catch { /* ignore */ }
+    }
+    const savedParticleSpectrumParams = mwvGetItem("common_particleSpectrumParams");
+    if (savedParticleSpectrumParams) {
+      try { setParticleSpectrumParams({ ...DEFAULT_PARTICLE_SPECTRUM_PARAMS, ...(JSON.parse(savedParticleSpectrumParams) as Partial<ParticleSpectrumParams>) }); } catch { /* ignore */ }
+    }
+    const savedRadialSpectrumParams = mwvGetItem("common_radialSpectrumParams");
+    if (savedRadialSpectrumParams) {
+      try { setRadialSpectrumParams({ ...DEFAULT_RADIAL_SPECTRUM_PARAMS, ...(JSON.parse(savedRadialSpectrumParams) as Partial<RadialSpectrumParams>) }); } catch { /* ignore */ }
+    }
+    const savedRetroEqParams = mwvGetItem("common_retroEqParams");
+    if (savedRetroEqParams) {
+      try { setRetroEqParams({ ...DEFAULT_RETRO_EQ_PARAMS, ...(JSON.parse(savedRetroEqParams) as Partial<RetroEqParams>) }); } catch { /* ignore */ }
     }
 
     const sop = mwvGetItem("common_shortOutputPreset");
@@ -2191,12 +2824,52 @@ const Home: NextPage = () => {
           if (parsed[t] === 1 || parsed[t] === 2 || parsed[t] === 3) result[t] = parsed[t];
         });
         setEffectDensities(result);
+        const savedWrIntensity = mwvGetItem("common_waterRippleIntensity");
+        if (savedWrIntensity != null) {
+          const n = parseFloat(savedWrIntensity);
+          if (!isNaN(n)) {
+            setWaterRippleIntensity(Math.max(0, Math.min(1, n)));
+          }
+        } else if (parsed.waterRipple === 1 || parsed.waterRipple === 2 || parsed.waterRipple === 3) {
+          setWaterRippleIntensity(densityToWaterRippleIntensity(parsed.waterRipple));
+        }
       }
     } catch (_e) { /* ignore */ }
 
+    const savedWrColor = mwvGetItem("common_waterRippleColor");
+    if (savedWrColor && /^#[0-9a-fA-F]{6}$/i.test(savedWrColor)) {
+      const hx = savedWrColor.toUpperCase();
+      setWaterRippleColor(hx);
+      setWaterRippleColorInput(hx);
+    }
+    const savedWrVariant = mwvGetItem("common_waterRippleVariant");
+    if (savedWrVariant === "ripple" || savedWrVariant === "heart" || savedWrVariant === "firework") {
+      setWaterRippleVariant(savedWrVariant);
+    }
+    const savedWrLight = mwvGetItem("common_waterRippleLightMode");
+    if (savedWrLight === "0") {
+      setWaterRippleLightMode(false);
+    } else if (savedWrLight === "1") {
+      setWaterRippleLightMode(true);
+    }
+
     const savedGlyco = mwvGetItem("common_glycoColorSet");
-    if (savedGlyco && (GLYCO_COLOR_SETS[savedGlyco] || GLYCO_GRADIENT_SETS[savedGlyco] || savedGlyco === "verticalEQ" || savedGlyco === "verticalEQFixed")) {
+    if (
+      savedGlyco &&
+      (
+        GLYCO_COLOR_SETS[savedGlyco] ||
+        GLYCO_GRADIENT_SETS[savedGlyco] ||
+        savedGlyco === "verticalEQ" ||
+        savedGlyco === "verticalEQFixed" ||
+        savedGlyco === "palette"
+      )
+    ) {
       setGlycoColorSet(savedGlyco);
+    }
+    const savedGlycoRotation = mwvGetItem("common_glycoRotationDeg");
+    if (savedGlycoRotation != null) {
+      const n = Number(savedGlycoRotation);
+      if (!isNaN(n)) setGlycoRotationDeg(clampGlycoRotationDeg(n));
     }
 
     const savedOpacity = mwvGetItem("common_spectrumOpacityPercent");
@@ -2241,6 +2914,16 @@ const Home: NextPage = () => {
     if (savedSpaceSpeed != null) {
       const n = parseFloat(savedSpaceSpeed);
       if (!isNaN(n)) setSpaceSpeed(Math.max(0.2, Math.min(3, n)));
+    }
+    const savedSpaceCenterX = mwvGetItem("common_spaceCenterX");
+    if (savedSpaceCenterX != null) {
+      const n = parseFloat(savedSpaceCenterX);
+      if (!isNaN(n)) setSpaceCenterX(Math.max(0.05, Math.min(0.95, n)));
+    }
+    const savedSpaceCenterY = mwvGetItem("common_spaceCenterY");
+    if (savedSpaceCenterY != null) {
+      const n = parseFloat(savedSpaceCenterY);
+      if (!isNaN(n)) setSpaceCenterY(Math.max(0.08, Math.min(0.92, n)));
     }
     const savedSparkleC = mwvGetItem("common_sparkleParticleColor");
     if (savedSparkleC && /^#[0-9a-fA-F]{6}$/.test(savedSparkleC)) {
@@ -2414,9 +3097,10 @@ const Home: NextPage = () => {
       if (!isNaN(n) && n >= 2 && n <= 60) setGalleryAutoSec(n);
     }
 
-    // 今後は Canvas2D 固定運用
-    mwvSetItem("common_rendererType", "canvas2d");
-    setRendererType("canvas2d");
+    const savedRendererType = mwvGetItem("common_rendererType");
+    if (savedRendererType === "canvas2d" || savedRendererType === "webgl") {
+      setRendererType(savedRendererType);
+    }
 
     try {
       const rw = mwvGetItem("common_rainWeather");
@@ -2494,6 +3178,46 @@ const Home: NextPage = () => {
       }
     } catch (_e) { /* ignore */ }
 
+    try {
+      const mb = mwvGetItem("common_mirrorBall");
+      if (mb) {
+        const p = JSON.parse(mb) as Partial<MirrorBallAdjust>;
+        const clamp01 = (v: unknown, fallback: number) =>
+          typeof v === "number" && !isNaN(v) ? Math.max(0, Math.min(1, v)) : fallback;
+        const clampNum = (v: unknown, min: number, max: number, fallback: number) =>
+          typeof v === "number" && !isNaN(v) ? Math.max(min, Math.min(max, v)) : fallback;
+        setMirrorBall({
+          ballX: clamp01(p.ballX, DEFAULT_MIRROR_BALL.ballX),
+          ballY: clamp01(p.ballY, DEFAULT_MIRROR_BALL.ballY),
+          rotationSpeed: clampNum(p.rotationSpeed, -180, 180, DEFAULT_MIRROR_BALL.rotationSpeed),
+          radius: clampNum(p.radius, 0.04, 0.35, DEFAULT_MIRROR_BALL.radius),
+          facetCount: Math.round(clampNum(p.facetCount, 8, 64, DEFAULT_MIRROR_BALL.facetCount)),
+          sparkle: clamp01(p.sparkle, DEFAULT_MIRROR_BALL.sparkle),
+          beamCount: Math.round(clampNum(p.beamCount, 4, 32, DEFAULT_MIRROR_BALL.beamCount)),
+          beamSpread: clampNum(p.beamSpread, 8, 90, DEFAULT_MIRROR_BALL.beamSpread),
+          ambient: clamp01(p.ambient, DEFAULT_MIRROR_BALL.ambient),
+          specular: clamp01(p.specular, DEFAULT_MIRROR_BALL.specular),
+          reflectivity: clamp01(p.reflectivity, DEFAULT_MIRROR_BALL.reflectivity),
+          lightX: clamp01(p.lightX, DEFAULT_MIRROR_BALL.lightX),
+          lightY: clamp01(p.lightY, DEFAULT_MIRROR_BALL.lightY),
+          lightColor:
+            typeof p.lightColor === "string" && /^#[0-9a-fA-F]{6}$/.test(p.lightColor)
+              ? p.lightColor
+              : DEFAULT_MIRROR_BALL.lightColor,
+          lightIntensity: clamp01(p.lightIntensity, DEFAULT_MIRROR_BALL.lightIntensity),
+          secondaryEnabled: p.secondaryEnabled === true,
+          secondaryX: clamp01(p.secondaryX, DEFAULT_MIRROR_BALL.secondaryX),
+          secondaryY: clamp01(p.secondaryY, DEFAULT_MIRROR_BALL.secondaryY),
+          secondaryColor:
+            typeof p.secondaryColor === "string" && /^#[0-9a-fA-F]{6}$/.test(p.secondaryColor)
+              ? p.secondaryColor
+              : DEFAULT_MIRROR_BALL.secondaryColor,
+          secondaryIntensity: clamp01(p.secondaryIntensity, DEFAULT_MIRROR_BALL.secondaryIntensity),
+          audioSyncRotation: p.audioSyncRotation === true,
+        });
+      }
+    } catch (_e) { /* ignore */ }
+
     // スペアナ表示調整はレイアウト×モード別に Cookie 保存。復元は保存済み canvasSize に合わせたレイアウトで行う（1920x1080 固定だと縦/正方形で常にズレる）
     const canvasForAdj: CanvasSize =
       savedCanvas === "auto" ||
@@ -2515,9 +3239,6 @@ const Home: NextPage = () => {
     const initGpu = async () => {
       const info = getGpuInfo();
       setGpuInfo(info);
-
-      mwvSetItem("common_rendererType", "canvas2d");
-      setRendererType("canvas2d");
 
       const webCodecsAvailable = isWebCodecsSupported();
       setWebCodecsSupported(webCodecsAvailable);
@@ -2551,6 +3272,14 @@ const Home: NextPage = () => {
     openSnackBar(t("snackbar.videoBackgroundCanvasFallback"));
   }, [backgroundMediaMode, rendererType, openSnackBar, t]);
 
+  useEffect(() => {
+    if (rendererType !== "webgl") return;
+    if (![17, 18, 19, 20, 21].includes(mode)) return;
+    setRendererType("canvas2d");
+    mwvSetItem("common_rendererType", "canvas2d");
+    openSnackBar(t("snackbar.webglCanvasFallbackForMode"));
+  }, [rendererType, mode, openSnackBar, t]);
+
   // Canvas サイズ設定（canvasSize または rendererType が変更されたときに実行）
   // useLayoutEffectを使用してDOM更新直後にサイズを設定
   useLayoutEffect(() => {
@@ -2566,6 +3295,32 @@ const Home: NextPage = () => {
     clearImageCache();
     clearWebGLImageCache();
   }, [activeCanvasLayout, rendererType, getCanvasDimensions]);
+
+  useLayoutEffect(() => {
+    const root = desktopTwoPaneRef.current;
+    const inputs = desktopLeftInputsRef.current;
+    if (!root || !inputs || typeof window === "undefined") return;
+
+    const updateLeftInputsHeight = () => {
+      root.style.setProperty("--desktop-left-inputs-height", `${inputs.offsetHeight}px`);
+    };
+
+    updateLeftInputsHeight();
+
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", updateLeftInputsHeight);
+      return () => window.removeEventListener("resize", updateLeftInputsHeight);
+    }
+
+    const observer = new ResizeObserver(updateLeftInputsHeight);
+    observer.observe(inputs);
+    window.addEventListener("resize", updateLeftInputsHeight);
+
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", updateLeftInputsHeight);
+    };
+  }, []);
 
   // Canvas Animation
   useEffect(() => {
@@ -2586,12 +3341,18 @@ const Home: NextPage = () => {
       lineWidthWaveform,
       lineWidthCircle,
       lineWidthSymWave,
+      dotSizeLevel,
       circleRotationRpm,
       loudnessParams: loudnessParamsByMode[mode] ?? defaultLoudnessParamsRef.current,
       wmpTrailParams: wmpTrailParamsByMode[mode] ?? defaultWmpTrailParamsForMode,
       glycoColorSet,
+      glycoRotationDeg,
       spectrumColorHex,
       spectrumRainbowColorful,
+      waveFamilyParams,
+      particleSpectrumParams,
+      radialSpectrumParams,
+      retroEqParams,
       subtitleOverlay: {
         enabled: subtitleEnabled,
         cues: subtitleCues,
@@ -2611,6 +3372,13 @@ const Home: NextPage = () => {
         if (backgroundMediaMode === "video") return VIDEO_BACKGROUND_PREVIEW_FPS;
         return null;
       },
+      screenMotion,
+      getPlaybackTiming: () =>
+        resolveImageFadePlaybackTiming(
+          getCurrentPlaybackTimeSec(),
+          getMediaDurationSec(),
+          resolvePlaybackWindow()
+        ),
       ...spectrumVideoBackground,
     };
 
@@ -2652,16 +3420,22 @@ const Home: NextPage = () => {
     isPlaySound,
     isRecording,
     glycoColorSet,
+    glycoRotationDeg,
     spectrumOpacityPercent,
     lineWidthWaveform,
     lineWidthCircle,
     lineWidthSymWave,
+    dotSizeLevel,
     circleRotationRpm,
     loudnessParamsByMode,
     defaultWmpTrailParamsForMode,
     wmpTrailParamsByMode,
     spectrumColorHex,
     spectrumRainbowColorful,
+    waveFamilyParams,
+    particleSpectrumParams,
+    radialSpectrumParams,
+    retroEqParams,
     subtitleEnabled,
     subtitleCues,
     subtitleStyle,
@@ -2670,6 +3444,10 @@ const Home: NextPage = () => {
     titleText,
     titleStyle,
     getCurrentPlaybackTimeSec,
+    screenMotion,
+    shortOutputPreset,
+    shortStartSecStr,
+    shortDurationSecStr,
     backgroundMediaMode,
     spectrumVideoBackground,
   ]);
@@ -3609,6 +4387,217 @@ const Home: NextPage = () => {
   };
   onPlaySoundPlaybackRef.current = onPlaySound;
 
+  const resolvePreviewTimeline = useCallback((): {
+    start: number;
+    duration: number;
+    clip: ResolvedClip;
+  } | null => {
+    const mediaDur = getMediaDurationSec();
+    if (!(mediaDur > 0)) return null;
+    const clip = resolvePlaybackWindow();
+    if (clip.full !== false) {
+      return { start: 0, duration: mediaDur, clip };
+    }
+    if (clip.duration <= 0) return null;
+    return { start: clip.start, duration: clip.duration, clip };
+  }, [getMediaDurationSec, resolvePlaybackWindow]);
+
+  const getPreviewPlayheadSec = useCallback((): number => {
+    const tl = resolvePreviewTimeline();
+    if (!tl) return 0;
+    let t = 0;
+    const v = videoElementRef.current;
+    if (v && Number.isFinite(v.currentTime)) {
+      t = Math.max(0, v.currentTime);
+    } else if (
+      isPlaySoundRef.current &&
+      audioPlaybackStartCtxTimeRef.current != null &&
+      audioCtxRef.current
+    ) {
+      t =
+        audioPlaybackOffsetSecRef.current +
+        (audioCtxRef.current.currentTime - audioPlaybackStartCtxTimeRef.current);
+    } else {
+      t = Math.max(0, audioPlaybackOffsetSecRef.current);
+    }
+    const end = tl.start + tl.duration;
+    return Math.max(tl.start, Math.min(end, t));
+  }, [resolvePreviewTimeline]);
+
+  const schedulePlaybackWindowEndFromNow = useCallback(
+    (clip: ResolvedClip) => {
+      clearPlaybackWindowTimer();
+      if (!isPlaySoundRef.current || clip.full !== false || clip.duration <= 0) return;
+      const remaining = Math.max(0, clip.start + clip.duration - getCurrentPlaybackTimeSec()) * 1000;
+      playbackWindowTimerRef.current = window.setTimeout(() => {
+        playbackWindowTimerRef.current = null;
+        finishVideoWindowPlayback();
+      }, remaining);
+    },
+    [clearPlaybackWindowTimer, finishVideoWindowPlayback, getCurrentPlaybackTimeSec]
+  );
+
+  const restartAudioPlaybackAt = useCallback(
+    (absoluteSec: number) => {
+      const buf = decodedAudioBufferRef.current;
+      const ctx = audioCtxRef.current;
+      if (!buf || !ctx || !isPlaySoundRef.current) return;
+      const clip = resolvePlaybackWindow();
+      if (clip.full === false && clip.duration <= 0) return;
+
+      if (audioBufferSrcRef.current) {
+        try {
+          audioBufferSrcRef.current.stop(0);
+        } catch {
+          /* already stopped */
+        }
+        audioBufferSrcRef.current.onended = null;
+      }
+
+      const node = ctx.createBufferSource();
+      node.buffer = buf;
+      node.loop = false;
+      node.onended = () => {
+        audioPlaybackStartCtxTimeRef.current = null;
+        isPlaySoundRef.current = false;
+        setIsPlaySound(false);
+        stopCanvas2DAnimation();
+        stopWebGLAnimation();
+      };
+      const gain = clipGainRef.current;
+      if (gain) {
+        node.connect(gain);
+      } else {
+        node.connect(analyserRef.current);
+      }
+      audioBufferSrcRef.current = node;
+      audioPlaybackOffsetSecRef.current = absoluteSec;
+      audioPlaybackStartCtxTimeRef.current = ctx.currentTime;
+
+      if (clip.full === false) {
+        const end = clip.start + clip.duration;
+        const playDur = Math.max(0, end - absoluteSec);
+        node.start(0, absoluteSec, playDur);
+      } else {
+        node.start(0, absoluteSec);
+      }
+      applyPlaybackClipFade(clip);
+      schedulePlaybackWindowEndFromNow(clip);
+    },
+    [resolvePlaybackWindow, applyPlaybackClipFade, schedulePlaybackWindowEndFromNow]
+  );
+
+  const seekPreviewToRelative = useCallback(
+    (relativeSec: number) => {
+      const tl = resolvePreviewTimeline();
+      if (!tl) return;
+      const target = tl.start + Math.max(0, Math.min(tl.duration, relativeSec));
+
+      if (videoElementRef.current) {
+        const video = videoElementRef.current;
+        try {
+          if (!Number.isFinite(video.currentTime) || Math.abs(video.currentTime - target) > 0.02) {
+            video.currentTime = target;
+          }
+        } catch {
+          /* ignore */
+        }
+        audioPlaybackOffsetSecRef.current = target;
+        if (isPlaySoundRef.current && !video.paused) {
+          schedulePlaybackWindowEndFromNow(tl.clip);
+        }
+      } else {
+        audioPlaybackOffsetSecRef.current = target;
+        if (isPlaySoundRef.current) {
+          restartAudioPlaybackAt(target);
+        }
+      }
+      setPreviewPlaybackTick((n) => n + 1);
+    },
+    [resolvePreviewTimeline, restartAudioPlaybackAt, schedulePlaybackWindowEndFromNow]
+  );
+
+  useEffect(() => {
+    if (playSoundDisabled) return;
+    const video = videoElementRef.current;
+    const bump = () => setPreviewPlaybackTick((n) => n + 1);
+    if (video) {
+      video.addEventListener("timeupdate", bump);
+      video.addEventListener("seeked", bump);
+    }
+    let raf = 0;
+    if (isPlaySound && !video) {
+      const loop = () => {
+        if (isPlaySoundRef.current) bump();
+        raf = requestAnimationFrame(loop);
+      };
+      raf = requestAnimationFrame(loop);
+    }
+    return () => {
+      if (video) {
+        video.removeEventListener("timeupdate", bump);
+        video.removeEventListener("seeked", bump);
+      }
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, [playSoundDisabled, isPlaySound, audioFileName]);
+
+  const previewTimeline = useMemo(() => {
+    void previewPlaybackTick;
+    return resolvePreviewTimeline();
+  }, [
+    resolvePreviewTimeline,
+    previewPlaybackTick,
+    shortOutputPreset,
+    shortStartSecStr,
+    shortDurationSecStr,
+  ]);
+
+  const previewSeekValue =
+    previewTimeline != null
+      ? Math.max(0, Math.min(previewTimeline.duration, getPreviewPlayheadSec() - previewTimeline.start))
+      : 0;
+
+  const previewBufferedRelative =
+    previewTimeline != null &&
+    previewTimeline.duration > 0 &&
+    videoElementRef.current &&
+    videoElementRef.current.buffered.length > 0
+      ? (() => {
+          const tl = previewTimeline;
+          const video = videoElementRef.current;
+          if (!video) return 0;
+          const currentAbs = tl.start + previewSeekValue;
+          for (let i = 0; i < video.buffered.length; i += 1) {
+            const start = video.buffered.start(i);
+            const end = video.buffered.end(i);
+            if (currentAbs >= start && currentAbs <= end) {
+              return Math.max(0, Math.min(tl.duration, end - tl.start));
+            }
+          }
+          return previewSeekValue;
+        })()
+      : 0;
+
+  const previewSeekDisabled =
+    playSoundDisabled ||
+    isRecording ||
+    isQuickEncoding ||
+    previewTimeline == null ||
+    previewTimeline.duration <= 0;
+
+  const previewSeekDuration =
+    previewTimeline != null && previewTimeline.duration > 0 ? previewTimeline.duration : 0;
+  /** 音声未読込時もシークバーを描画するため max/step 用のフォールバック */
+  const previewSeekBarMax = previewSeekDuration > 0 ? previewSeekDuration : 1;
+  const previewSeekBarStep =
+    previewSeekDuration > 0 ? Math.max(0.01, previewSeekDuration / 500) : 0.01;
+  /** スライダー value と同一ソース（getPreviewPlayheadSec → 相対秒） */
+  const previewSeekRatio = previewSeekTrackRatio(previewSeekValue, previewSeekDuration);
+  const previewBufferRatio = previewSeekTrackRatio(previewBufferedRelative, previewSeekDuration);
+  /** バッファ表示は再生位置より手前にしない（遅れているだけの層が進捗に見えないように） */
+  const previewBufferDisplayRatio = Math.max(previewSeekRatio, previewBufferRatio);
+
   const srtAuthorOnBtnStartClick = useCallback(() => {
     if (!srtAuthorRecordActive) return;
     if (srtAuthorPhase !== "wait_start" || srtAuthorLineIndex >= srtAuthorCues.length) return;
@@ -3709,6 +4698,7 @@ const Home: NextPage = () => {
           setEncodeProgress(0);
           const binaryData = new Uint8Array(await webmBlob.arrayBuffer());
           mwvMilestone("record: ffmpeg へ渡す直前", { bufferBytes: binaryData.byteLength });
+          const thumbnailJpeg = await buildMp4ThumbnailJpeg();
           const video = await generateMp4Video(
             binaryData,
             webmName,
@@ -3726,7 +4716,8 @@ const Home: NextPage = () => {
               },
             },
             targetLufs,
-            exportAudioBitrateKbps
+            exportAudioBitrateKbps,
+            thumbnailJpeg
           );
           if (!video || video.length === 0) {
             throw new Error("empty_mp4");
@@ -3897,6 +4888,7 @@ const Home: NextPage = () => {
       const webmName = movieBase + ".webm";
       const mp4Name = movieBase + ".mp4";
       const binaryData = new Uint8Array(await webmBlob.arrayBuffer());
+      const thumbnailJpeg = await buildMp4ThumbnailJpeg();
 
       const video = await generateMp4Video(
         binaryData,
@@ -3926,7 +4918,8 @@ const Home: NextPage = () => {
           },
         },
         targetLufs,
-        exportAudioBitrateKbps
+        exportAudioBitrateKbps,
+        thumbnailJpeg
       );
 
       if (!video || video.length === 0) {
@@ -4058,6 +5051,8 @@ const Home: NextPage = () => {
     setDustParticleColor(DEFAULT_DUST_PARTICLE);
     setSpaceDirection("forward");
     setSpaceSpeed(1);
+    setSpaceCenterX(0.5);
+    setSpaceCenterY(0.5);
     setSparkleVariant("normal");
     setAtmosphereVariant("dust");
     setAtmosphereStrength(45);
@@ -4158,7 +5153,7 @@ const Home: NextPage = () => {
   return (
     <ThemeProvider theme={muiTheme}>
       <>
-      <div className="mx-auto box-border w-full max-w-[900px] px-3 pb-8 pt-4 text-slate-900 md:px-4 md:pt-8 dark:text-slate-100">
+      <div className={`${styles.pageShell} text-slate-900 dark:text-slate-100`}>
       <main className="space-y-5 md:space-y-6">
         {/* 録画・変換中の注意喚起（スクロール追随）。プログレスバーはその直下に表示 */}
         {(isRecording || encodeStatus !== "idle") && (
@@ -4222,52 +5217,54 @@ const Home: NextPage = () => {
             )}
           </Box>
         )}
-        <div
-          className={`${styles.heading} relative rounded-2xl border border-slate-200/70 bg-white/80 shadow-md backdrop-blur-sm dark:border-slate-600/50 dark:bg-slate-900/85 dark:shadow-lg`}
-        >
-          <Tooltip
-            title={uiScheme === "light" ? t("theme.toggleToDark") : t("theme.toggleToLight")}
-            arrow
+        <div className={styles.desktopTwoPane} ref={desktopTwoPaneRef}>
+        <div className={styles.desktopLeftInputs} ref={desktopLeftInputsRef}>
+          <div
+            className={`${styles.heading} relative rounded-2xl border border-slate-200/70 bg-white/80 shadow-md backdrop-blur-sm dark:border-slate-600/50 dark:bg-slate-900/85 dark:shadow-lg`}
           >
-            <IconButton
-              type="button"
-              size="small"
-              onClick={toggleUiScheme}
-              aria-label={uiScheme === "light" ? t("theme.toggleToDark") : t("theme.toggleToLight")}
-              sx={{
-                position: "absolute",
-                top: 4,
-                right: 6,
-                zIndex: 2,
-              }}
+            <Tooltip
+              title={uiScheme === "light" ? t("theme.toggleToDark") : t("theme.toggleToLight")}
+              arrow
             >
-              {uiScheme === "light" ? (
-                <Lightbulb sx={{ color: "#f59e0b" }} fontSize="small" />
-              ) : (
-                <LightbulbOutlined sx={{ color: "#94a3b8" }} fontSize="small" />
-              )}
-            </IconButton>
-          </Tooltip>
-          <h1 className={styles.heading__title}>{t("heading.title")}</h1>
-          <div className={styles.heading__text}>
-            <p>{t("heading.description")}</p>
-            <p className={styles.heading__terms}>
-              <a
-                href="https://github.com/kuwa2005/music-waves-visualizer/blob/main/docs/USER_TERMS.md"
-                target="_blank"
-                rel="noopener noreferrer"
+              <IconButton
+                type="button"
+                size="small"
+                onClick={toggleUiScheme}
+                aria-label={uiScheme === "light" ? t("theme.toggleToDark") : t("theme.toggleToLight")}
+                sx={{
+                  position: "absolute",
+                  top: 4,
+                  right: 6,
+                  zIndex: 2,
+                }}
               >
-                {t("heading.termsLink")}
-              </a>
-            </p>
+                {uiScheme === "light" ? (
+                  <Lightbulb sx={{ color: "#f59e0b" }} fontSize="small" />
+                ) : (
+                  <LightbulbOutlined sx={{ color: "#94a3b8" }} fontSize="small" />
+                )}
+              </IconButton>
+            </Tooltip>
+            <h1 className={styles.heading__title}>{t("heading.title")}</h1>
+            <div className={styles.heading__text}>
+              <p>{t("heading.description")}</p>
+              <p className={styles.heading__terms}>
+                <a
+                  href="https://github.com/kuwa2005/music-waves-visualizer/blob/main/docs/USER_TERMS.md"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  {t("heading.termsLink")}
+                </a>
+              </p>
+            </div>
           </div>
-        </div>
 
-        <div
-          className={`${styles.dropZone} rounded-2xl border border-slate-200/80 bg-white/85 p-4 shadow-sm backdrop-blur-sm md:p-5 dark:border-slate-600/50 dark:bg-slate-900/75 dark:shadow-md`}
-          onDrop={handleDrop}
-          onDragOver={handleDragOver}
-        >
+          <div
+            className={`${styles.dropZone} rounded-2xl border border-slate-200/80 bg-white/85 p-4 shadow-sm backdrop-blur-sm md:p-5 dark:border-slate-600/50 dark:bg-slate-900/75 dark:shadow-md`}
+            onDrop={handleDrop}
+            onDragOver={handleDragOver}
+          >
           <Typography variant="body2" sx={{ mb: 0.25, fontWeight: 500 }}>
             {t("dropZone.hint")}
           </Typography>
@@ -4447,19 +5444,39 @@ const Home: NextPage = () => {
           <Typography variant="caption" color="textSecondary" sx={{ mt: 0, display: "block" }}>
             {t("dropZone.caption")}
           </Typography>
+          </div>
         </div>
 
-        <div className={`${styles.menu} rounded-2xl border border-slate-200/80 bg-white/90 shadow-sm backdrop-blur-sm dark:border-slate-600/50 dark:bg-slate-900/80 dark:shadow-md`}>
-          <Box sx={{ borderBottom: 1, borderColor: "divider", width: "100%" }}>
+        <div className={`${styles.menu} ${styles.desktopRightControls} rounded-2xl border border-slate-200/80 bg-white/90 shadow-sm backdrop-blur-sm dark:border-slate-600/50 dark:bg-slate-900/80 dark:shadow-md`}>
+          <Box sx={{ borderBottom: 1, borderColor: "divider", width: "100%", overflowX: "hidden", px: { xs: 0.25, sm: 0.5 } }}>
             <Tabs
               value={settingsTab}
               onChange={(_, v) => setSettingsTab(v)}
               variant="scrollable"
               scrollButtons="auto"
               allowScrollButtonsMobile
+              sx={{
+                minHeight: { xs: 40, sm: 42 },
+                maxWidth: "100%",
+                "& .MuiTabs-scroller": {
+                  overflowX: "auto !important",
+                  overflowY: "hidden",
+                },
+                "& .MuiTabs-scrollButtons": {
+                  width: { xs: 24, sm: 28 },
+                },
+                "& .MuiTab-root": {
+                  minHeight: { xs: 40, sm: 42 },
+                  minWidth: { xs: 78, sm: 72, md: 68 },
+                  px: { xs: 1, sm: 1.25 },
+                  fontSize: { xs: "0.76rem", sm: "0.8rem" },
+                  whiteSpace: "nowrap",
+                },
+              }}
             >
               <Tab label={t("tabs.spectrum")} />
               <Tab label={t("tabs.effects")} />
+              <Tab label={t("tabs.screen")} />
               <Tab label={t("tabs.title")} />
               <Tab label={t("tabs.subtitle")} />
               <Tab label={t("tabs.audio")} />
@@ -4480,11 +5497,17 @@ const Home: NextPage = () => {
                   {[
                     { value: -1, label: t("spectrum.shortOff") },
                     { value: 0, label: t("spectrum.shortFreqBar") },
+                    { value: 1, label: t("spectrum.shortLine") },
                     { value: 2, label: t("spectrum.shortCircle") },
                     { value: 3, label: t("spectrum.shortSymBar") },
                     { value: 4, label: t("spectrum.shortDot") },
                     { value: 7, label: t("spectrum.shortAreaFill") },
                     { value: 6, label: t("spectrum.shortGlyco") },
+                    { value: 17, label: t("spectrum.shortWaveCenter") },
+                    { value: 18, label: t("spectrum.shortWaveMirror") },
+                    { value: 19, label: t("spectrum.shortWaveLayers") },
+                    { value: 20, label: t("spectrum.shortParticleSpectrum") },
+                    { value: 21, label: t("spectrum.shortRadialSpectrum") },
                   ].map((item) => (
                     <Tooltip key={item.value} title={t(getModeDescriptionKey(item.value))} arrow>
                       <Button
@@ -4497,7 +5520,7 @@ const Home: NextPage = () => {
                     </Tooltip>
                   ))}
                 </Box>
-                <Accordion sx={{ mt: 2 }}>
+                <Accordion defaultExpanded sx={{ mt: 2 }}>
                   <AccordionSummary expandIcon={<ExpandMore />}>
                     <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
                       {t("spectrum.parameters")}
@@ -4535,6 +5558,9 @@ const Home: NextPage = () => {
                             const u = c.toUpperCase();
                             setSpectrumColorHex(u);
                             setSpectrumColorInput(u);
+                            if (mode === 6) {
+                              setGlycoColorSet("palette");
+                            }
                           }}
                           sx={{
                             width: 28,
@@ -4551,38 +5577,42 @@ const Home: NextPage = () => {
                         />
                       ))}
                     </Box>
-                    <TextField
-                      size="small"
-                      fullWidth
-                      label={t("effect.weatherColorCode")}
-                      value={spectrumColorInput}
-                      onChange={(e) => {
-                        const next = normalizeHexColorInput(e.target.value);
-                        setSpectrumColorInput(next);
-                        if (isHexColorCode(next)) {
-                          setSpectrumColorHex(next);
+                    {mode !== 6 && (
+                      <TextField
+                        size="small"
+                        fullWidth
+                        label={t("effect.weatherColorCode")}
+                        value={spectrumColorInput}
+                        onChange={(e) => {
+                          const next = normalizeHexColorInput(e.target.value);
+                          setSpectrumColorInput(next);
+                          if (isHexColorCode(next)) {
+                            setSpectrumColorHex(next);
+                          }
+                        }}
+                        error={spectrumColorInput.length > 0 && !isHexColorCode(spectrumColorInput)}
+                        helperText={
+                          spectrumColorInput.length > 0 && !isHexColorCode(spectrumColorInput)
+                            ? t("effect.weatherColorCodeInvalid")
+                            : " "
                         }
-                      }}
-                      error={spectrumColorInput.length > 0 && !isHexColorCode(spectrumColorInput)}
-                      helperText={
-                        spectrumColorInput.length > 0 && !isHexColorCode(spectrumColorInput)
-                          ? t("effect.weatherColorCodeInvalid")
-                          : " "
-                      }
-                      inputProps={{ inputMode: "text", pattern: "#?[0-9a-fA-F]{6}" }}
-                      sx={{ mb: 2 }}
-                    />
-                    <FormControlLabel
-                      control={
-                        <Switch
-                          checked={spectrumRainbowColorful}
-                          onChange={(_, c) => setSpectrumRainbowColorful(c)}
-                          size="small"
-                        />
-                      }
-                      label={t("spectrumWave.rainbowSymDot")}
-                      sx={{ mb: 2, display: "flex", alignItems: "center" }}
-                    />
+                        inputProps={{ inputMode: "text", pattern: "#?[0-9a-fA-F]{6}" }}
+                        sx={{ mb: 2 }}
+                      />
+                    )}
+                    {(mode === 3 || mode === 4) && (
+                      <FormControlLabel
+                        control={
+                          <Switch
+                            checked={spectrumRainbowColorful}
+                            onChange={(_, c) => setSpectrumRainbowColorful(c)}
+                            size="small"
+                          />
+                        }
+                        label={t("spectrumWave.rainbowSymDot")}
+                        sx={{ mb: 2, display: "flex", alignItems: "center" }}
+                      />
+                    )}
                     {mode === 1 && (
                       <Box sx={{ mb: 3 }}>
                         <Typography gutterBottom>{t("displayVolume.lineWidthWaveform", { value: lineWidthWaveform.toFixed(1) })}</Typography>
@@ -4592,6 +5622,32 @@ const Home: NextPage = () => {
                           max={8}
                           step={0.1}
                           onChange={(_, v) => setLineWidthWaveform(v as number)}
+                        />
+                      </Box>
+                    )}
+                    {mode === 4 && (
+                      <Box sx={{ mb: 3 }}>
+                        <Typography gutterBottom>
+                          {t("displayVolume.dotSizeLevel", { value: dotSizeLevel })}
+                        </Typography>
+                        <Slider
+                          value={dotSizeLevel}
+                          min={SPECTRUM_DOT_SIZE_MIN}
+                          max={SPECTRUM_DOT_SIZE_MAX}
+                          step={1}
+                          marks={[
+                            { value: SPECTRUM_DOT_SIZE_MIN, label: String(SPECTRUM_DOT_SIZE_MIN) },
+                            { value: SPECTRUM_DOT_SIZE_DEFAULT, label: String(SPECTRUM_DOT_SIZE_DEFAULT) },
+                            { value: SPECTRUM_DOT_SIZE_MAX, label: String(SPECTRUM_DOT_SIZE_MAX) },
+                          ]}
+                          onChange={(_, v) =>
+                            setDotSizeLevel(
+                              Math.max(
+                                SPECTRUM_DOT_SIZE_MIN,
+                                Math.min(SPECTRUM_DOT_SIZE_MAX, Math.round(v as number))
+                              )
+                            )
+                          }
                         />
                       </Box>
                     )}
@@ -4845,10 +5901,193 @@ const Home: NextPage = () => {
                             <MenuItem value="rainbow">{t("glycoColors.rainbow")}</MenuItem>
                             <MenuItem value="blueGreen">{t("glycoColors.blueGreen")}</MenuItem>
                             <MenuItem value="redYellow">{t("glycoColors.redYellow")}</MenuItem>
+                            <MenuItem value="palette">{t("glycoColors.palette")}</MenuItem>
                             <MenuItem value="verticalEQ">{t("glycoColors.verticalEQ")}</MenuItem>
                             <MenuItem value="verticalEQFixed">{t("glycoColors.verticalEQFixed")}</MenuItem>
                           </Select>
                         </FormControl>
+                        <Typography gutterBottom sx={{ mt: 2 }}>
+                          {t("displayVolume.glycoRotation", { value: glycoRotationDeg.toFixed(1) })}
+                        </Typography>
+                        <Slider
+                          value={glycoRotationDeg}
+                          min={-180}
+                          max={180}
+                          step={0.1}
+                          onChange={(_, v) =>
+                            setGlycoRotationDeg(
+                              clampGlycoRotationDeg(v as number)
+                            )
+                          }
+                        />
+                      </Box>
+                    )}
+                    {(mode === 17 || mode === 18 || mode === 19) && (
+                      <Box sx={{ mb: 3 }}>
+                        <Typography gutterBottom>Wave Height {waveFamilyParams.height.toFixed(2)}</Typography>
+                        <ResettableSlider value={waveFamilyParams.height} min={0.1} max={0.8} step={0.01}
+                          onChange={(_, v) => setWaveFamilyParams((p) => ({ ...p, height: v as number }))}
+                          onResetToDefault={() => setWaveFamilyParams((p) => ({ ...p, height: DEFAULT_WAVE_FAMILY_PARAMS.height }))} />
+                        <Typography gutterBottom sx={{ mt: 2 }}>Wave Width {waveFamilyParams.width.toFixed(2)}</Typography>
+                        <ResettableSlider value={waveFamilyParams.width} min={0.3} max={1.0} step={0.01}
+                          onChange={(_, v) => setWaveFamilyParams((p) => ({ ...p, width: v as number }))}
+                          onResetToDefault={() => setWaveFamilyParams((p) => ({ ...p, width: DEFAULT_WAVE_FAMILY_PARAMS.width }))} />
+                        <Typography gutterBottom sx={{ mt: 2 }}>
+                          {t("displayVolume.lineWidthWaveFamily", { value: waveFamilyParams.thickness.toFixed(1) })}
+                        </Typography>
+                        <ResettableSlider value={waveFamilyParams.thickness} min={0.8} max={6.0} step={0.1}
+                          onChange={(_, v) => setWaveFamilyParams((p) => ({ ...p, thickness: v as number }))}
+                          onResetToDefault={() => setWaveFamilyParams((p) => ({ ...p, thickness: DEFAULT_WAVE_FAMILY_PARAMS.thickness }))} />
+                        <Typography gutterBottom sx={{ mt: 2 }}>Flow {waveFamilyParams.flowSpeed.toFixed(2)}</Typography>
+                        <ResettableSlider value={waveFamilyParams.flowSpeed} min={0} max={2} step={0.01}
+                          onChange={(_, v) => setWaveFamilyParams((p) => ({ ...p, flowSpeed: v as number }))}
+                          onResetToDefault={() => setWaveFamilyParams((p) => ({ ...p, flowSpeed: DEFAULT_WAVE_FAMILY_PARAMS.flowSpeed }))} />
+                        <Typography gutterBottom sx={{ mt: 2 }}>Glow {waveFamilyParams.glow.toFixed(2)}</Typography>
+                        <ResettableSlider value={waveFamilyParams.glow} min={0} max={1} step={0.01}
+                          onChange={(_, v) => setWaveFamilyParams((p) => ({ ...p, glow: v as number }))}
+                          onResetToDefault={() => setWaveFamilyParams((p) => ({ ...p, glow: DEFAULT_WAVE_FAMILY_PARAMS.glow }))} />
+                      </Box>
+                    )}
+                    {mode === 20 && (
+                      <Box sx={{ mb: 3 }}>
+                        <FormControl size="small" fullWidth sx={{ mb: 2 }}>
+                          <InputLabel>Particle Pattern</InputLabel>
+                          <Select value={particleSpectrumParams.pattern} label="Particle Pattern"
+                            onChange={(e) => setParticleSpectrumParams((p) => ({ ...p, pattern: e.target.value as ParticleSpectrumParams["pattern"] }))}>
+                            <MenuItem value="soft">Soft</MenuItem>
+                            <MenuItem value="star">Star</MenuItem>
+                            <MenuItem value="spark">Spark</MenuItem>
+                            <MenuItem value="mist">Mist</MenuItem>
+                          </Select>
+                        </FormControl>
+                        <Typography gutterBottom>Count {particleSpectrumParams.count}</Typography>
+                        <ResettableSlider value={particleSpectrumParams.count} min={10} max={300} step={1}
+                          onChange={(_, v) => setParticleSpectrumParams((p) => ({ ...p, count: v as number }))}
+                          onResetToDefault={() => setParticleSpectrumParams((p) => ({ ...p, count: DEFAULT_PARTICLE_SPECTRUM_PARAMS.count }))} />
+                        <Typography gutterBottom sx={{ mt: 2 }}>Size {particleSpectrumParams.size.toFixed(2)}</Typography>
+                        <ResettableSlider value={particleSpectrumParams.size} min={0.8} max={3} step={0.01}
+                          onChange={(_, v) => setParticleSpectrumParams((p) => ({ ...p, size: v as number }))}
+                          onResetToDefault={() => setParticleSpectrumParams((p) => ({ ...p, size: DEFAULT_PARTICLE_SPECTRUM_PARAMS.size }))} />
+                        <Typography gutterBottom sx={{ mt: 2 }}>Life {particleSpectrumParams.life.toFixed(2)}</Typography>
+                        <ResettableSlider value={particleSpectrumParams.life} min={0.3} max={3} step={0.01}
+                          onChange={(_, v) => setParticleSpectrumParams((p) => ({ ...p, life: v as number }))}
+                          onResetToDefault={() => setParticleSpectrumParams((p) => ({ ...p, life: DEFAULT_PARTICLE_SPECTRUM_PARAMS.life }))} />
+                        <Typography gutterBottom sx={{ mt: 2 }}>Boost {particleSpectrumParams.boost.toFixed(2)}</Typography>
+                        <ResettableSlider value={particleSpectrumParams.boost} min={0.2} max={2.5} step={0.01}
+                          onChange={(_, v) => setParticleSpectrumParams((p) => ({ ...p, boost: v as number }))}
+                          onResetToDefault={() => setParticleSpectrumParams((p) => ({ ...p, boost: DEFAULT_PARTICLE_SPECTRUM_PARAMS.boost }))} />
+                      </Box>
+                    )}
+                    {mode === 21 && (
+                      <Box sx={{ mb: 3 }}>
+                        <Typography gutterBottom>Bars {radialSpectrumParams.bars}</Typography>
+                        <ResettableSlider value={radialSpectrumParams.bars} min={24} max={220} step={1}
+                          onChange={(_, v) => setRadialSpectrumParams((p) => ({ ...p, bars: v as number }))}
+                          onResetToDefault={() => setRadialSpectrumParams((p) => ({ ...p, bars: DEFAULT_RADIAL_SPECTRUM_PARAMS.bars }))} />
+                        <Typography gutterBottom sx={{ mt: 2 }}>Center Gap {radialSpectrumParams.centerGap.toFixed(2)}</Typography>
+                        <ResettableSlider value={radialSpectrumParams.centerGap} min={0.1} max={0.95} step={0.01}
+                          onChange={(_, v) => setRadialSpectrumParams((p) => ({ ...p, centerGap: v as number }))}
+                          onResetToDefault={() => setRadialSpectrumParams((p) => ({ ...p, centerGap: DEFAULT_RADIAL_SPECTRUM_PARAMS.centerGap }))} />
+                        <Typography gutterBottom sx={{ mt: 2 }}>Kick Scale {radialSpectrumParams.kickScale.toFixed(2)}</Typography>
+                        <ResettableSlider value={radialSpectrumParams.kickScale} min={0} max={0.5} step={0.01}
+                          onChange={(_, v) => setRadialSpectrumParams((p) => ({ ...p, kickScale: v as number }))}
+                          onResetToDefault={() => setRadialSpectrumParams((p) => ({ ...p, kickScale: DEFAULT_RADIAL_SPECTRUM_PARAMS.kickScale }))} />
+                        <FormControlLabel sx={{ mt: 1 }}
+                          control={<Switch checked={radialSpectrumParams.rotate} onChange={(_, c) => setRadialSpectrumParams((p) => ({ ...p, rotate: c }))} size="small" />}
+                          label="Rotate" />
+                      </Box>
+                    )}
+                    {mode === 6 && (
+                      <Box sx={{ mb: 3 }}>
+                        <Typography gutterBottom>Retro EQ Style</Typography>
+                        <FormControl size="small" fullWidth sx={{ mb: 2 }}>
+                          <Select value={retroEqParams.style}
+                            onChange={(e) => setRetroEqParams((p) => ({ ...p, style: e.target.value as RetroEqParams["style"] }))}>
+                            <MenuItem value="bars">Bars</MenuItem>
+                            <MenuItem value="dots">LED Dots</MenuItem>
+                          </Select>
+                        </FormControl>
+                        <FormControlLabel control={<Switch checked={retroEqParams.crtOn}
+                          onChange={(_, c) => setRetroEqParams((p) => ({ ...p, crtOn: c }))} size="small" />} label="CRT FX" />
+                        <FormControlLabel control={<Switch checked={retroEqParams.vhsOn}
+                          onChange={(_, c) => setRetroEqParams((p) => ({ ...p, vhsOn: c }))} size="small" />} label="VHS FX" />
+                        <Typography gutterBottom sx={{ mt: 2 }}>
+                          Bars {retroEqParams.bars.toFixed(0)}
+                        </Typography>
+                        <ResettableSlider
+                          value={retroEqParams.bars}
+                          min={24}
+                          max={160}
+                          step={1}
+                          onChange={(_, v) => setRetroEqParams((p) => ({ ...p, bars: v as number }))}
+                          onResetToDefault={() => setRetroEqParams((p) => ({ ...p, bars: DEFAULT_RETRO_EQ_PARAMS.bars }))}
+                        />
+                        <Typography gutterBottom sx={{ mt: 2 }}>
+                          Scanline {retroEqParams.scanline.toFixed(2)}
+                        </Typography>
+                        <ResettableSlider
+                          value={retroEqParams.scanline}
+                          min={0}
+                          max={1.5}
+                          step={0.01}
+                          onChange={(_, v) => setRetroEqParams((p) => ({ ...p, scanline: v as number }))}
+                          onResetToDefault={() => setRetroEqParams((p) => ({ ...p, scanline: DEFAULT_RETRO_EQ_PARAMS.scanline }))}
+                        />
+                        <Typography gutterBottom sx={{ mt: 2 }}>
+                          Chroma Shift {retroEqParams.chroma.toFixed(2)}
+                        </Typography>
+                        <ResettableSlider
+                          value={retroEqParams.chroma}
+                          min={0}
+                          max={1.2}
+                          step={0.01}
+                          onChange={(_, v) => setRetroEqParams((p) => ({ ...p, chroma: v as number }))}
+                          onResetToDefault={() => setRetroEqParams((p) => ({ ...p, chroma: DEFAULT_RETRO_EQ_PARAMS.chroma }))}
+                        />
+                        <Typography gutterBottom sx={{ mt: 2 }}>
+                          Noise {retroEqParams.noise.toFixed(2)}
+                        </Typography>
+                        <ResettableSlider
+                          value={retroEqParams.noise}
+                          min={0}
+                          max={1.2}
+                          step={0.01}
+                          onChange={(_, v) => setRetroEqParams((p) => ({ ...p, noise: v as number }))}
+                          onResetToDefault={() => setRetroEqParams((p) => ({ ...p, noise: DEFAULT_RETRO_EQ_PARAMS.noise }))}
+                        />
+                        <Typography gutterBottom sx={{ mt: 2 }}>
+                          VHS Jitter {retroEqParams.jitter.toFixed(2)}
+                        </Typography>
+                        <ResettableSlider
+                          value={retroEqParams.jitter}
+                          min={0}
+                          max={1.2}
+                          step={0.01}
+                          onChange={(_, v) => setRetroEqParams((p) => ({ ...p, jitter: v as number }))}
+                          onResetToDefault={() => setRetroEqParams((p) => ({ ...p, jitter: DEFAULT_RETRO_EQ_PARAMS.jitter }))}
+                        />
+                        <Typography gutterBottom sx={{ mt: 2 }}>
+                          VHS Trail/Bleed {retroEqParams.trail.toFixed(2)}
+                        </Typography>
+                        <ResettableSlider
+                          value={retroEqParams.trail}
+                          min={0}
+                          max={1.2}
+                          step={0.01}
+                          onChange={(_, v) => setRetroEqParams((p) => ({ ...p, trail: v as number }))}
+                          onResetToDefault={() => setRetroEqParams((p) => ({ ...p, trail: DEFAULT_RETRO_EQ_PARAMS.trail }))}
+                        />
+                        <Typography gutterBottom sx={{ mt: 2 }}>
+                          VHS Wobble {retroEqParams.decay.toFixed(2)}
+                        </Typography>
+                        <ResettableSlider
+                          value={retroEqParams.decay}
+                          min={0}
+                          max={1}
+                          step={0.01}
+                          onChange={(_, v) => setRetroEqParams((p) => ({ ...p, decay: v as number }))}
+                          onResetToDefault={() => setRetroEqParams((p) => ({ ...p, decay: DEFAULT_RETRO_EQ_PARAMS.decay }))}
+                        />
                       </Box>
                     )}
                     <Divider sx={{ my: 2 }} />
@@ -4893,7 +6132,17 @@ const Home: NextPage = () => {
                     </Typography>
                     <Slider
                       value={modeAdjustments.offsetX}
-                      onChange={(_, value) => handleAdjustmentChange("offsetX", value as number)}
+                      onChange={(_, value) => {
+                        if (mode === 2) setShowSpectrumOffsetGuide(true);
+                        handleAdjustmentChange("offsetX", value as number);
+                      }}
+                      onMouseDown={mode === 2 ? beginSpectrumOffsetGuide : undefined}
+                      onTouchStart={mode === 2 ? beginSpectrumOffsetGuide : undefined}
+                      onFocus={mode === 2 ? beginSpectrumOffsetGuide : undefined}
+                      onChangeCommitted={mode === 2 ? endSpectrumOffsetGuide : undefined}
+                      onMouseUp={mode === 2 ? endSpectrumOffsetGuide : undefined}
+                      onTouchEnd={mode === 2 ? endSpectrumOffsetGuide : undefined}
+                      onBlur={mode === 2 ? endSpectrumOffsetGuide : undefined}
                       min={-150}
                       max={150}
                       step={1}
@@ -4911,7 +6160,17 @@ const Home: NextPage = () => {
                     </Typography>
                     <Slider
                       value={modeAdjustments.offsetY}
-                      onChange={(_, value) => handleAdjustmentChange("offsetY", value as number)}
+                      onChange={(_, value) => {
+                        if (mode === 2) setShowSpectrumOffsetGuide(true);
+                        handleAdjustmentChange("offsetY", value as number);
+                      }}
+                      onMouseDown={mode === 2 ? beginSpectrumOffsetGuide : undefined}
+                      onTouchStart={mode === 2 ? beginSpectrumOffsetGuide : undefined}
+                      onFocus={mode === 2 ? beginSpectrumOffsetGuide : undefined}
+                      onChangeCommitted={mode === 2 ? endSpectrumOffsetGuide : undefined}
+                      onMouseUp={mode === 2 ? endSpectrumOffsetGuide : undefined}
+                      onTouchEnd={mode === 2 ? endSpectrumOffsetGuide : undefined}
+                      onBlur={mode === 2 ? endSpectrumOffsetGuide : undefined}
                       min={-150}
                       max={150}
                       step={1}
@@ -4950,15 +6209,25 @@ const Home: NextPage = () => {
                   <Button variant={effectType === "snow" ? "contained" : "outlined"} onClick={() => setEffectType("snow")} size="small">
                     {t("effect.snow")}
                   </Button>
+                  <Button
+                    variant={effectType === "waterRipple" ? "contained" : "outlined"}
+                    onClick={() => setEffectType("waterRipple")}
+                    size="small"
+                  >
+                    {t("effect.waterRipple")}
+                  </Button>
                 </Box>
-                <Accordion sx={{ mt: 2 }}>
+                <Accordion defaultExpanded sx={{ mt: 2 }}>
                   <AccordionSummary expandIcon={<ExpandMore />}>
                     <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
                       {t("effect.parameters")}
                     </Typography>
                   </AccordionSummary>
                   <AccordionDetails>
-                    {effectType !== "none" && effectType !== "dust" && ALL_EFFECT_STRENGTH_TYPES.includes(effectType) && (
+                    {effectType !== "none" &&
+                      effectType !== "dust" &&
+                      effectType !== "waterRipple" &&
+                      ALL_EFFECT_STRENGTH_TYPES.includes(effectType) && (
                       <Box
                         sx={{
                           display: "flex",
@@ -5055,6 +6324,28 @@ const Home: NextPage = () => {
                             max={3}
                             step={0.05}
                             onChange={(_, v) => setSpaceSpeed(v as number)}
+                          />
+                        </Box>
+                        <Box sx={{ width: "100%", maxWidth: 440, mt: 1, mx: "auto" }}>
+                          <Typography variant="caption" color="textSecondary" display="block">
+                            {t("effect.spaceCenterX", { value: Math.round(spaceCenterX * 100) })}
+                          </Typography>
+                          <Slider
+                            value={spaceCenterX}
+                            min={0.05}
+                            max={0.95}
+                            step={0.01}
+                            onChange={(_, v) => setSpaceCenterX(v as number)}
+                          />
+                          <Typography variant="caption" color="textSecondary" display="block">
+                            {t("effect.spaceCenterY", { value: Math.round(spaceCenterY * 100) })}
+                          </Typography>
+                          <Slider
+                            value={spaceCenterY}
+                            min={0.08}
+                            max={0.92}
+                            step={0.01}
+                            onChange={(_, v) => setSpaceCenterY(v as number)}
                           />
                         </Box>
                         <Box sx={{ width: "100%", maxWidth: 440, mt: 2, mx: "auto" }}>
@@ -5736,6 +7027,381 @@ const Home: NextPage = () => {
 
             {settingsTab === 2 && (
               <Box sx={{ width: "100%", maxWidth: 600, margin: "0 auto", py: 1 }}>
+                <Typography variant="body2" sx={{ mb: 1, textAlign: "center", fontWeight: 500 }}>
+                  {t("screenTab.title")}
+                </Typography>
+                <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 1, textAlign: "center" }}>
+                  {renderSentenceLines(t("screenTab.caption"))}
+                </Typography>
+                <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 2, textAlign: "center" }}>
+                  {renderSentenceLines(t("screenTab.scopeNote"))}
+                </Typography>
+                <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600 }}>
+                  {t("screenTab.fadeSection")}
+                </Typography>
+                <Typography gutterBottom>
+                  {t("screenTab.imageFadeInSec", { value: screenMotion.imageFadeInSec.toFixed(1) })}
+                </Typography>
+                <ResettableSlider
+                  value={screenMotion.imageFadeInSec}
+                  min={SCREEN_MOTION_IMAGE_FADE_MIN_SEC}
+                  max={SCREEN_MOTION_IMAGE_FADE_MAX_SEC}
+                  step={SCREEN_MOTION_IMAGE_FADE_STEP}
+                  onChange={(_, v) => patchScreenMotion({ imageFadeInSec: v as number })}
+                  onResetToDefault={() =>
+                    patchScreenMotion({ imageFadeInSec: DEFAULT_SCREEN_MOTION.imageFadeInSec })
+                  }
+                />
+                <Typography gutterBottom sx={{ mt: 2 }}>
+                  {t("screenTab.imageFadeOutSec", { value: screenMotion.imageFadeOutSec.toFixed(1) })}
+                </Typography>
+                <ResettableSlider
+                  value={screenMotion.imageFadeOutSec}
+                  min={SCREEN_MOTION_IMAGE_FADE_MIN_SEC}
+                  max={SCREEN_MOTION_IMAGE_FADE_MAX_SEC}
+                  step={SCREEN_MOTION_IMAGE_FADE_STEP}
+                  onChange={(_, v) => patchScreenMotion({ imageFadeOutSec: v as number })}
+                  onResetToDefault={() =>
+                    patchScreenMotion({ imageFadeOutSec: DEFAULT_SCREEN_MOTION.imageFadeOutSec })
+                  }
+                />
+                <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 2, mt: 1 }}>
+                  {t("screenTab.imageFadeHint")}
+                </Typography>
+                <Divider sx={{ my: 2 }} />
+                <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600 }}>
+                  {t("screenTab.motionSection")}
+                </Typography>
+                <FormControlLabel
+                  control={
+                    <Checkbox
+                      checked={screenMotion.motionEnabled}
+                      onChange={(_, c) => patchScreenMotion({ motionEnabled: c })}
+                      size="small"
+                    />
+                  }
+                  label={t("screenTab.motionMaster")}
+                  sx={{ display: "flex", alignItems: "center", mb: 0.5 }}
+                />
+                <Box sx={{ pl: 2, mb: 2 }}>
+                  <Typography gutterBottom sx={{ mt: 1 }}>
+                    {t("screenTab.imageZoom", { value: Math.round(screenMotion.imageZoomPercent) })}
+                  </Typography>
+                  <ResettableSlider
+                    value={screenMotion.imageZoomPercent}
+                    min={SCREEN_MOTION_ZOOM_MIN_PERCENT}
+                    max={SCREEN_MOTION_ZOOM_MAX_PERCENT}
+                    step={1}
+                    disabled={!screenMotion.motionEnabled}
+                    onChange={(_, v) => patchScreenMotion({ imageZoomPercent: v as number })}
+                    onResetToDefault={() =>
+                      patchScreenMotion({ imageZoomPercent: DEFAULT_SCREEN_MOTION.imageZoomPercent })
+                    }
+                  />
+                  <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 1 }}>
+                    {t("screenTab.imageZoomHint")}
+                  </Typography>
+                  <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 2 }}>
+                    {t("screenTab.motionZoomPanHelp")}
+                  </Typography>
+                  <Typography gutterBottom sx={{ mt: 2 }}>
+                    {t("screenTab.panForward", { value: Math.round(screenMotion.panForwardPercent) })}
+                  </Typography>
+                  <ResettableSlider
+                    value={screenMotion.panForwardPercent}
+                    min={SCREEN_MOTION_PAN_MIN}
+                    max={SCREEN_MOTION_PAN_MAX}
+                    step={1}
+                    disabled={!screenMotion.motionEnabled}
+                    onChange={(_, v) => patchScreenMotion({ panForwardPercent: v as number })}
+                    onResetToDefault={() =>
+                      patchScreenMotion({ panForwardPercent: DEFAULT_SCREEN_MOTION.panForwardPercent })
+                    }
+                  />
+                  <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 1 }}>
+                    {t("screenTab.panForwardHint")}
+                  </Typography>
+                  <Typography gutterBottom>
+                    {t("screenTab.axisSpeed", {
+                      value: screenMotion.speedForward,
+                      oneWaySec: getMotionTimingLabelSeconds(screenMotion.speedForward).oneWaySec.toFixed(0),
+                      cycleSec: getMotionTimingLabelSeconds(screenMotion.speedForward).cycleSec.toFixed(0),
+                    })}
+                  </Typography>
+                  <ResettableSlider
+                    value={screenMotion.speedForward}
+                    min={SCREEN_MOTION_SPEED_MIN}
+                    max={SCREEN_MOTION_SPEED_MAX}
+                    step={1}
+                    disabled={!screenMotion.motionEnabled}
+                    onChange={(_, v) => patchScreenMotion({ speedForward: v as number })}
+                    onResetToDefault={() => patchScreenMotion({ speedForward: DEFAULT_SCREEN_MOTION.speedForward })}
+                  />
+                  <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 2 }}>
+                    {t("screenTab.axisSpeedHint")}
+                  </Typography>
+                  <Typography gutterBottom sx={{ mt: 2 }}>
+                    {t("screenTab.panX", { value: Math.round(screenMotion.panXPercent) })}
+                  </Typography>
+                  <ResettableSlider
+                    value={screenMotion.panXPercent}
+                    min={SCREEN_MOTION_PAN_MIN}
+                    max={SCREEN_MOTION_PAN_MAX}
+                    step={1}
+                    disabled={!screenMotion.motionEnabled}
+                    onChange={(_, v) => patchScreenMotion({ panXPercent: v as number })}
+                    onResetToDefault={() => patchScreenMotion({ panXPercent: DEFAULT_SCREEN_MOTION.panXPercent })}
+                  />
+                  <Typography gutterBottom>
+                    {t("screenTab.axisSpeed", {
+                      value: screenMotion.speedX,
+                      oneWaySec: getMotionTimingLabelSeconds(screenMotion.speedX).oneWaySec.toFixed(0),
+                      cycleSec: getMotionTimingLabelSeconds(screenMotion.speedX).cycleSec.toFixed(0),
+                    })}
+                  </Typography>
+                  <ResettableSlider
+                    value={screenMotion.speedX}
+                    min={SCREEN_MOTION_SPEED_MIN}
+                    max={SCREEN_MOTION_SPEED_MAX}
+                    step={1}
+                    disabled={!screenMotion.motionEnabled}
+                    onChange={(_, v) => patchScreenMotion({ speedX: v as number })}
+                    onResetToDefault={() => patchScreenMotion({ speedX: DEFAULT_SCREEN_MOTION.speedX })}
+                  />
+                  <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 2 }}>
+                    {t("screenTab.axisSpeedHint")}
+                  </Typography>
+                  <Typography gutterBottom sx={{ mt: 2 }}>
+                    {t("screenTab.panY", { value: Math.round(screenMotion.panYPercent) })}
+                  </Typography>
+                  <ResettableSlider
+                    value={screenMotion.panYPercent}
+                    min={SCREEN_MOTION_PAN_MIN}
+                    max={SCREEN_MOTION_PAN_MAX}
+                    step={1}
+                    disabled={!screenMotion.motionEnabled}
+                    onChange={(_, v) => patchScreenMotion({ panYPercent: v as number })}
+                    onResetToDefault={() => patchScreenMotion({ panYPercent: DEFAULT_SCREEN_MOTION.panYPercent })}
+                  />
+                  <Typography gutterBottom>
+                    {t("screenTab.axisSpeed", {
+                      value: screenMotion.speedY,
+                      oneWaySec: getMotionTimingLabelSeconds(screenMotion.speedY).oneWaySec.toFixed(0),
+                      cycleSec: getMotionTimingLabelSeconds(screenMotion.speedY).cycleSec.toFixed(0),
+                    })}
+                  </Typography>
+                  <ResettableSlider
+                    value={screenMotion.speedY}
+                    min={SCREEN_MOTION_SPEED_MIN}
+                    max={SCREEN_MOTION_SPEED_MAX}
+                    step={1}
+                    disabled={!screenMotion.motionEnabled}
+                    onChange={(_, v) => patchScreenMotion({ speedY: v as number })}
+                    onResetToDefault={() => patchScreenMotion({ speedY: DEFAULT_SCREEN_MOTION.speedY })}
+                  />
+                  <Typography variant="caption" color="textSecondary" display="block" sx={{ mt: 1, mb: 1 }}>
+                    {t("screenTab.axisSpeedHint")}
+                  </Typography>
+                  <Typography variant="caption" color="textSecondary" display="block" sx={{ mt: 1 }}>
+                    {t("screenTab.panHint")}
+                  </Typography>
+                </Box>
+                <Divider sx={{ my: 2 }} />
+                <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600 }}>
+                  {t("screenTab.audioSection")}
+                </Typography>
+                <FormControlLabel
+                  control={
+                    <Checkbox
+                      checked={screenMotion.brightnessOnPeak}
+                      onChange={(_, c) => patchScreenMotion({ brightnessOnPeak: c })}
+                      size="small"
+                    />
+                  }
+                  label={t("screenTab.brightnessOnPeak")}
+                  sx={{ display: "flex", alignItems: "center" }}
+                />
+                <Typography sx={{ pl: 4, mt: 0.5, mb: 0.5 }}>
+                  {t("screenTab.brightnessStrength", { value: Math.round(screenMotion.brightnessStrength * 100) })}
+                </Typography>
+                <ResettableSlider
+                  value={screenMotion.brightnessStrength}
+                  min={SCREEN_MOTION_BRIGHTNESS_STRENGTH_MIN}
+                  max={SCREEN_MOTION_BRIGHTNESS_STRENGTH_MAX}
+                  step={0.01}
+                  disabled={!screenMotion.brightnessOnPeak}
+                  onChange={(_, v) => patchScreenMotion({ brightnessStrength: v as number })}
+                  onResetToDefault={() =>
+                    patchScreenMotion({ brightnessStrength: DEFAULT_SCREEN_MOTION.brightnessStrength })
+                  }
+                  sx={{ ml: 4, mr: 1 }}
+                />
+                <Typography sx={{ pl: 4, mt: 0.5, mb: 0.5 }}>
+                  {t("screenTab.sensitivityStep", { value: screenMotion.brightnessSensitivityStep })}
+                </Typography>
+                <ResettableSlider
+                  value={screenMotion.brightnessSensitivityStep}
+                  min={SCREEN_MOTION_SENSITIVITY_STEP_MIN}
+                  max={SCREEN_MOTION_SENSITIVITY_STEP_MAX}
+                  step={1}
+                  disabled={!screenMotion.brightnessOnPeak}
+                  onChange={(_, v) => patchScreenMotion({ brightnessSensitivityStep: v as number })}
+                  onResetToDefault={() =>
+                    patchScreenMotion({ brightnessSensitivityStep: DEFAULT_SCREEN_MOTION.brightnessSensitivityStep })
+                  }
+                  sx={{ ml: 4, mr: 1 }}
+                />
+                <FormControlLabel
+                  control={
+                    <Checkbox
+                      checked={screenMotion.shakeOnChorus}
+                      onChange={(_, c) => patchScreenMotion({ shakeOnChorus: c })}
+                      size="small"
+                    />
+                  }
+                  label={t("screenTab.shakeOnChorus")}
+                  sx={{ display: "flex", alignItems: "center" }}
+                />
+                <Typography sx={{ pl: 4, mt: 0.5, mb: 0.5 }}>
+                  {t("screenTab.shakeStrength", { value: screenMotion.shakeStrength.toFixed(1) })}
+                </Typography>
+                <ResettableSlider
+                  value={screenMotion.shakeStrength}
+                  min={SCREEN_MOTION_SHAKE_STRENGTH_MIN}
+                  max={SCREEN_MOTION_SHAKE_STRENGTH_MAX}
+                  step={0.1}
+                  disabled={!screenMotion.shakeOnChorus}
+                  onChange={(_, v) => patchScreenMotion({ shakeStrength: v as number })}
+                  onResetToDefault={() => patchScreenMotion({ shakeStrength: DEFAULT_SCREEN_MOTION.shakeStrength })}
+                  sx={{ ml: 4, mr: 1 }}
+                />
+                <Typography sx={{ pl: 4, mt: 0.5, mb: 0.5 }}>
+                  {t("screenTab.sensitivityStep", { value: screenMotion.shakeSensitivityStep })}
+                </Typography>
+                <ResettableSlider
+                  value={screenMotion.shakeSensitivityStep}
+                  min={SCREEN_MOTION_SENSITIVITY_STEP_MIN}
+                  max={SCREEN_MOTION_SENSITIVITY_STEP_MAX}
+                  step={1}
+                  disabled={!screenMotion.shakeOnChorus}
+                  onChange={(_, v) => patchScreenMotion({ shakeSensitivityStep: v as number })}
+                  onResetToDefault={() =>
+                    patchScreenMotion({ shakeSensitivityStep: DEFAULT_SCREEN_MOTION.shakeSensitivityStep })
+                  }
+                  sx={{ ml: 4, mr: 1 }}
+                />
+                <FormControlLabel
+                  control={
+                    <Checkbox
+                      checked={screenMotion.chorusZoomOnPeak}
+                      onChange={(_, c) => patchScreenMotion({ chorusZoomOnPeak: c })}
+                      size="small"
+                    />
+                  }
+                  label={t("screenTab.chorusZoomOnPeak")}
+                  sx={{ display: "flex", alignItems: "center" }}
+                />
+                <Typography sx={{ pl: 4, mt: 0.5, mb: 0.5 }}>
+                  {t("screenTab.chorusZoomPercent", { value: screenMotion.chorusZoomPercent.toFixed(1) })}
+                </Typography>
+                <Typography variant="caption" color="text.secondary" sx={{ pl: 4, display: "block", mb: 0.5 }}>
+                  {t("screenTab.chorusZoomSignHint")}
+                </Typography>
+                <ResettableSlider
+                  value={screenMotion.chorusZoomPercent}
+                  min={SCREEN_MOTION_CHORUS_ZOOM_PERCENT_MIN}
+                  max={SCREEN_MOTION_CHORUS_ZOOM_PERCENT_MAX}
+                  step={0.1}
+                  disabled={!screenMotion.chorusZoomOnPeak}
+                  onChange={(_, v) => patchScreenMotion({ chorusZoomPercent: v as number })}
+                  onResetToDefault={() =>
+                    patchScreenMotion({ chorusZoomPercent: DEFAULT_SCREEN_MOTION.chorusZoomPercent })
+                  }
+                  sx={{ ml: 4, mr: 1 }}
+                />
+                <FormControlLabel
+                  control={
+                    <Checkbox
+                      checked={screenMotion.flashOnDrop}
+                      onChange={(_, c) => patchScreenMotion({ flashOnDrop: c })}
+                      size="small"
+                    />
+                  }
+                  label={t("screenTab.flashOnDrop")}
+                  sx={{ display: "flex", alignItems: "center" }}
+                />
+                <Typography sx={{ pl: 4, mt: 0.5, mb: 0.5 }}>
+                  {t("screenTab.flashIntensity", { value: Math.round(screenMotion.flashIntensity * 100) })}
+                </Typography>
+                <ResettableSlider
+                  value={screenMotion.flashIntensity}
+                  min={SCREEN_MOTION_FLASH_INTENSITY_MIN}
+                  max={SCREEN_MOTION_FLASH_INTENSITY_MAX}
+                  step={0.01}
+                  disabled={!screenMotion.flashOnDrop}
+                  onChange={(_, v) => patchScreenMotion({ flashIntensity: v as number })}
+                  onResetToDefault={() => patchScreenMotion({ flashIntensity: DEFAULT_SCREEN_MOTION.flashIntensity })}
+                  sx={{ ml: 4, mr: 1 }}
+                />
+                <Typography sx={{ pl: 4, mt: 0.5, mb: 0.5 }}>
+                  {t("screenTab.flashDurationSec", { value: screenMotion.flashDurationSec.toFixed(2) })}
+                </Typography>
+                <ResettableSlider
+                  value={screenMotion.flashDurationSec}
+                  min={SCREEN_MOTION_FLASH_DURATION_MIN_SEC}
+                  max={SCREEN_MOTION_FLASH_DURATION_MAX_SEC}
+                  step={0.01}
+                  disabled={!screenMotion.flashOnDrop}
+                  onChange={(_, v) => patchScreenMotion({ flashDurationSec: v as number })}
+                  onResetToDefault={() => patchScreenMotion({ flashDurationSec: DEFAULT_SCREEN_MOTION.flashDurationSec })}
+                  sx={{ ml: 4, mr: 1 }}
+                />
+                <Typography sx={{ pl: 4, mt: 0.5, mb: 0.5 }}>
+                  {t("screenTab.flashThreshold", { value: Math.round(screenMotion.flashThreshold * 100) })}
+                </Typography>
+                <ResettableSlider
+                  value={screenMotion.flashThreshold}
+                  min={SCREEN_MOTION_FLASH_THRESHOLD_MIN}
+                  max={SCREEN_MOTION_FLASH_THRESHOLD_MAX}
+                  step={0.01}
+                  disabled={!screenMotion.flashOnDrop}
+                  onChange={(_, v) => patchScreenMotion({ flashThreshold: v as number })}
+                  onResetToDefault={() => patchScreenMotion({ flashThreshold: DEFAULT_SCREEN_MOTION.flashThreshold })}
+                  sx={{ ml: 4, mr: 1 }}
+                />
+                <Typography sx={{ pl: 4, mt: 0.5, mb: 0.5 }}>
+                  {t("screenTab.flashCooldownMs", { value: Math.round(screenMotion.flashCooldownMs) })}
+                </Typography>
+                <ResettableSlider
+                  value={screenMotion.flashCooldownMs}
+                  min={SCREEN_MOTION_FLASH_COOLDOWN_MIN_MS}
+                  max={SCREEN_MOTION_FLASH_COOLDOWN_MAX_MS}
+                  step={10}
+                  disabled={!screenMotion.flashOnDrop}
+                  onChange={(_, v) => patchScreenMotion({ flashCooldownMs: v as number })}
+                  onResetToDefault={() => patchScreenMotion({ flashCooldownMs: DEFAULT_SCREEN_MOTION.flashCooldownMs })}
+                  sx={{ ml: 4, mr: 1 }}
+                />
+                <Typography sx={{ pl: 4, mt: 0.5, mb: 0.5 }}>
+                  {t("screenTab.sensitivityStep", { value: screenMotion.flashSensitivityStep })}
+                </Typography>
+                <ResettableSlider
+                  value={screenMotion.flashSensitivityStep}
+                  min={SCREEN_MOTION_SENSITIVITY_STEP_MIN}
+                  max={SCREEN_MOTION_SENSITIVITY_STEP_MAX}
+                  step={1}
+                  disabled={!screenMotion.flashOnDrop}
+                  onChange={(_, v) => patchScreenMotion({ flashSensitivityStep: v as number })}
+                  onResetToDefault={() =>
+                    patchScreenMotion({ flashSensitivityStep: DEFAULT_SCREEN_MOTION.flashSensitivityStep })
+                  }
+                  sx={{ ml: 4, mr: 1 }}
+                />
+              </Box>
+            )}
+
+            {settingsTab === 3 && (
+              <Box sx={{ width: "100%", maxWidth: 600, margin: "0 auto", py: 1 }}>
                 <Typography variant="body2" sx={{ mb: 2, textAlign: "center", fontWeight: 500 }}>
                   {t("titleTab.title")}
                 </Typography>
@@ -5910,7 +7576,7 @@ const Home: NextPage = () => {
               </Box>
             )}
 
-            {settingsTab === 3 && (
+            {settingsTab === 4 && (
               <Box sx={{ width: "100%", maxWidth: 600, margin: "0 auto", py: 1 }}>
                 <Typography variant="body2" sx={{ mb: 2, textAlign: "center", fontWeight: 500 }}>
                   {t("subtitle.title")}
@@ -6331,7 +7997,7 @@ const Home: NextPage = () => {
               </Box>
             )}
 
-            {settingsTab === 4 && (
+            {settingsTab === 5 && (
               <Box sx={{ width: "100%", maxWidth: 600, margin: "0 auto", py: 1 }}>
                 <Typography variant="subtitle2" sx={{ mb: 2, fontWeight: 600 }}>
                   {t("audioSettings.title")}
@@ -6502,7 +8168,7 @@ const Home: NextPage = () => {
               </div>
             )}
 
-            {settingsTab === 6 && (
+            {settingsTab === 7 && (
               <Box sx={{ width: "100%", maxWidth: 800, margin: "0 auto", py: 1 }}>
                 <Typography variant="subtitle2" color="primary" sx={{ mb: 1 }}>
                   {t("resolution.title")}
@@ -6736,6 +8402,50 @@ const Home: NextPage = () => {
                     </Box>
                   )}
                 </Box>
+                <Typography variant="subtitle2" color="primary" sx={{ mb: 0.5, mt: 1 }}>
+                  {t("gpu.renderEngine")}
+                </Typography>
+                <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 1 }}>
+                  {t("gpu.renderCaption")}
+                </Typography>
+                <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 0.5 }}>
+                  {t("gpu.webglExperimentalNotice")}
+                </Typography>
+                <Typography
+                  variant="caption"
+                  color={rendererType === "webgl" ? "warning.main" : "textSecondary"}
+                  display="block"
+                  sx={{ mb: 1 }}
+                >
+                  {t("gpu.webglSlowerNotice")}
+                </Typography>
+                {gpuInfo && !gpuInfo.isWebGLSupported && (
+                  <Typography variant="caption" color="warning.main" display="block" sx={{ mb: 1 }}>
+                    {t("gpu.webglUnsupportedHint")}
+                  </Typography>
+                )}
+                {webglBlockedBySubtitleOrTitle && (
+                  <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 1 }}>
+                    {t("gpu.webglBlockedSubtitle")}
+                  </Typography>
+                )}
+                {webglBlockedByVideoBackground && (
+                  <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 1 }}>
+                    {t("gpu.webglBlockedVideo")}
+                  </Typography>
+                )}
+                <FormControlLabel
+                  control={
+                    <Switch
+                      size="small"
+                      checked={rendererType === "webgl"}
+                      onChange={handleRendererSwitchChange}
+                      disabled={webglSwitchDisabled}
+                    />
+                  }
+                  label={rendererType === "webgl" ? t("buttons.webgl") : t("buttons.canvas2d")}
+                  sx={{ ml: 0, mb: 2, alignItems: "center" }}
+                />
                 <Divider sx={{ my: 2 }} />
                 <Typography variant="subtitle2" color="primary" sx={{ mb: 1 }}>
                   {t("settings.title")}
@@ -6820,6 +8530,8 @@ const Home: NextPage = () => {
                           setTargetLufs(-14);
                           setTargetLufsCustom("-14");
                           setModeAdjustments(DEFAULT_ADJUSTMENTS);
+                          setScreenMotion(DEFAULT_SCREEN_MOTION);
+                          resetScreenEffectRuntime();
                           setSrtAuthorPanelEnabled(false);
                           setSrtAuthorRecordActive(false);
                           openSnackBar(t("snackbar.allCleared"));
@@ -6835,15 +8547,184 @@ const Home: NextPage = () => {
           </div>
         </div>
 
-        <div className={`${styles.canvasWrapper} rounded-2xl border border-slate-200/80 bg-white/90 px-3 pb-3 pt-2 shadow-sm md:px-4 md:pb-4 dark:border-slate-600/50 dark:bg-slate-900/80 dark:shadow-md`}>
+        <div className={`${styles.canvasWrapper} ${styles.desktopLeftPreview} rounded-2xl border border-slate-200/80 bg-white/90 px-3 pb-3 pt-2 shadow-sm md:px-4 md:pb-4 dark:border-slate-600/50 dark:bg-slate-900/80 dark:shadow-md`}>
           <div className="flex justify-center py-5 px-2 md:py-7 md:px-4">
-            <canvas
-              key={rendererType}
-              className={styles.canvas}
-              ref={canvasRef}
-              data-size={activeCanvasLayout}
-            ></canvas>
+            <div className={styles.previewCanvasStage} data-size={activeCanvasLayout}>
+              <canvas
+                key={rendererType}
+                className={styles.canvas}
+                ref={canvasRef}
+                data-size={activeCanvasLayout}
+              ></canvas>
+              {isSpaceEffect && showSpaceCenterGuide && (
+                <div className={styles.previewOverlayLayer}>
+                  <div
+                    className={styles.previewGuideDot}
+                    style={{
+                      left: `${spaceCenterGuidePos.leftPercent}%`,
+                      top: `${spaceCenterGuidePos.topPercent}%`,
+                    }}
+                  />
+                </div>
+              )}
+              {mode === 2 && showSpectrumOffsetGuide && (
+                <div className={styles.previewOverlayLayer}>
+                  <div
+                    className={styles.previewGuideDot}
+                    style={{
+                      left: `${spectrumOffsetGuidePos.leftPercent}%`,
+                      top: `${spectrumOffsetGuidePos.topPercent}%`,
+                    }}
+                  />
+                </div>
+              )}
+            </div>
           </div>
+
+          <Box className={styles.previewSeekBar} sx={{ width: "100%", maxWidth: 480, mx: "auto", px: 0, pb: 1 }}>
+              <Box
+                sx={(theme) => ({
+                  width: "100%",
+                  borderRadius: 4,
+                  px: { xs: 1.25, sm: 1.75 },
+                  py: 1,
+                  background:
+                    theme.palette.mode === "dark"
+                      ? "linear-gradient(140deg, rgba(15,23,42,0.86), rgba(30,41,59,0.8))"
+                      : "linear-gradient(140deg, rgba(255,255,255,0.9), rgba(248,250,252,0.82))",
+                  border: `1px solid ${
+                    theme.palette.mode === "dark" ? "rgba(148,163,184,0.28)" : "rgba(148,163,184,0.22)"
+                  }`,
+                  boxShadow:
+                    theme.palette.mode === "dark"
+                      ? "0 10px 24px rgba(2,6,23,0.45), inset 0 1px 0 rgba(255,255,255,0.05)"
+                      : "0 10px 24px rgba(15,23,42,0.12), inset 0 1px 0 rgba(255,255,255,0.6)",
+                  backdropFilter: "blur(8px)",
+                })}
+              >
+                <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 0.55, gap: 1 }}>
+                  <Box sx={{ display: "inline-flex", alignItems: "center", minWidth: 0, gap: 0.5 }}>
+                    <AccessTime sx={{ fontSize: 14, color: "text.secondary", opacity: 0.92, flexShrink: 0 }} />
+                    <Typography
+                      variant="caption"
+                      aria-live="polite"
+                      sx={{ color: "text.secondary", fontWeight: 600, letterSpacing: 0.25, fontVariantNumeric: "tabular-nums" }}
+                    >
+                      {formatPlaybackMmSs(previewSeekValue)}
+                    </Typography>
+                  </Box>
+                  <Box sx={{ display: "inline-flex", alignItems: "center", minWidth: 0, gap: 0.5 }}>
+                    <HourglassBottom sx={{ fontSize: 14, color: "text.secondary", opacity: 0.85, flexShrink: 0 }} />
+                    <Typography
+                      variant="caption"
+                      sx={{ color: "text.secondary", fontWeight: 600, letterSpacing: 0.25, fontVariantNumeric: "tabular-nums" }}
+                    >
+                      {formatPlaybackMmSs(previewSeekDuration)}
+                    </Typography>
+                  </Box>
+                </Box>
+                <Box sx={{ position: "relative", pb: 0.25 }}>
+                  <MuiSlider
+                    size="small"
+                    value={previewSeekValue}
+                    min={0}
+                    max={previewSeekBarMax}
+                    step={previewSeekBarStep}
+                    disabled={previewSeekDisabled}
+                    onChange={(_, v) => seekPreviewToRelative(v as number)}
+                    onChangeCommitted={(_, v) => seekPreviewToRelative(v as number)}
+                    aria-label={t("preview.seek")}
+                    sx={(theme) => {
+                      const railBg =
+                        theme.palette.mode === "dark"
+                          ? "rgba(148,163,184,0.22)"
+                          : "rgba(148,163,184,0.3)";
+                      const bufferBg =
+                        theme.palette.mode === "dark"
+                          ? "rgba(100,116,139,0.42)"
+                          : "rgba(148,163,184,0.45)";
+                      const bufPct = previewBufferDisplayRatio * 100;
+                      return {
+                      position: "relative",
+                      zIndex: 1,
+                      height: 8,
+                      boxSizing: "content-box",
+                      padding: "6px 0",
+                      "& .MuiSlider-rail": {
+                        opacity: 1,
+                        height: 8,
+                        borderRadius: 3,
+                        background: railBg,
+                        "&::before": {
+                          content: '""',
+                          position: "absolute",
+                          left: 0,
+                          top: 0,
+                          height: "100%",
+                          width: `${bufPct}%`,
+                          borderRadius: "inherit",
+                          pointerEvents: "none",
+                          background: bufferBg,
+                        },
+                      },
+                      "& .MuiSlider-track": {
+                        height: 8,
+                        border: "none",
+                        borderRadius: 3,
+                        zIndex: 1,
+                        transition: "none",
+                        background:
+                          theme.palette.mode === "dark"
+                            ? "linear-gradient(90deg, #22d3ee 0%, #818cf8 55%, #a78bfa 100%)"
+                            : "linear-gradient(90deg, #0ea5e9 0%, #6366f1 55%, #8b5cf6 100%)",
+                        boxShadow:
+                          theme.palette.mode === "dark"
+                            ? "0 0 0 1px rgba(255,255,255,0.05), 0 0 12px rgba(56,189,248,0.45)"
+                            : "0 0 0 1px rgba(255,255,255,0.5), 0 0 10px rgba(99,102,241,0.35)",
+                      },
+                      "& .MuiSlider-thumb": {
+                        width: PREVIEW_SEEK_THUMB_PX,
+                        height: PREVIEW_SEEK_THUMB_PX,
+                        borderRadius: 4,
+                        border: `2px solid ${theme.palette.mode === "dark" ? "rgba(15,23,42,0.95)" : "#ffffff"}`,
+                        backgroundColor: theme.palette.mode === "dark" ? "#e2e8f0" : "#f8fafc",
+                        boxShadow:
+                          theme.palette.mode === "dark"
+                            ? "0 2px 10px rgba(0,0,0,0.55), 0 0 0 0 rgba(125,211,252,0.45)"
+                            : "0 2px 10px rgba(30,41,59,0.28), 0 0 0 0 rgba(99,102,241,0.35)",
+                        transition: "transform 130ms ease, box-shadow 130ms ease",
+                        transform: "translate(-50%, -50%)",
+                        "&:hover, &.Mui-active": {
+                          transform: "translate(-50%, -50%) scale(1.08)",
+                          boxShadow:
+                            theme.palette.mode === "dark"
+                              ? "0 3px 14px rgba(0,0,0,0.65), 0 0 0 7px rgba(56,189,248,0.18)"
+                              : "0 3px 14px rgba(30,41,59,0.35), 0 0 0 7px rgba(99,102,241,0.16)",
+                        },
+                        "&.Mui-focusVisible": {
+                          transform: "translate(-50%, -50%)",
+                          boxShadow:
+                            theme.palette.mode === "dark"
+                              ? "0 0 0 8px rgba(56,189,248,0.26), 0 0 0 2px rgba(15,23,42,0.95)"
+                              : "0 0 0 8px rgba(59,130,246,0.26), 0 0 0 2px #ffffff",
+                        },
+                      },
+                      "& .MuiSlider-valueLabel": {
+                        bgcolor: "transparent",
+                        color: "text.secondary",
+                      },
+                      "&.Mui-disabled": {
+                        opacity: 0.6,
+                        "& .MuiSlider-thumb": {
+                          boxShadow: "none",
+                        },
+                      },
+                    };
+                    }}
+                  />
+                </Box>
+              </Box>
+            </Box>
 
           <div className={`${styles.menu__right} mt-3 rounded-xl bg-slate-50/70 p-3 dark:bg-slate-800/80`}>
             <Box sx={{ display: "flex", gap: 1.5, justifyContent: "center", flexWrap: "wrap", mt: 1 }}>
@@ -6903,6 +8784,30 @@ const Home: NextPage = () => {
             })}
             </Typography>
           </div>
+
+          <footer className={`${styles.footer} mt-4 border-t border-slate-200/70 pt-3 dark:border-slate-600/50`}>
+            <p>
+              Original work ©{" "}
+              <a
+                href="https://tech-blog.voicy.jp/entry/2022/12/11/235929"
+                target="_blank"
+                rel="noopener noreferrer"
+                className={styles.footer__link}
+              >
+                komura-c
+              </a>
+              , modified version{" "}
+              <a
+                href="https://github.com/kuwa2005/music-waves-visualizer"
+                target="_blank"
+                rel="noopener noreferrer"
+                className={styles.footer__link}
+              >
+                KURAGASHI
+              </a>
+            </p>
+          </footer>
+        </div>
         </div>
       </main>
 
@@ -6992,33 +8897,36 @@ const Home: NextPage = () => {
         </DialogActions>
       </Dialog>
 
+      <Dialog
+        open={dialogDroppedVideoChoice}
+        onClose={() => {
+          void handleDroppedVideoChoice("cancel");
+        }}
+      >
+        <DialogTitle>{t("dialog.droppedVideoChoiceTitle")}</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2">{t("dialog.droppedVideoChoiceBody")}</Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => void handleDroppedVideoChoice("cancel")}>
+            {t("dialog.cancel")}
+          </Button>
+          <Button onClick={() => void handleDroppedVideoChoice("audio")}>
+            {t("dialog.loadDroppedVideoAsAudio")}
+          </Button>
+          <Button
+            variant="contained"
+            onClick={() => void handleDroppedVideoChoice("background")}
+          >
+            {t("dialog.loadDroppedVideoAsBackground")}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
       <CustomSnackbar
         {...snackBarProps}
         handleClose={handleClose}
       ></CustomSnackbar>
-
-      <footer className={`${styles.footer} mt-8 rounded-xl border border-slate-200/70 bg-white/75 px-4 py-3 shadow-sm backdrop-blur-sm dark:border-slate-600/50 dark:bg-slate-900/75 dark:shadow-md`}>
-        <p>
-          Original work ©{" "}
-          <a
-            href="https://tech-blog.voicy.jp/entry/2022/12/11/235929"
-            target="_blank"
-            rel="noopener noreferrer"
-            className={styles.footer__link}
-          >
-            komura-c
-          </a>
-          , modified version{" "}
-          <a
-            href="https://github.com/kuwa2005/music-waves-visualizer"
-            target="_blank"
-            rel="noopener noreferrer"
-            className={styles.footer__link}
-          >
-            KURAGASHI
-          </a>
-        </p>
-      </footer>
       </div>
     </>
     </ThemeProvider>

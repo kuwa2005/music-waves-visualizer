@@ -11,6 +11,7 @@
 - **FFmpeg assets**: `scripts/copy-ffmpeg-core.cjs` copies to `public/ffmpeg` and `public/ffmpeg-core`; loader probes both (`lib/Ffmpeg.ts`).
 
 ### Changed (2026-06-01 session)
+- **MP4 cover art (still background)**: `onRecordMovie` passes unprocessed gallery still via `buildMp4StillThumbnailJpeg` → `thumbnailJpeg` (not first encoded video frame). Fallback unchanged for video-only background or no image.
 - **Settings persistence**: `lib/mwvCookieStorage.ts` — **localStorage primary**; legacy cookies migrate once then cleared (see [SESSION_20260601.md](./SESSION_20260601.md)).
 - **Performance**: Spectrum throttle for modes 1 & 5; water-ripple adaptive scale; shared target-fps pacing in Canvas/WebGL.
 

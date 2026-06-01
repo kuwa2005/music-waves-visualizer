@@ -30,11 +30,13 @@ FFmpeg verbose logging is enabled only when `NODE_ENV === "development"`.
 
 After WebM → MP4 remux (and optional loudnorm), the encoder may embed a JPEG as **`attached_pic`**:
 
-1. **Caller JPEG** — optional `thumbnailJpeg` argument to `generateMp4Video` (typically from `lib/mp4Thumbnail.ts` rasterizing a still `HTMLImageElement`). This is a **still image only** (resize/JPEG encode), not the spectrum composite.
-2. **Fallback (current default UI)** — if no JPEG was supplied, ffmpeg.wasm runs `extractVideoFrameThumbnailJpeg` on the finished MP4: **frame 0 of the encoded video** (scaled, long edge ≤ 1920). That frame is the **recorded canvas output** (background + spectrum + effects), **not** an unprocessed source file.
+1. **Caller JPEG** — optional `thumbnailJpeg` argument to `generateMp4Video` (from `lib/mp4Thumbnail.ts` rasterizing the active gallery `HTMLImageElement`). This is a **still image only** (resize to long edge ≤ 1920 and optional fit within export resolution; JPEG encode). **No** spectrum, screen-motion, or fade baked into the thumbnail.
+2. **Fallback** — if no JPEG was supplied (no still background, video-only background, or encode failed), ffmpeg.wasm runs `extractVideoFrameThumbnailJpeg` on the finished MP4: **frame 0 of the encoded video** (scaled, long edge ≤ 1920). That frame is the **recorded canvas output** (background + spectrum + effects), not an unprocessed source file.
 3. **Mux** — second pass: `-map 0 -map 1 -c copy -c:v:1 mjpeg -disposition:v:1 attached_pic` (with a copy-only fallback if `mjpeg` is unavailable).
 
-**QuickVideoEncoder** (`lib/QuickVideoEncoder.ts`, UI hidden): also ends in `generateMp4Video` without a caller JPEG today → same fallback (first frame of its simplified offscreen encode).
+**Standard UI** (`pages/index.tsx` `onRecordMovie`): when `backgroundMediaMode === "stills"` and a gallery image is loaded, `buildMp4StillThumbnailJpeg` passes the **unprocessed still** before FFmpeg remux.
+
+**QuickVideoEncoder** (`lib/QuickVideoEncoder.ts`, UI hidden): uses the same `buildMp4StillThumbnailJpeg` path when stills are active; otherwise first-frame fallback.
 
 If attachment fails, export still succeeds; a warning is logged. Some SNS apps ignore embedded cover art and use their own first-frame preview.
 
@@ -67,4 +69,4 @@ If you adopt 0.12 later, plan to:
 - **コア WASM** は CDN ではなく **`public/ffmpeg-core`** から同一オリジン配信
 - **COOP/COEP** が無いと SharedArrayBuffer が使えず MP4 変換が失敗し得る
 - **上流 PR #23** は 0.12 系＋ jsDelivr 方向。本フォークは 0.10 系＋自前配信で別方針
-- **サムネ埋め込み**: `thumbnailJpeg` 指定時は静止画 JPEG。未指定時（現行 UI の標準録画）は **エンコード済み MP4 の先頭フレーム**（合成映像）。生ファイル原画そのものではない。`attached_pic` が wasm で使えない場合は MP4 本体のみ出力（失敗扱いにしない）
+- **サムネ埋め込み**: 静止画背景＋ギャラリー画像あり時は **原画の JPEG**（リサイズのみ）。それ以外は **エンコード済み MP4 の先頭フレーム**（合成映像）。`attached_pic` が wasm で使えない場合は MP4 本体のみ出力（失敗扱いにしない）
