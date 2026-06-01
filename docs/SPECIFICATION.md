@@ -12,7 +12,7 @@ Music Waves Visualizer is a web application that creates audio waveform videos b
 - **Resolution**: Manual (1920×1080, 1080×1920, 1920×1920) + **Auto** (detect from loaded image aspect ratio and map to 16:9 / 9:16 / 1:1)
 - **Display adjustment**: Scale and position per mode (saved per resolved layout)
 - **Clip length limit (short platforms)**: When enabled, **Start (sec)** and **Duration (sec)** define the preview/recording window. Preset buttons only **fill suggested durations**; they do not hard-cap playback. **Empty duration** = play from start **to end of media**.
-- **Client persistence**: Most settings use **first-party cookies** (`SameSite=Lax`), with one-time migration from legacy **localStorage** keys. **Not persisted**: loaded media files, **title body text**, **SRT file content** (subtitle/title style toggles may be saved).
+- **Client persistence**: Most settings use **localStorage** via [`lib/mwvCookieStorage.ts`](../lib/mwvCookieStorage.ts), with one-time migration from legacy **cookies** on first read. **Not persisted**: loaded media files, **title body text**, **SRT file content** (subtitle/title style toggles may be saved).
 - **Subtitles**: SRT import, styling, animation, display timing offset, and an optional hidden authoring panel for pasted lyrics and timing recording.
 - **Preview**: Real-time waveform while playing
 - **Video generation**: Record and output as MP4; drawing/capture is capped at max 60 fps for stable frame pacing.

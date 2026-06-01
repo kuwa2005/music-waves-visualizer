@@ -1,18 +1,10 @@
 /**
- * アプリ設定用の Cookie 永続化（4KB 超は分割）。
- * 既存 localStorage にだけ値がある場合は読み込み時に Cookie へ移行する。
+ * アプリ設定永続化ユーティリティ。
+ * 現在は localStorage を正とし、旧 Cookie 保存値は読み込み時に一度だけ移行する。
  */
 
-const MWV_MAX_AGE_SEC = 60 * 60 * 24 * 365;
-/** Base64 文字列をこの長さで分割（%エンコード境界の問題を避ける） */
-const CHUNK_SIZE = 3000;
-
-function utf8ToBase64(s: string): string {
-  const u8 = new TextEncoder().encode(s);
-  let bin = "";
-  for (let i = 0; i < u8.length; i++) bin += String.fromCharCode(u8[i]!);
-  return btoa(bin);
-}
+const MAX_STORAGE_KEY_LENGTH = 128;
+const MAX_STORAGE_VALUE_LENGTH = 200_000;
 
 function base64ToUtf8(b64: string): string {
   const bin = atob(b64);
@@ -50,11 +42,6 @@ function readCookieMap(): Map<string, string> {
   return m;
 }
 
-function writeCookieRaw(name: string, value: string, maxAgeSec: number): void {
-  if (typeof document === "undefined") return;
-  document.cookie = `${name}=${encodeURIComponent(value)}; path=/; max-age=${maxAgeSec}; samesite=lax`;
-}
-
 function deleteCookieName(name: string): void {
   if (typeof document === "undefined") return;
   document.cookie = `${name}=; path=/; max-age=0; samesite=lax`;
@@ -74,6 +61,14 @@ function clearChunksForKey(storageKey: string): void {
       }
     }
   }
+}
+
+function isValidStorageKey(storageKey: string): boolean {
+  return storageKey.length > 0 && storageKey.length <= MAX_STORAGE_KEY_LENGTH;
+}
+
+function isValidStorageValue(value: string): boolean {
+  return value.length <= MAX_STORAGE_VALUE_LENGTH;
 }
 
 function readFromCookiesOnly(storageKey: string): string | null {
@@ -108,45 +103,48 @@ function readFromCookiesOnly(storageKey: string): string | null {
   }
 }
 
-function writeToCookiesOnly(storageKey: string, value: string): void {
-  clearChunksForKey(storageKey);
-  const p = prefixFor(storageKey);
-  const b64 = utf8ToBase64(value);
-  if (b64.length <= CHUNK_SIZE) {
-    writeCookieRaw(p, b64, MWV_MAX_AGE_SEC);
-    return;
-  }
-  const parts: string[] = [];
-  for (let i = 0; i < b64.length; i += CHUNK_SIZE) {
-    parts.push(b64.slice(i, i + CHUNK_SIZE));
-  }
-  writeCookieRaw(`${p}__n`, String(parts.length), MWV_MAX_AGE_SEC);
-  parts.forEach((chunk, i) => {
-    writeCookieRaw(`${p}__${i}`, chunk, MWV_MAX_AGE_SEC);
-  });
-}
-
-/** Cookie に保存（localStorage は触らない） */
+/**
+ * localStorage に保存。
+ * 旧Cookieキーが残っている場合はヘッダ肥大化防止のため削除する。
+ */
 export function mwvSetItem(storageKey: string, value: string): void {
   if (typeof window === "undefined") return;
+  if (!isValidStorageKey(storageKey)) {
+    console.warn("mwvSetItem skipped: invalid key length", storageKey);
+    return;
+  }
+  if (!isValidStorageValue(value)) {
+    console.warn("mwvSetItem skipped: value too large", storageKey, value.length);
+    return;
+  }
   try {
-    writeToCookiesOnly(storageKey, value);
+    localStorage.setItem(storageKey, value);
+    clearChunksForKey(storageKey);
   } catch (e) {
     console.error("mwvSetItem failed:", storageKey, e);
   }
 }
 
-/** Cookie を読む。無ければ localStorage から移行して返す */
+/**
+ * localStorage を優先して読む。
+ * localStorage に無く、旧Cookie保存値があれば一度だけ localStorage へ移行し、Cookie は削除する。
+ */
 export function mwvGetItem(storageKey: string): string | null {
   if (typeof window === "undefined") return null;
+  if (!isValidStorageKey(storageKey)) return null;
   try {
+    const fromLocalStorage = localStorage.getItem(storageKey);
+    if (fromLocalStorage != null) return fromLocalStorage;
+
     const fromCookie = readFromCookiesOnly(storageKey);
-    if (fromCookie != null) return fromCookie;
-    const legacy = localStorage.getItem(storageKey);
-    if (legacy != null) {
-      writeToCookiesOnly(storageKey, legacy);
-      localStorage.removeItem(storageKey);
-      return legacy;
+    if (fromCookie != null) {
+      if (isValidStorageValue(fromCookie)) {
+        localStorage.setItem(storageKey, fromCookie);
+      } else {
+        console.warn("mwvGetItem migration skipped: cookie value too large", storageKey, fromCookie.length);
+      }
+      clearChunksForKey(storageKey);
+      return fromCookie;
     }
   } catch (e) {
     console.error("mwvGetItem failed:", storageKey, e);

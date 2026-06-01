@@ -26,6 +26,20 @@ These are set in `next.config.js`, `htaccess-for-export`, or any equivalent stat
 
 FFmpeg verbose logging is enabled only when `NODE_ENV === "development"`.
 
+### MP4 cover art (`attached_pic`)
+
+After WebM → MP4 remux (and optional loudnorm), the encoder may embed a JPEG as **`attached_pic`**:
+
+1. **Caller JPEG** — optional `thumbnailJpeg` argument to `generateMp4Video` (typically from `lib/mp4Thumbnail.ts` rasterizing a still `HTMLImageElement`). This is a **still image only** (resize/JPEG encode), not the spectrum composite.
+2. **Fallback (current default UI)** — if no JPEG was supplied, ffmpeg.wasm runs `extractVideoFrameThumbnailJpeg` on the finished MP4: **frame 0 of the encoded video** (scaled, long edge ≤ 1920). That frame is the **recorded canvas output** (background + spectrum + effects), **not** an unprocessed source file.
+3. **Mux** — second pass: `-map 0 -map 1 -c copy -c:v:1 mjpeg -disposition:v:1 attached_pic` (with a copy-only fallback if `mjpeg` is unavailable).
+
+**QuickVideoEncoder** (`lib/QuickVideoEncoder.ts`, UI hidden): also ends in `generateMp4Video` without a caller JPEG today → same fallback (first frame of its simplified offscreen encode).
+
+If attachment fails, export still succeeds; a warning is logged. Some SNS apps ignore embedded cover art and use their own first-frame preview.
+
+See also [SESSION_20260601.md](./SESSION_20260601.md) (MP4 frame 0 table, JA).
+
 ---
 
 ## Upstream PR #23 (`update_ffmpeg_wasm`)
@@ -53,3 +67,4 @@ If you adopt 0.12 later, plan to:
 - **コア WASM** は CDN ではなく **`public/ffmpeg-core`** から同一オリジン配信
 - **COOP/COEP** が無いと SharedArrayBuffer が使えず MP4 変換が失敗し得る
 - **上流 PR #23** は 0.12 系＋ jsDelivr 方向。本フォークは 0.10 系＋自前配信で別方針
+- **サムネ埋め込み**: `thumbnailJpeg` 指定時は静止画 JPEG。未指定時（現行 UI の標準録画）は **エンコード済み MP4 の先頭フレーム**（合成映像）。生ファイル原画そのものではない。`attached_pic` が wasm で使えない場合は MP4 本体のみ出力（失敗扱いにしない）

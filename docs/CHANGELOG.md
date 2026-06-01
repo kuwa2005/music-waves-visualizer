@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+### Added (2026-06-01 session — rendering / lib)
+- **Screen tab (still background)**: `lib/screenMotion.ts`, `lib/drawStillScreenBackground.ts` — zoom/pan (per-axis speed), image fade in/out on clip timeline, audio-reactive brightness/shake/chorus zoom/flash. Excludes background video, gallery transitions, QuickVideoEncoder.
+- **Spectrum modes 17–21**: Wave family (17–19), particle (20), radial (21) in `lib/Canvas.ts` + `lib/WebGLRenderer.ts`; **retro EQ glyco** extensions on mode 6 (`retroEqParams`, region-only background dim via `glycoBarRegionBounds`).
+- **Water ripple / 描画 effect**: `waterRipple` with variants `ripple` / `heart` / `firework`, light mode, adaptive ring cap (`lib/Effects.ts`).
+- **Spectrum adjustments module**: `lib/spectrumAdjustments.ts` — shared scale/offset, mode-2 pivot, overlay percent inverse mapping.
+- **MP4 thumbnail helper**: `lib/mp4Thumbnail.ts`; FFmpeg path documents caller JPEG vs first encoded frame fallback (`lib/Ffmpeg.ts`).
+- **FFmpeg assets**: `scripts/copy-ffmpeg-core.cjs` copies to `public/ffmpeg` and `public/ffmpeg-core`; loader probes both (`lib/Ffmpeg.ts`).
+
+### Changed (2026-06-01 session)
+- **Settings persistence**: `lib/mwvCookieStorage.ts` — **localStorage primary**; legacy cookies migrate once then cleared (see [SESSION_20260601.md](./SESSION_20260601.md)).
+- **Performance**: Spectrum throttle for modes 1 & 5; water-ripple adaptive scale; shared target-fps pacing in Canvas/WebGL.
+
+### Documentation (2026-06-01)
+- **[SESSION_20260601.md](./SESSION_20260601.md)**: Session hub (screen tab, modes 17–21, ripple, persistence, MP4 frame 0 behavior).
+- **[FFMPEG.md](./FFMPEG.md)**: Clarified `attached_pic` vs unprocessed stills.
+
 ### Added
 - **Mirror ball effect**: Canvas 2D + WebGL overlay (`lib/Effects.ts`, `lib/Canvas.ts`, `lib/WebGLRenderer.ts`). UI picker entry is **hidden** via `EFFECT_TYPES_UI_HIDDEN` in `pages/index.tsx`; settings remain in cookies/export when type is `mirrorBall`.
 - **Clip fade in/out**: `lib/clipAudioFade.ts` — GainNode scheduling for clip window; fade-out only when explicit duration matches trimmed segment. UI: fade-in / fade-out seconds on **Clip length** tab (3-row layout: presets, start+duration, fades).

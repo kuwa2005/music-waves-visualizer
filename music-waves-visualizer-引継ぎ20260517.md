@@ -4,6 +4,17 @@
 フォーク: [kuwa2005/music-waves-visualizer](https://github.com/kuwa2005/music-waves-visualizer)（元: [komura-c/music-waves-visualizer](https://github.com/komura-c/music-waves-visualizer)）  
 作成時点のローカルブランチ: **`main`**（2026-05-23 更新: 本セッション分をコミット予定）
 
+**2026-06-01 セッション追記** — 詳細は [docs/SESSION_20260601.md](docs/SESSION_20260601.md)、[docs/CHANGELOG.md](docs/CHANGELOG.md) Unreleased。
+
+| 領域 | 内容 |
+|------|------|
+| 画面タブ | `screenMotion.ts` / `drawStillScreenBackground.ts` — ズーム・パン・画像フェード・音連動演出 |
+| スペクトラム | モード 17–19 波形、20 パーティクル、21 放射状、6 レトロEQ＋バー領域のみ暗転 |
+| エフェクト | `waterRipple`（ripple / heart / firework）、軽量モード・適応リング数 |
+| 永続化 | localStorage 正、旧 Cookie 初回移行（`mwvCookieStorage.ts`） |
+| MP4 サムネ | 未指定時は **合成動画の先頭フレーム**（生静止画ではない）— SESSION 文書参照 |
+| 新規 lib | `spectrumAdjustments.ts`, `mp4Thumbnail.ts`, `public/ffmpeg` コピー先追加 |
+
 **2026-05-23 セッション追記** — 詳細は [docs/audio-quality.md](docs/audio-quality.md)、[docs/CHANGELOG.md](docs/CHANGELOG.md) Unreleased。
 
 | 領域 | 内容 |

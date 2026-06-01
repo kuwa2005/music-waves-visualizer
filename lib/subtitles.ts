@@ -192,8 +192,8 @@ export function renderTitleOverlayCanvas(
   const widths = lines.map((line) => ctx.measureText(line).width);
   const maxLineWidth = Math.max(...widths);
   const x =
-    style.align === "left" ? canvasWidth * 0.08 :
-    style.align === "right" ? canvasWidth * 0.92 : canvasWidth * 0.5;
+    style.align === "left" ? 0 :
+    style.align === "right" ? canvasWidth : canvasWidth * 0.5;
   const yBase = (canvasHeight * (style.positionYPercent / 100)) + anim.dy;
   const totalHeight = lineHeight * lines.length;
   if (style.displayType === "boxed") {
@@ -251,8 +251,8 @@ export function renderSubtitleOverlayCanvas(
   const widths = lines.map((line) => ctx.measureText(line).width);
   const maxLineWidth = Math.max(...widths);
   const x =
-    style.align === "left" ? canvasWidth * 0.08 :
-    style.align === "right" ? canvasWidth * 0.92 : canvasWidth * 0.5;
+    style.align === "left" ? 0 :
+    style.align === "right" ? canvasWidth : canvasWidth * 0.5;
   const yBase = (canvasHeight * (style.positionYPercent / 100)) + anim.dy;
   const totalHeight = lineHeight * lines.length;
   if (style.displayType === "boxed") {

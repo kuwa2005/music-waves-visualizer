@@ -1,15 +1,95 @@
 import { FFmpeg } from "@ffmpeg/ffmpeg";
 import getConfig from "next/config";
+import { MP4_THUMB_MAX_LONG_EDGE } from "./mp4Thumbnail";
 import { mwvError, mwvLog, mwvMilestone, mwvVerbose, mwvWarn } from "./mwvConsole";
 
-function getFfmpegAssetUrl(name: "ffmpeg-core.js" | "ffmpeg-core.wasm" | "ffmpeg-core.worker.js"): string {
+type FfmpegCoreAssetName = "ffmpeg-core.js" | "ffmpeg-core.wasm" | "ffmpeg-core.worker.js";
+type FfmpegCoreUrls = { coreURL: string; wasmURL: string; workerURL: string; basePath: string };
+
+function normalizeBasePath(base: string): string {
+  if (!base || base === "/") return "";
+  return base.endsWith("/") ? base.slice(0, -1) : base;
+}
+
+function getFfmpegAssetBaseCandidates(): string[] {
   const { publicRuntimeConfig } = getConfig();
-  const base = publicRuntimeConfig?.assetBasePath ?? "";
-  const rel = `${base}/ffmpeg-core/${name}`.replace(/\/{2,}/g, "/");
+  const base = normalizeBasePath(publicRuntimeConfig?.assetBasePath ?? "");
+  const candidates = [
+    `${base}/ffmpeg`,
+    `${base}/ffmpeg-core`,
+    "/ffmpeg",
+    "/ffmpeg-core",
+  ].map((p) => p.replace(/\/{2,}/g, "/"));
+  return Array.from(new Set(candidates));
+}
+
+function toAbsoluteUrl(rel: string): string {
   if (typeof window !== "undefined") {
     return new URL(rel, window.location.origin).href;
   }
-  return rel;
+  return rel.replace(/\/{2,}/g, "/");
+}
+
+function getFfmpegAssetUrl(basePath: string, name: FfmpegCoreAssetName): string {
+  const rel = `${basePath}/${name}`.replace(/\/{2,}/g, "/");
+  return toAbsoluteUrl(rel);
+}
+
+function startsWithHtml(bytes: Uint8Array): boolean {
+  const view = bytes.subarray(0, 32);
+  const text = new TextDecoder().decode(view).trimStart().toUpperCase();
+  return text.startsWith("<!DOCTYPE") || text.startsWith("<HTML");
+}
+
+function isWasmMagic(bytes: Uint8Array): boolean {
+  return bytes.length >= 4 && bytes[0] === 0x00 && bytes[1] === 0x61 && bytes[2] === 0x73 && bytes[3] === 0x6d;
+}
+
+async function probeAsset(url: string, name: FfmpegCoreAssetName): Promise<void> {
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(`${name}: HTTP ${response.status} ${response.statusText}`);
+  }
+  const contentType = (response.headers.get("content-type") || "").toLowerCase();
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  if (!bytes.length) {
+    throw new Error(`${name}: empty response`);
+  }
+  if (name === "ffmpeg-core.wasm") {
+    if (!isWasmMagic(bytes)) {
+      const headText = new TextDecoder().decode(bytes.subarray(0, 24)).replace(/\s+/g, " ");
+      throw new Error(`${name}: invalid wasm magic (head="${headText}")`);
+    }
+    if (contentType.includes("text/html")) {
+      throw new Error(`${name}: received HTML content-type (${contentType})`);
+    }
+    return;
+  }
+  if (startsWithHtml(bytes)) {
+    throw new Error(`${name}: received HTML body`);
+  }
+}
+
+async function resolveFfmpegCoreUrls(): Promise<FfmpegCoreUrls> {
+  const candidates = getFfmpegAssetBaseCandidates();
+  mwvMilestone("ffmpeg: core url candidates", { candidates });
+  for (const basePath of candidates) {
+    const coreURL = getFfmpegAssetUrl(basePath, "ffmpeg-core.js");
+    const wasmURL = getFfmpegAssetUrl(basePath, "ffmpeg-core.wasm");
+    const workerURL = getFfmpegAssetUrl(basePath, "ffmpeg-core.worker.js");
+    try {
+      await probeAsset(wasmURL, "ffmpeg-core.wasm");
+      await probeAsset(coreURL, "ffmpeg-core.js");
+      await probeAsset(workerURL, "ffmpeg-core.worker.js");
+      mwvMilestone("ffmpeg: core url selected", { basePath, coreURL, wasmURL, workerURL });
+      return { basePath, coreURL, wasmURL, workerURL };
+    } catch (error) {
+      mwvWarn("ffmpeg: core candidate rejected", { basePath, coreURL, wasmURL, workerURL, error });
+    }
+  }
+  throw new Error(
+    "FFmpegコアの読み込みに失敗しました。広告ブロッカーや拡張機能がFFmpeg関連ファイルを遮断している可能性があります。拡張機能を一時停止するか、シークレットウィンドウで開くか、localhostを許可してください。"
+  );
 }
 
 export type EncodeProgressCallbacks = {
@@ -38,13 +118,117 @@ async function execFfmpeg(ffmpeg: FFmpeg, args: string[]): Promise<void> {
   await ffmpeg.exec(args);
 }
 
+function readFfmpegBytes(fileData: Uint8Array | string): Uint8Array {
+  if (fileData instanceof Uint8Array) return fileData;
+  if (typeof fileData === "string") return new TextEncoder().encode(fileData);
+  return new Uint8Array(fileData as unknown as ArrayBuffer);
+}
+
+/** 動画から 1 フレームを JPEG として抽出（長辺上限） */
+async function extractVideoFrameThumbnailJpeg(
+  ffmpeg: FFmpeg,
+  videoName: string,
+  thumbName: string
+): Promise<Uint8Array | null> {
+  const max = MP4_THUMB_MAX_LONG_EDGE;
+  const scaleFilter = `scale='min(${max},iw)':'min(${max},ih)':force_original_aspect_ratio=decrease`;
+  try {
+    await execFfmpeg(ffmpeg, [
+      "-i",
+      videoName,
+      "-frames:v",
+      "1",
+      "-vf",
+      scaleFilter,
+      "-q:v",
+      "4",
+      "-update",
+      "1",
+      thumbName,
+    ]);
+    const raw = await ffmpeg.readFile(thumbName);
+    const bytes = readFfmpegBytes(raw as Uint8Array | string);
+    return bytes.length > 0 ? bytes : null;
+  } catch (error) {
+    mwvWarn("ffmpeg: frame thumbnail extract failed", error);
+    return null;
+  }
+}
+
+/**
+ * MP4 に attached_pic として JPEG を埋め込む。
+ * mjpeg 非対応時は copy のみのマッピングを試す。失敗しても例外は投げない。
+ */
+async function attachThumbnailToMp4(
+  ffmpeg: FFmpeg,
+  mp4Name: string,
+  thumbJpeg: Uint8Array
+): Promise<boolean> {
+  if (!thumbJpeg.length) return false;
+
+  const thumbName = "thumb_embed.jpg";
+  const outName = "mp4_with_thumb.mp4";
+  await ffmpeg.writeFile(thumbName, thumbJpeg);
+
+  const attempts: string[][] = [
+    [
+      "-i",
+      mp4Name,
+      "-i",
+      thumbName,
+      "-map",
+      "0",
+      "-map",
+      "1",
+      "-c",
+      "copy",
+      "-c:v:1",
+      "mjpeg",
+      "-disposition:v:1",
+      "attached_pic",
+      outName,
+    ],
+    [
+      "-i",
+      mp4Name,
+      "-i",
+      thumbName,
+      "-map",
+      "0",
+      "-map",
+      "1",
+      "-c",
+      "copy",
+      "-disposition:v:1",
+      "attached_pic",
+      outName,
+    ],
+  ];
+
+  for (const args of attempts) {
+    try {
+      await execFfmpeg(ffmpeg, args);
+      const merged = await ffmpeg.readFile(outName);
+      const mergedBytes = readFfmpegBytes(merged as Uint8Array | string);
+      if (mergedBytes.length === 0) continue;
+      await ffmpeg.writeFile(mp4Name, mergedBytes);
+      mwvMilestone("ffmpeg: thumbnail attached", { mp4Bytes: mergedBytes.length });
+      return true;
+    } catch (error) {
+      mwvWarn("ffmpeg: attach thumbnail attempt failed", args.join(" "), error);
+    }
+  }
+  return false;
+}
+
 export async function generateMp4Video(
   binaryData: Uint8Array,
   webmName: string,
   mp4Name: string,
   callbacks?: EncodeProgressCallbacks,
   targetLufs?: number | null,
-  audioBitrateKbps?: number | null
+  audioBitrateKbps?: number | null,
+  thumbnailJpeg?: Uint8Array | null
 ) {
   const { onLoadStart, onLoadComplete, onProgress } = callbacks || {};
   mwvMilestone("ffmpeg: encode start", {
@@ -52,6 +236,7 @@ export async function generateMp4Video(
     mp4Name,
     targetLufs: targetLufs ?? null,
     audioBitrateKbps: audioBitrateKbps ?? null,
+    hasThumbnailInput: !!(thumbnailJpeg && thumbnailJpeg.length > 0),
   });
 
   const ffmpeg = new FFmpeg();
@@ -93,10 +278,11 @@ export async function generateMp4Video(
   try {
     onLoadStart?.();
     mwvMilestone("ffmpeg: wasm loading…");
+    const selectedUrls = await resolveFfmpegCoreUrls();
     await ffmpeg.load({
-      coreURL: getFfmpegAssetUrl("ffmpeg-core.js"),
-      wasmURL: getFfmpegAssetUrl("ffmpeg-core.wasm"),
-      workerURL: getFfmpegAssetUrl("ffmpeg-core.worker.js"),
+      coreURL: selectedUrls.coreURL,
+      wasmURL: selectedUrls.wasmURL,
+      workerURL: selectedUrls.workerURL,
     });
     mwvMilestone("ffmpeg: wasm loaded");
     onLoadComplete?.();
@@ -140,6 +326,26 @@ export async function generateMp4Video(
       await execFfmpeg(ffmpeg, ["-i", webmName, "-vcodec", "copy", mp4Name]);
     }
 
+    let thumbBytes =
+      thumbnailJpeg && thumbnailJpeg.length > 0 ? thumbnailJpeg : null;
+    if (!thumbBytes) {
+      thumbBytes = await extractVideoFrameThumbnailJpeg(ffmpeg, mp4Name, "thumb_from_video.jpg");
+      if (thumbBytes) {
+        mwvMilestone("ffmpeg: thumbnail from first video frame");
+      }
+    } else {
+      mwvMilestone("ffmpeg: thumbnail from caller JPEG");
+    }
+
+    if (thumbBytes) {
+      const attached = await attachThumbnailToMp4(ffmpeg, mp4Name, thumbBytes);
+      if (!attached) {
+        mwvWarn(
+          "ffmpeg: could not embed thumbnail (attached_pic / mjpeg may be unavailable in wasm build); MP4 export continues without cover art"
+        );
+      }
+    }
+
     if (progressTick != null) {
       window.clearInterval(progressTick);
       progressTick = null;
@@ -148,12 +354,7 @@ export async function generateMp4Video(
     onProgress?.(0.99);
 
     const fileData = await ffmpeg.readFile(mp4Name);
-    const videoUint8Array =
-      fileData instanceof Uint8Array
-        ? fileData
-        : typeof fileData === "string"
-          ? new TextEncoder().encode(fileData)
-          : new Uint8Array(fileData as unknown as ArrayBuffer);
+    const videoUint8Array = readFfmpegBytes(fileData as Uint8Array | string);
 
     onProgress?.(1);
     mwvMilestone("ffmpeg: mp4 ready", { mp4Bytes: videoUint8Array.length });
@@ -164,6 +365,18 @@ export async function generateMp4Video(
       progressTick = null;
     }
     runStartedAtMs = 0;
+    const message = error instanceof Error ? error.message : String(error);
+    if (
+      /ERR_BLOCKED_BY_CLIENT|invalid wasm magic|received HTML|Failed to fetch|ffmpeg-core\.wasm/i.test(
+        message
+      )
+    ) {
+      const hintError = new Error(
+        "MP4変換の初期化に失敗しました。広告ブロッカーやセキュリティ拡張がFFmpegのwasm取得を遮断している可能性があります。拡張機能を一時停止、シークレットウィンドウで再試行、またはlocalhost/このサイトを許可してください。"
+      );
+      mwvError("ffmpeg: encode failed (blocked/asset issue)", { original: error, hint: hintError.message });
+      throw hintError;
+    }
     mwvError("ffmpeg: encode failed", error);
     throw error;
   } finally {

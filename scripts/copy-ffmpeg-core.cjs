@@ -9,7 +9,10 @@ const srcCandidates = [
   path.join(__dirname, "../node_modules/@ffmpeg/core/dist"),
 ];
 const src = srcCandidates.find((dir) => fs.existsSync(dir));
-const dest = path.join(__dirname, "../public/ffmpeg-core");
+const destDirs = [
+  path.join(__dirname, "../public/ffmpeg"),
+  path.join(__dirname, "../public/ffmpeg-core"),
+];
 
 if (!src) {
   console.error(
@@ -18,8 +21,10 @@ if (!src) {
   process.exit(1);
 }
 
-fs.mkdirSync(dest, { recursive: true });
-for (const name of fs.readdirSync(src)) {
-  fs.copyFileSync(path.join(src, name), path.join(dest, name));
+for (const dest of destDirs) {
+  fs.mkdirSync(dest, { recursive: true });
+  for (const name of fs.readdirSync(src)) {
+    fs.copyFileSync(path.join(src, name), path.join(dest, name));
+  }
 }
-console.log("copy-ffmpeg-core: public/ffmpeg-core にコピーしました。");
+console.log("copy-ffmpeg-core: public/ffmpeg と public/ffmpeg-core にコピーしました。");

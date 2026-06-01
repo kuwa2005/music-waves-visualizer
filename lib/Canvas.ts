@@ -7,6 +7,17 @@ import {
 } from "./subtitles";
 import { drawGalleryBackground, peekGalleryImageTransitionFrame } from "./galleryImageTransition";
 import { drawVideoCover } from "./drawVideoCover";
+import {
+  drawStillScreenBackground,
+  shouldUseStillScreenBackgroundPipeline,
+  type PlaybackTiming,
+} from "./drawStillScreenBackground";
+import {
+  DEFAULT_SCREEN_MOTION,
+  resolveImageTimelineFadeAlpha,
+  type ScreenMotionSettings,
+} from "./screenMotion";
+import { applyModeAdjustments } from "./spectrumAdjustments";
 
 const BASE_LINE_WIDTH_WAVEFORM = 2.0;
 const BASE_LINE_WIDTH_CIRCLE   = 2.0;
@@ -29,6 +40,8 @@ export type SpectrumSettings = {
   lineWidthWaveform: number;
   lineWidthCircle: number;
   lineWidthSymWave: number;
+  /** モード4(ドット)のサイズ段階（1〜10） */
+  dotSizeLevel?: number;
   /** 円形スペアナ回転（rpm）。null=OFF、0=停止、負=左回転、正=右回転 */
   circleRotationRpm?: number | null;
   /** 音圧系（8〜14）: ゲイン/ガンマ/アタック/リリース */
@@ -52,6 +65,8 @@ export type SpectrumSettings = {
   spectrumCustomHex?: string;
   /** モード3・4で虹色グラデーションを使う（false でプリマリ色ベース） */
   spectrumRainbowColorful?: boolean;
+  /** モード6(グライコ)専用回転角度（度） */
+  glycoRotationDeg?: number;
   /** SRT字幕オーバーレイ */
   subtitleOverlay?: SubtitleOverlaySettings;
   /** タイトルオーバーレイ（Canvas 2D） */
@@ -68,6 +83,82 @@ export type SpectrumSettings = {
   getTargetFps?: () => number | null | undefined;
   /** targetFps / getTargetFps を適用するかをフレームごとに判定する。 */
   isTargetFpsEnabled?: () => boolean;
+  /** 画面タブ: 静止画背景モーション・演出 */
+  screenMotion?: ScreenMotionSettings;
+  /** モーション進行用の再生位置 */
+  getPlaybackTiming?: () => PlaybackTiming;
+  /** 波形型ビジュアライザー（mode17-19） */
+  waveFamilyParams?: {
+    height: number;
+    width: number;
+    thickness: number;
+    smoothness: number;
+    flowSpeed: number;
+    glow: number;
+    opacity: number;
+    lowRatio: number;
+    midRatio: number;
+    highRatio: number;
+  };
+  /** パーティクル型ビジュアライザー（mode20） */
+  particleSpectrumParams?: {
+    pattern: "soft" | "star" | "spark" | "mist";
+    count: number;
+    size: number;
+    life: number;
+    speed: number;
+    spawnX: number;
+    spawnY: number;
+    spread: number;
+    opacity: number;
+    glow: number;
+    buoyancy: number;
+    lowRatio: number;
+    midRatio: number;
+    highRatio: number;
+    boost: number;
+  };
+  /** 放射状スペクトラム（mode21） */
+  radialSpectrumParams?: {
+    bars: number;
+    length: number;
+    thickness: number;
+    radius: number;
+    centerGap: number;
+    glow: number;
+    lowSensitivity: number;
+    highSensitivity: number;
+    kickScale: number;
+    returnSpeed: number;
+    backgroundZoom: number;
+    rotate: boolean;
+    rotateSpeed: number;
+  };
+  /** レトロEQ拡張（mode6） */
+  retroEqParams?: {
+    style: "bars" | "dots";
+    bars: number;
+    barWidth: number;
+    barGap: number;
+    dotSize: number;
+    dotGap: number;
+    bgColor: string;
+    levelLowColor: string;
+    levelMidColor: string;
+    levelHighColor: string;
+    noise: number;
+    scanline: number;
+    chroma: number;
+    jitter: number;
+    trail: number;
+    decay: number;
+    crtOn: boolean;
+    vhsOn: boolean;
+    /** 背景暗転オーバーレイ色（mode6） */
+    backgroundDimColor?: string;
+    /** 背景暗転量 0=オフ, 100=最大（mode6） */
+    backgroundDimAmount?: number;
+  };
 };
 
 export function resolveSpectrumTargetFps(settings: SpectrumSettings): number | null {
@@ -123,9 +214,35 @@ function smoothAR(prev: number, target: number, attack: number, release: number)
   return prev + (target - prev) * a;
 }
 
-function getVisualOpacity(opacity: number): number {
+function bandEnergy(bufferData: Uint8Array, from: number, to: number): number {
+  const a = Math.max(0, Math.min(bufferData.length - 1, from));
+  const b = Math.max(a + 1, Math.min(bufferData.length, to));
+  let sum = 0;
+  for (let i = a; i < b; i++) sum += bufferData[i];
+  return sum / ((b - a) * 255);
+}
+
+function hexToRgbOr(hex: string | undefined, fallback: [number, number, number]): [number, number, number] {
+  if (!hex) return fallback;
+  const p = parseSpectrumHexRgb(hex);
+  return p ?? fallback;
+}
+
+export function getVisualOpacity(opacity: number): number {
+  const clamped = Math.max(0, Math.min(1, opacity));
+  if (clamped <= 0) return 0;
   // 透過率スライダーの体感を均し、白飛びを抑える上限を設ける
-  return Math.min(0.92, 0.12 + opacity * 0.8);
+  return Math.min(0.92, 0.12 + clamped * 0.8);
+}
+
+export const SPECTRUM_DOT_SIZE_MIN = 1;
+export const SPECTRUM_DOT_SIZE_MAX = 10;
+export const SPECTRUM_DOT_SIZE_DEFAULT = 5;
+
+export function getSpectrumDotRadiusScale(level: number | undefined): number {
+  const raw = Number.isFinite(level) ? Math.round(level as number) : SPECTRUM_DOT_SIZE_DEFAULT;
+  const clamped = Math.max(SPECTRUM_DOT_SIZE_MIN, Math.min(SPECTRUM_DOT_SIZE_MAX, raw));
+  return 0.6 + (clamped - SPECTRUM_DOT_SIZE_MIN) * 0.1;
 }
 
 function getParticlePerfScale(): number {
@@ -172,6 +289,124 @@ export function parseSpectrumHexRgb(hex: string): [number, number, number] | nul
   ];
 }
 
+export type GlycoBackgroundDimParams = {
+  backgroundDimColor?: string;
+  backgroundDimAmount?: number;
+};
+
+/** 背景暗転量 0–100% → アルファ 0–1 */
+export function glycoBackgroundDimAlpha(amountPercent: number): number {
+  return Math.max(0, Math.min(100, amountPercent)) / 100;
+}
+
+export type GlycoBarRegionBounds = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+function rotateGlycoPointAroundCenter(
+  x: number,
+  y: number,
+  centerX: number,
+  centerY: number,
+  rad: number
+): [number, number] {
+  if (rad === 0) return [x, y];
+  const dx = x - centerX;
+  const dy = y - centerY;
+  const c = Math.cos(rad);
+  const s = Math.sin(rad);
+  return [centerX + dx * c - dy * s, centerY + dx * s + dy * c];
+}
+
+/**
+ * グライコ（mode6）バーストリップの描画領域（Canvas/WebGL 共通）。
+ * 横幅いっぱい・下端基準（verticalEQFixed は縦いっぱい）、effAdj と回転後の AABB。
+ */
+export function glycoBarRegionBounds(
+  canvasWidth: number,
+  canvasHeight: number,
+  adj: ModeAdjustments,
+  options?: { glycoRotationDeg?: number; glycoColorSet?: string }
+): GlycoBarRegionBounds {
+  const effAdj: ModeAdjustments = { ...adj, scaleY: adj.scaleY / 3, scaleX: adj.scaleX };
+  const verticalEQFixed = options?.glycoColorSet === "verticalEQFixed";
+  const maxBarHeight = canvasHeight * GLYCO_BAR_VERTICAL_SCALE;
+  const localX0 = 0;
+  const localY0 = verticalEQFixed ? 0 : canvasHeight - maxBarHeight;
+  const localX1 = canvasWidth;
+  const localY1 = canvasHeight;
+
+  const corners: [number, number][] = [
+    [localX0, localY0],
+    [localX1, localY0],
+    [localX0, localY1],
+    [localX1, localY1],
+  ].map(([x, y]) => applyModeAdjustments(x, y, canvasWidth, canvasHeight, effAdj));
+
+  const rotationRad = ((options?.glycoRotationDeg ?? 0) * Math.PI) / 180;
+  const transformed =
+    rotationRad === 0
+      ? corners
+      : (() => {
+          const [cx, cy] = applyModeAdjustments(
+            canvasWidth / 2,
+            canvasHeight / 2,
+            canvasWidth,
+            canvasHeight,
+            effAdj
+          );
+          return corners.map(([x, y]) => rotateGlycoPointAroundCenter(x, y, cx, cy, rotationRad));
+        })();
+
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const [x, y] of transformed) {
+    minX = Math.min(minX, x);
+    minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x);
+    maxY = Math.max(maxY, y);
+  }
+
+  return {
+    x: minX,
+    y: minY,
+    width: Math.max(0, maxX - minX),
+    height: Math.max(0, maxY - minY),
+  };
+}
+
+export type GlycoBackgroundDimContext = {
+  adj?: ModeAdjustments;
+  glycoRotationDeg?: number;
+  glycoColorSet?: string;
+};
+
+/** 背景画像の上・グライコバー領域のみに半透明オーバーレイ（mode6 専用） */
+export function drawGlycoBackgroundDimOverlay(
+  ctx: CanvasRenderingContext2D,
+  canvasWidth: number,
+  canvasHeight: number,
+  params?: GlycoBackgroundDimParams | null,
+  context?: GlycoBackgroundDimContext
+): void {
+  const amount = params?.backgroundDimAmount ?? 0;
+  if (amount <= 0) return;
+  const alpha = glycoBackgroundDimAlpha(amount);
+  const rgb = parseSpectrumHexRgb(params?.backgroundDimColor ?? "#000000") ?? [0, 0, 0];
+  const adj = context?.adj ?? { scaleX: 1, scaleY: 1, offsetX: 0, offsetY: 0 };
+  const region = glycoBarRegionBounds(canvasWidth, canvasHeight, adj, {
+    glycoRotationDeg: context?.glycoRotationDeg,
+    glycoColorSet: context?.glycoColorSet,
+  });
+  ctx.fillStyle = `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${alpha})`;
+  ctx.fillRect(region.x, region.y, region.width, region.height);
+}
+
 export function getSpectrumPrimaryRgb(settings: SpectrumSettings): [number, number, number] {
   const fromHex = settings.spectrumColorHex && parseSpectrumHexRgb(settings.spectrumColorHex);
   if (fromHex) return fromHex;
@@ -194,8 +429,8 @@ export function getSpectrumSecondaryRgb(settings: SpectrumSettings): [number, nu
   ];
 }
 
-/** 対数マップの上限ビン（ナイキストのこの割合まで）。それ以上は音楽では無音に近く右端が死にやすい */
-const GLYCO_LOG_BIN_MAX_FRAC = 0.66;
+/** 対数マップの上限ビン（ナイキストに近い割合まで。旧0.66は高域が無反応に見えやすかった） */
+const GLYCO_LOG_BIN_MAX_FRAC = 0.98;
 /** 対数マップの下限 FFT ビン（DC～超低域はエネルギーが張り付きやすいので参照開始を少し上げる） */
 const GLYCO_LOG_MIN_BIN = 5;
 
@@ -226,6 +461,48 @@ export function glycoLowBandGain(barIndex: number, barsLength: number): number {
   return 0.5 + 0.5 * s;
 }
 
+/** 右側（高域寄り）バーの感度ブースト。ハイハット等の反応を補う */
+export function glycoHighBandGain(barIndex: number, barsLength: number): number {
+  if (barsLength < 2) return 1;
+  const t = barIndex / (barsLength - 1);
+  if (t < 0.52) return 1;
+  const u = (t - 0.52) / 0.48;
+  return 1 + 0.6 * u * u;
+}
+
+/** バー index がカバーする FFT ビン範囲 [lo, hi]（対数マップ・隣接バー間） */
+export function glycoBarBinBounds(
+  i: number,
+  barsLength: number,
+  bufferLength: number
+): { lo: number; hi: number } {
+  const lo = glycoBarToFftBin(i, barsLength, bufferLength);
+  if (i >= barsLength - 1) {
+    return { lo, hi: Math.max(lo, bufferLength - 1) };
+  }
+  const next = glycoBarToFftBin(i + 1, barsLength, bufferLength);
+  return { lo, hi: Math.max(lo, Math.min(bufferLength - 1, next - 1)) };
+}
+
+/** モード7（面）: 上縁サンプル点をキャンバス左右端まで均等配置 */
+export function areaModeBarX(i: number, barsLength: number, canvasWidth: number): number {
+  if (barsLength <= 1) return canvasWidth / 2;
+  return (i / (barsLength - 1)) * canvasWidth;
+}
+
+/** グライコ風バー配置: キャンバス幅いっぱいに等間隔スロット */
+export function glycoBarLayout(
+  canvasWidth: number,
+  barsLength: number,
+  barWidthMul = 1,
+  barGapMul = 1
+): { barPitch: number; barWidth: number; barGap: number } {
+  const barPitch = canvasWidth / barsLength;
+  const barWidth = Math.max(1, barPitch * 0.78 * barWidthMul / barGapMul);
+  const barGap = Math.max(0, barPitch - barWidth);
+  return { barPitch, barWidth, barGap };
+}
+
 /**
  * モード0の線形ビン用。index が小さいほど超低域＝値が張り付きやすいので感度を下げる。
  */
@@ -238,7 +515,7 @@ export function spectrumLinearBarLowGain(i: number, barsLength: number): number 
 }
 
 /**
- * グライコ用生エネルギー。右端数本は±2ビンの最大を取り、きらびゆる反応を補う。
+ * グライコ用生エネルギー。各バーは対数ビン範囲内の最大値を参照（高域のピーク取りこぼしを抑える）。
  */
 export function glycoBarRawEnergy(
   i: number,
@@ -246,20 +523,12 @@ export function glycoBarRawEnergy(
   bufferLength: number,
   bufferData: Uint8Array
 ): number {
-  const c = glycoBarToFftBin(i, barsLength, bufferLength);
-  let m: number;
-  if (i < barsLength - 5) {
-    m = bufferData[c];
-  } else {
-    m = bufferData[c];
-    for (let d = -2; d <= 2; d++) {
-      const idx = c + d;
-      if (idx >= 0 && idx < bufferLength) {
-        m = Math.max(m, bufferData[idx]);
-      }
-    }
+  const { lo, hi } = glycoBarBinBounds(i, barsLength, bufferLength);
+  let m = 0;
+  for (let idx = lo; idx <= hi; idx++) {
+    m = Math.max(m, bufferData[idx]);
   }
-  const g = glycoLowBandGain(i, barsLength);
+  const g = glycoLowBandGain(i, barsLength) * glycoHighBandGain(i, barsLength);
   return Math.min(255, m * g);
 }
 
@@ -539,6 +808,72 @@ export const drawBars = (
     lineWidthWaveform: 3.2,
     lineWidthCircle: 3.2,
     lineWidthSymWave: 3.6,
+    waveFamilyParams: {
+      height: 0.34,
+      width: 0.92,
+      thickness: 2.2,
+      smoothness: 0.72,
+      flowSpeed: 0.45,
+      glow: 0.45,
+      opacity: 0.62,
+      lowRatio: 1.15,
+      midRatio: 1.0,
+      highRatio: 0.85,
+    },
+    particleSpectrumParams: {
+      pattern: "soft",
+      count: 70,
+      size: 1.45,
+      life: 1.4,
+      speed: 0.8,
+      spawnX: 0.5,
+      spawnY: 0.58,
+      spread: 0.42,
+      opacity: 0.58,
+      glow: 0.48,
+      buoyancy: 0.3,
+      lowRatio: 1.1,
+      midRatio: 1.0,
+      highRatio: 0.95,
+      boost: 0.85,
+    },
+    radialSpectrumParams: {
+      bars: 112,
+      length: 0.72,
+      thickness: 1.75,
+      radius: 0.26,
+      centerGap: 0.42,
+      glow: 0.9,
+      lowSensitivity: 1.35,
+      highSensitivity: 0.82,
+      kickScale: 0.22,
+      returnSpeed: 0.12,
+      backgroundZoom: 0.03,
+      rotate: false,
+      rotateSpeed: 0.2,
+    },
+    retroEqParams: {
+      style: "bars",
+      bars: 64,
+      barWidth: 1.0,
+      barGap: 1.0,
+      dotSize: 1.0,
+      dotGap: 1.0,
+      bgColor: "#081108",
+      levelLowColor: "#28E060",
+      levelMidColor: "#F0C030",
+      levelHighColor: "#F04A30",
+      noise: 0.12,
+      scanline: 0.2,
+      chroma: 0.08,
+      jitter: 0.05,
+      trail: 0.18,
+      decay: 0.12,
+      crtOn: false,
+      vhsOn: false,
+      backgroundDimColor: "#000000",
+      backgroundDimAmount: 0,
+    },
   };
   const scheduleNextFrame = () => {
     animationFrameId = requestAnimationFrame(function () {
@@ -570,7 +905,13 @@ export const drawBars = (
   
   const canvasWidth = canvas.width;
   const canvasHeight = canvas.height;
-  
+
+  const screenMotion = settings.screenMotion ?? DEFAULT_SCREEN_MOTION;
+  const imageTimelineFadeAlpha = resolveImageTimelineFadeAlpha(
+    screenMotion,
+    settings.getPlaybackTiming?.()
+  );
+
   // 調整パラメータのデフォルト値
   const adj = adjustments || {
     scaleX: 1.0,
@@ -581,6 +922,34 @@ export const drawBars = (
 
   const galleryTransition = peekGalleryImageTransitionFrame();
   const bgVideo = settings.backgroundVideo;
+
+  let bgAudioReactive: AudioReactiveData | undefined;
+  if (
+    imageCtx &&
+    analyser &&
+    isEffectActive &&
+    settings.screenMotion &&
+    (settings.screenMotion.brightnessOnPeak ||
+      settings.screenMotion.shakeOnChorus ||
+      settings.screenMotion.chorusZoomOnPeak ||
+      settings.screenMotion.flashOnDrop)
+  ) {
+    const earlyFreq = new Uint8Array(analyser.frequencyBinCount);
+    analyser.getByteFrequencyData(earlyFreq);
+    let bass = 0;
+    let volume = 0;
+    let highFreq = 0;
+    const bl = earlyFreq.length;
+    for (let i = 0; i < 16; i++) bass += earlyFreq[i];
+    for (let i = 0; i < bl; i++) volume += earlyFreq[i];
+    for (let i = 200; i < Math.min(256, bl); i++) highFreq += earlyFreq[i];
+    bgAudioReactive = {
+      bass: Math.min(1, bass / (16 * 200)),
+      volume: Math.min(1, volume / (bl * 180)),
+      highFreq: Math.min(1, highFreq / (56 * 150)),
+    };
+  }
+
   if (galleryTransition) {
     drawGalleryBackground(ctx, canvasWidth, canvasHeight, imageCtx, galleryTransition);
   } else if (bgVideo) {
@@ -601,14 +970,46 @@ export const drawBars = (
       ctx.fillStyle = "rgba(34, 34, 34, 1.0)";
       ctx.fillRect(0, 0, canvasWidth, canvasHeight);
     }
+  } else if (
+    shouldUseStillScreenBackgroundPipeline(imageCtx, settings.screenMotion, !!bgVideo, !!galleryTransition)
+  ) {
+    drawStillScreenBackground(
+      ctx,
+      imageCtx,
+      canvasWidth,
+      canvasHeight,
+      settings.screenMotion,
+      settings.getPlaybackTiming?.(),
+      bgAudioReactive
+    );
   } else if (imageCtx) {
+    ctx.fillStyle = "rgba(34, 34, 34, 1.0)";
+    ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+    ctx.save();
+    if (imageTimelineFadeAlpha < 0.999) {
+      ctx.globalAlpha = imageTimelineFadeAlpha;
+    }
     const offscreenCanvas = drawImageToOffscreen(imageCtx, canvasWidth, canvasHeight);
     ctx.drawImage(offscreenCanvas, 0, 0);
+    ctx.restore();
   } else if (settings.clearBackgroundTransparent) {
     ctx.clearRect(0, 0, canvasWidth, canvasHeight);
   } else {
     ctx.fillStyle = "rgba(34, 34, 34, 1.0)";
     ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+  }
+
+  if (mode === 6) {
+    ctx.save();
+    if (imageTimelineFadeAlpha < 0.999) {
+      ctx.globalAlpha = imageTimelineFadeAlpha;
+    }
+    drawGlycoBackgroundDimOverlay(ctx, canvasWidth, canvasHeight, settings.retroEqParams, {
+      adj,
+      glycoRotationDeg: settings.glycoRotationDeg,
+      glycoColorSet: settings.glycoColorSet,
+    });
+    ctx.restore();
   }
 
   ctx.save();
@@ -678,6 +1079,10 @@ export const drawBars = (
 
   if (!skipSpectrumDraw) {
   ctx.save();
+  if (imageTimelineFadeAlpha < 0.999) {
+    ctx.globalAlpha = imageTimelineFadeAlpha;
+  }
+  ctx.save();
   ctx.translate(canvasWidth / 2 + offsetXPixels, canvasHeight / 2 + offsetYPixels);
   ctx.scale(effAdj.scaleX, effAdj.scaleY);
   ctx.translate(-canvasWidth / 2, -canvasHeight / 2);
@@ -686,15 +1091,21 @@ export const drawBars = (
     // OFF: スペアナ描画なし。早期 return しない（下の restore → エフェクトと WebGL case -1 を揃える）
   } else if (mode === 0) {
     analyser.getByteFrequencyData(bufferData);
-    ctx.fillStyle = `rgba(${pr}, ${pg}, ${pb}, 0.8)`;
     const barsLength = 128;
-    const barWidth = canvasWidth / barsLength;
-    let barX = 0;
+    const barPitch = canvasWidth / barsLength;
+    const barWidth = Math.max(1, barPitch * 0.72);
+    const barGap = barPitch - barWidth;
     for (let i = 0; i < barsLength; i++) {
       const g = spectrumLinearBarLowGain(i, barsLength);
       const barHeight = Math.min(255, bufferData[i] * g);
-      ctx.fillRect(barX, canvasHeight - barHeight, barWidth, barHeight);
-      barX += canvasWidth / barsLength;
+      const barX = i * barPitch + barGap * 0.5;
+      const barY = canvasHeight - barHeight;
+      ctx.fillStyle = `rgba(${pr}, ${pg}, ${pb}, ${0.84 * visualOpacity})`;
+      ctx.fillRect(barX, barY, barWidth, barHeight);
+      // バー輪郭を薄く入れて、面モードとの差を明確化
+      ctx.strokeStyle = `rgba(${Math.min(255, pr + 26)}, ${Math.min(255, pg + 26)}, ${Math.min(255, pb + 26)}, ${0.45 * visualOpacity})`;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(barX + 0.5, barY + 0.5, Math.max(0, barWidth - 1), Math.max(0, barHeight - 1));
     }
 } else if (mode === 1) {
     analyser.getByteTimeDomainData(bufferData); //Waveform Data
@@ -791,14 +1202,15 @@ export const drawBars = (
     const dotsPerCol = 16;
     const dotSizeX = canvasWidth / dotsPerRow;
     const dotSizeY = canvasHeight / dotsPerCol;
-    const dotRadius = Math.min(dotSizeX, dotSizeY) / 3;
+    const baseDotRadius = Math.min(dotSizeX, dotSizeY) / 3;
+    const dotRadius = baseDotRadius * getSpectrumDotRadiusScale(settings.dotSizeLevel);
     
     for (let col = 0; col < dotsPerRow; col++) {
       const value = glycoBarRawEnergy(col, dotsPerRow, bufferLength, bufferData);
       
       for (let row = 0; row < dotsPerCol; row++) {
         const threshold = (255 / dotsPerCol) * (dotsPerCol - row);
-        const opacity = value > threshold ? 0.8 : 0.2;
+        const opacity = (value > threshold ? 0.8 : 0.2) * settings.opacity;
         if (useRainbow34) {
           const hue = (col / dotsPerRow) * 360;
           ctx.fillStyle = `hsla(${hue}, 100%, 50%, ${opacity})`;
@@ -989,16 +1401,263 @@ export const drawBars = (
       }
       ctx.restore();
     }
+  } else if (mode === 17 || mode === 18 || mode === 19) {
+    analyser.getByteTimeDomainData(bufferData);
+    analyser.getByteFrequencyData(freqForEffect);
+    const wp = settings.waveFamilyParams ?? {
+      height: 0.34,
+      width: 0.92,
+      thickness: 2.2,
+      smoothness: 0.72,
+      flowSpeed: 0.45,
+      glow: 0.45,
+      opacity: 0.62,
+      lowRatio: 1.15,
+      midRatio: 1.0,
+      highRatio: 0.85,
+    };
+    const low = bandEnergy(freqForEffect, 2, 48) * wp.lowRatio;
+    const mid = bandEnergy(freqForEffect, 48, 192) * wp.midRatio;
+    const high = bandEnergy(freqForEffect, 192, Math.min(freqForEffect.length, 512)) * wp.highRatio;
+    const dyn = Math.max(0.25, Math.min(1.6, low * 0.45 + mid * 0.4 + high * 0.35));
+    const st = (drawBars as any)._waveFamilyState ?? { flow: 0, smooth: new Float32Array(bufferLength) };
+    st.flow += 0.01 * wp.flowSpeed;
+    const smoothK = Math.max(0.1, Math.min(0.95, wp.smoothness));
+    for (let i = 0; i < bufferLength; i++) {
+      st.smooth[i] = st.smooth[i] * smoothK + bufferData[i] * (1 - smoothK);
+    }
+    (drawBars as any)._waveFamilyState = st;
+
+    const cy = canvasHeight * 0.52;
+    const marginX = canvasWidth * (1 - Math.max(0.2, Math.min(1, wp.width))) * 0.5;
+    const amp = canvasHeight * wp.height * dyn;
+    const lineW = Math.max(0.6, wp.thickness);
+    const op = Math.max(0.05, Math.min(0.95, visualOpacity * wp.opacity));
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.shadowColor = `rgba(${sr}, ${sg}, ${sb}, ${0.6 * wp.glow * op})`;
+    ctx.shadowBlur = 20 * wp.glow;
+
+    const drawSingleWave = (phase: number, yScale: number, alpha: number, widthMul: number) => {
+      ctx.beginPath();
+      for (let i = 0; i < bufferLength; i++) {
+        const t = i / (bufferLength - 1);
+        const x = marginX + t * (canvasWidth - marginX * 2);
+        const carrier = (st.smooth[i] - 128) / 128;
+        const flow = Math.sin((t * 8 + phase) * Math.PI * 2) * 0.08;
+        const y = cy + (carrier + flow) * amp * yScale;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.strokeStyle = `rgba(${pr}, ${pg}, ${pb}, ${alpha})`;
+      ctx.lineWidth = lineW * widthMul;
+      ctx.stroke();
+    };
+
+    if (mode === 17) {
+      drawSingleWave(st.flow, 1.0, op, 1.0);
+    } else if (mode === 18) {
+      drawSingleWave(st.flow, 0.85, op * 0.9, 1.0);
+      drawSingleWave(st.flow + Math.PI, -0.85, op * 0.8, 0.92);
+    } else {
+      drawSingleWave(st.flow, 0.95, op * 0.85, 1.0);
+      drawSingleWave(st.flow * 0.5 + 1.2, 0.45 + low * 0.35, op * 0.45, 0.85);
+      drawSingleWave(st.flow * 1.8 + 2.8, 0.28 + high * 0.25, op * 0.35, 0.7);
+    }
+    ctx.shadowBlur = 0;
+  } else if (mode === 20) {
+    analyser.getByteFrequencyData(freqForEffect);
+    const pp = settings.particleSpectrumParams ?? {
+      pattern: "soft",
+      count: 70,
+      size: 1.45,
+      life: 1.4,
+      speed: 0.8,
+      spawnX: 0.5,
+      spawnY: 0.58,
+      spread: 0.42,
+      opacity: 0.58,
+      glow: 0.48,
+      buoyancy: 0.3,
+      lowRatio: 1.1,
+      midRatio: 1.0,
+      highRatio: 0.95,
+      boost: 0.85,
+    };
+    const low = bandEnergy(freqForEffect, 2, 56) * pp.lowRatio;
+    const mid = bandEnergy(freqForEffect, 56, 220) * pp.midRatio;
+    const high = bandEnergy(freqForEffect, 220, Math.min(freqForEffect.length, 640)) * pp.highRatio;
+    const energy = Math.min(1.8, (low * 0.45 + mid * 0.35 + high * 0.35) * Math.max(0.25, pp.boost));
+    const state = (drawBars as any)._particleSpectrumState ?? { arr: [] as any[], lastMs: performance.now() };
+    const now2 = performance.now();
+    const dt = Math.min(40, now2 - state.lastMs);
+    state.lastMs = now2;
+    const baseCount = Math.max(8, Math.min(300, Math.round(pp.count * (0.2 + energy))));
+    while (state.arr.length < baseCount) {
+      state.arr.push({
+        x: (pp.spawnX + (Math.random() - 0.5) * pp.spread) * canvasWidth,
+        y: (pp.spawnY + (Math.random() - 0.5) * pp.spread * 0.6) * canvasHeight,
+        vx: (Math.random() - 0.5) * 0.08,
+        vy: (Math.random() - 0.5) * 0.08,
+        life: Math.random(),
+        ttl: 800 + Math.random() * 1400 * pp.life,
+      });
+    }
+    if (state.arr.length > baseCount) state.arr.length = baseCount;
+    ctx.globalCompositeOperation = "lighter";
+    for (const p of state.arr) {
+      p.life += dt;
+      const ttl = Math.max(120, p.ttl);
+      const lf = 1 - p.life / ttl;
+      if (lf <= 0) {
+        p.x = (pp.spawnX + (Math.random() - 0.5) * pp.spread) * canvasWidth;
+        p.y = (pp.spawnY + (Math.random() - 0.5) * pp.spread * 0.6) * canvasHeight;
+        p.vx = (Math.random() - 0.5) * (0.12 + high * 0.35) * pp.speed;
+        p.vy = (Math.random() - 0.5) * (0.08 + low * 0.3) * pp.speed - pp.buoyancy * 0.08;
+        p.life = 0;
+        p.ttl = 500 + Math.random() * 1500 * pp.life;
+        continue;
+      }
+      p.x += p.vx * dt;
+      p.y += (p.vy - pp.buoyancy * 0.03) * dt;
+      const sizeMul =
+        pp.pattern === "star" ? (0.7 + high * 1.4) :
+        pp.pattern === "spark" ? (0.45 + mid * 0.9) :
+        pp.pattern === "mist" ? (1.6 + low * 1.8) :
+        (0.9 + energy);
+      const radius = Math.max(0.9, pp.size * sizeMul * (0.8 + lf));
+      const alphaBase = Math.max(0.08, Math.min(0.85, pp.opacity * lf + 0.05));
+      let rr = pr, gg = pg, bb = pb;
+      if (pp.pattern === "star") {
+        rr = sr; gg = sg; bb = sb;
+      } else if (pp.pattern === "spark") {
+        rr = Math.min(255, sr + 55); gg = Math.min(255, sg + 35); bb = Math.min(255, sb + 10);
+      } else if (pp.pattern === "mist") {
+        rr = Math.min(255, pr + 20); gg = Math.min(255, pg + 26); bb = Math.min(255, pb + 40);
+      }
+      ctx.shadowColor = `rgba(${rr}, ${gg}, ${bb}, ${Math.min(0.95, alphaBase * (0.45 + pp.glow))})`;
+      ctx.shadowBlur = 22 * pp.glow * radius;
+      if (pp.pattern === "spark") {
+        ctx.strokeStyle = `rgba(${rr}, ${gg}, ${bb}, ${alphaBase})`;
+        ctx.lineWidth = Math.max(0.9, radius * 0.62);
+        ctx.beginPath();
+        ctx.moveTo(p.x, p.y);
+        ctx.lineTo(p.x - p.vx * 55, p.y - p.vy * 55);
+        ctx.stroke();
+      } else {
+        ctx.fillStyle = `rgba(${rr}, ${gg}, ${bb}, ${alphaBase})`;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    ctx.shadowBlur = 0;
+    ctx.globalCompositeOperation = "source-over";
+    (drawBars as any)._particleSpectrumState = state;
+  } else if (mode === 21) {
+    analyser.getByteFrequencyData(freqForEffect);
+    const rp = settings.radialSpectrumParams ?? {
+      bars: 112,
+      length: 0.72,
+      thickness: 1.75,
+      radius: 0.26,
+      centerGap: 0.42,
+      glow: 0.9,
+      lowSensitivity: 1.35,
+      highSensitivity: 0.82,
+      kickScale: 0.22,
+      returnSpeed: 0.12,
+      backgroundZoom: 0.03,
+      rotate: false,
+      rotateSpeed: 0.2,
+    };
+    const bars = Math.max(24, Math.min(220, Math.round(rp.bars)));
+    const cx = canvasWidth / 2;
+    const cy = canvasHeight / 2;
+    const minDim = Math.min(canvasWidth, canvasHeight);
+    const radialBase = minDim * Math.max(0.1, Math.min(0.46, rp.radius));
+    const hole = radialBase * Math.max(0.26, Math.min(0.96, rp.centerGap));
+    const kickBand = bandEnergy(freqForEffect, 2, 28) * rp.lowSensitivity;
+    const st = (drawBars as any)._radialState ?? { pulse: 0, rot: 0, kickBurst: 0 };
+    const release = Math.max(0.02, Math.min(0.3, rp.returnSpeed));
+    st.pulse += (kickBand - st.pulse) * 0.35;
+    st.kickBurst = Math.max(0, st.kickBurst - (0.05 + release * 0.9));
+    if (kickBand > 0.34 && kickBand > st.pulse * 0.98) {
+      st.kickBurst = Math.max(st.kickBurst, Math.min(1, (kickBand - 0.34) * 2.4));
+    }
+    st.rot += (rp.rotate ? rp.rotateSpeed : 0) * 0.0032;
+    (drawBars as any)._radialState = st;
+    const kickImpulse = st.kickBurst * st.kickBurst;
+    const pulseScale = 1 + (st.pulse * 0.35 + kickImpulse) * rp.kickScale;
+    const maxLen = minDim * (0.07 + rp.length * 0.36);
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.scale(pulseScale, pulseScale);
+    ctx.translate(-cx, -cy);
+    ctx.globalCompositeOperation = "lighter";
+    for (let i = 0; i < bars; i++) {
+      const t = i / bars;
+      const idx = Math.floor(t * (freqForEffect.length - 1));
+      const v = freqForEffect[idx] / 255;
+      const lowWeight = 1 - t;
+      const highWeight = t;
+      const sens = rp.lowSensitivity * (0.65 + lowWeight * 0.9) + rp.highSensitivity * (0.4 + highWeight * 0.85);
+      const shaped = Math.pow(v, 0.72 + highWeight * 0.6);
+      const len = Math.max(6, shaped * sens * maxLen);
+      const angle = t * Math.PI * 2 + st.rot;
+      const innerR = hole;
+      const outerR = innerR + len + (0.12 + lowWeight * 0.9) * kickImpulse * minDim * 0.14;
+      const x1 = cx + Math.cos(angle) * innerR;
+      const y1 = cy + Math.sin(angle) * innerR;
+      const x2 = cx + Math.cos(angle) * outerR;
+      const y2 = cy + Math.sin(angle) * outerR;
+      const lw = Math.max(0.9, rp.thickness * (1.95 - t * 1.1));
+      const mainAlpha = Math.min(0.95, 0.28 + shaped * 0.78 + lowWeight * 0.09);
+      const glowAlpha = Math.min(0.95, (0.32 + shaped * 0.78 + kickImpulse * 0.45) * (0.45 + rp.glow * 0.55));
+      ctx.shadowColor = `rgba(${sr}, ${sg}, ${sb}, ${glowAlpha})`;
+      ctx.shadowBlur = (16 + 14 * lowWeight) * (0.65 + rp.glow) * (0.9 + kickImpulse * 0.4);
+      ctx.strokeStyle = `rgba(${pr}, ${pg}, ${pb}, ${mainAlpha})`;
+      ctx.lineWidth = lw;
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+      if (rp.glow > 0.45) {
+        const rayAlpha = Math.min(0.8, 0.08 + shaped * 0.4 + rp.glow * 0.18);
+        const tailR = Math.max(hole, innerR - Math.max(4, len * 0.32));
+        const tx = cx + Math.cos(angle) * tailR;
+        const ty = cy + Math.sin(angle) * tailR;
+        ctx.strokeStyle = `rgba(${sr}, ${sg}, ${sb}, ${rayAlpha})`;
+        ctx.lineWidth = Math.max(0.7, lw * (0.58 + lowWeight * 0.22));
+        ctx.beginPath();
+        ctx.moveTo(tx, ty);
+        ctx.lineTo(x2, y2);
+        ctx.stroke();
+      }
+    }
+    ctx.globalCompositeOperation = "source-over";
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = "rgba(0,0,0,0.28)";
+    ctx.beginPath();
+    ctx.arc(cx, cy, hole * 1.02, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
   } else if (mode === 7) {
     // モード7: 周波数スペクトラム面（下辺固定の塗りつぶし＋上縁ライン）
     analyser.getByteFrequencyData(bufferData);
     const barsLength = 128;
-    const barWidth = canvasWidth / barsLength;
+    const smoothed = new Float32Array(barsLength);
+    for (let i = 0; i < barsLength; i++) {
+      const cur = glycoBarRawEnergy(i, barsLength, bufferLength, bufferData);
+      const prev = i > 0 ? glycoBarRawEnergy(i - 1, barsLength, bufferLength, bufferData) : cur;
+      const next = i < barsLength - 1 ? glycoBarRawEnergy(i + 1, barsLength, bufferLength, bufferData) : cur;
+      smoothed[i] = prev * 0.2 + cur * 0.6 + next * 0.2;
+    }
     ctx.beginPath();
     ctx.moveTo(0, canvasHeight);
     for (let i = 0; i < barsLength; i++) {
-      const h = bufferData[Math.floor((i / barsLength) * bufferLength)];
-      const x = i * barWidth + barWidth / 2;
+      const h = smoothed[i];
+      const x = areaModeBarX(i, barsLength, canvasWidth);
       ctx.lineTo(x, canvasHeight - h);
     }
     ctx.lineTo(canvasWidth, canvasHeight);
@@ -1011,14 +1670,14 @@ export const drawBars = (
     ctx.fill();
     ctx.beginPath();
     for (let i = 0; i < barsLength; i++) {
-      const h = bufferData[Math.floor((i / barsLength) * bufferLength)];
-      const x = i * barWidth + barWidth / 2;
+      const h = smoothed[i];
+      const x = areaModeBarX(i, barsLength, canvasWidth);
       const y = canvasHeight - h;
       if (i === 0) ctx.moveTo(x, y);
       else ctx.lineTo(x, y);
     }
     ctx.strokeStyle = `rgba(${sr}, ${sg}, ${sb}, ${0.92 * op})`;
-    ctx.lineWidth = Math.max(1, BASE_LINE_WIDTH_WAVEFORM * 0.55);
+    ctx.lineWidth = Math.max(1.6, BASE_LINE_WIDTH_WAVEFORM * 1.05);
     ctx.stroke();
   } else if (mode === 8) {
     // モード8: 音圧パルス（周波数分解なし、全帯域の音圧でリング/グローが脈動）
@@ -1251,8 +1910,11 @@ export const drawBars = (
   } else if (mode === 6) {
     // モード6: グライコ風（1980年代コンポ風ピークホールド）
     analyser.getByteFrequencyData(bufferData);
-    const barsLength = 64;
-    const barWidth = canvasWidth / barsLength;
+    const retro = settings.retroEqParams;
+    const barsLength = Math.max(24, Math.min(160, Math.round(retro?.bars ?? 64)));
+    const gapMul = Math.max(0.5, Math.min(2, retro?.barGap ?? 1));
+    const widthMul = Math.max(0.5, Math.min(2, retro?.barWidth ?? 1));
+    const { barPitch, barWidth, barGap } = glycoBarLayout(canvasWidth, barsLength, widthMul, gapMul);
     const scale = (canvasHeight / 255) * GLYCO_BAR_VERTICAL_SCALE;
     const holdMs = 350;
     const decayPerFrame = 2.5;
@@ -1271,6 +1933,16 @@ export const drawBars = (
     const lastPeakTime = peakState.lastPeakTime;
 
     const getColor = (i: number) => {
+      if (colorSet === "palette") {
+        const p = settings.spectrumColorHex ? parseSpectrumHexRgb(settings.spectrumColorHex) : null;
+        const bar: [number, number, number] = p ?? GLYCO_COLOR_SETS.amber.bar;
+        const dash: [number, number, number] = [
+          Math.min(255, bar[0] + 44),
+          Math.min(255, bar[1] + 44),
+          Math.min(255, bar[2] + 44),
+        ];
+        return { bar, dash };
+      }
       if (GLYCO_COLOR_SETS[colorSet]) {
         const c = GLYCO_COLOR_SETS[colorSet];
         return { bar: c.bar, dash: c.dash };
@@ -1286,14 +1958,23 @@ export const drawBars = (
 
     const useVerticalGradient = colorSet === "verticalEQ";
     const useVerticalGradientFixed = colorSet === "verticalEQFixed";
-    const opacity = 0.6 * settings.opacity;
+    const glycoOp = settings.opacity;
+    const opacity = glycoOp;
     const peakLineWidth = 5; // ピーク「-」を太く
+    const glycoRotationRad = ((settings.glycoRotationDeg ?? 0) * Math.PI) / 180;
+
+    if (glycoRotationRad !== 0) {
+      ctx.save();
+      ctx.translate(canvasWidth / 2, canvasHeight / 2);
+      ctx.rotate(glycoRotationRad);
+      ctx.translate(-canvasWidth / 2, -canvasHeight / 2);
+    }
 
     for (let i = 0; i < barsLength; i++) {
       const rawValue = glycoBarRawEnergy(i, barsLength, bufferLength, bufferData);
       const value = glycoAdjustedLevel(rawValue);
       const barHeight = Math.min(value * scale, canvasHeight);
-      const x = i * barWidth;
+      const x = i * barPitch + barGap * 0.5;
 
       if (value >= peak[i]) {
         peak[i] = value;
@@ -1327,24 +2008,71 @@ export const drawBars = (
       } else {
         ctx.fillStyle = `rgba(${bar[0]}, ${bar[1]}, ${bar[2]}, ${opacity})`;
       }
-      ctx.fillRect(x, canvasHeight - barHeight, barWidth, barHeight);
+      if ((retro?.style ?? "bars") === "dots") {
+        const dotStep = Math.max(3, (retro?.dotGap ?? 1) * 6);
+        const dotR = Math.max(1, (retro?.dotSize ?? 1) * 3.2);
+        const dotCount = Math.max(2, Math.floor(barHeight / dotStep));
+        for (let d = 0; d < dotCount; d++) {
+          const yy = canvasHeight - d * dotStep;
+          const tt = d / Math.max(1, dotCount - 1);
+          const rr = Math.round(40 + (255 - 40) * tt);
+          const gg = Math.round(220 - 80 * tt);
+          const bb = Math.round(60 - 20 * tt);
+          ctx.fillStyle = `rgba(${rr}, ${gg}, ${bb}, ${Math.min(0.88, opacity)})`;
+          ctx.beginPath();
+          ctx.arc(x + barWidth * 0.5, yy, dotR, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      } else {
+        ctx.fillRect(x, canvasHeight - barHeight, barWidth, barHeight);
+      }
 
       const peakHeight = Math.min(peak[i] * scale, canvasHeight);
       const dashWidth = barWidth * 0.7;
       const dashX = x + (barWidth - dashWidth) / 2;
       const dashY = canvasHeight - peakHeight;
       ctx.strokeStyle = (useVerticalGradient || useVerticalGradientFixed)
-        ? `rgba(100, 200, 255, ${0.95 * settings.opacity})`
-        : `rgba(${dash[0]}, ${dash[1]}, ${dash[2]}, ${0.95 * settings.opacity})`;
+        ? `rgba(100, 200, 255, ${0.95 * glycoOp})`
+        : `rgba(${dash[0]}, ${dash[1]}, ${dash[2]}, ${0.95 * glycoOp})`;
       ctx.lineWidth = peakLineWidth;
       ctx.beginPath();
       ctx.moveTo(dashX, dashY);
       ctx.lineTo(dashX + dashWidth, dashY);
       ctx.stroke();
     }
+    if (glycoRotationRad !== 0) {
+      ctx.restore();
+    }
+    if (retro?.crtOn || retro?.vhsOn) {
+      const n = Math.max(0, Math.min(1, retro.noise ?? 0.12));
+      const sc = Math.max(0, Math.min(1, retro.scanline ?? 0.2));
+      const ca = Math.max(0, Math.min(1, retro.chroma ?? 0.08));
+      const jt = Math.max(0, Math.min(1, retro.jitter ?? 0.05));
+      const tr = Math.max(0, Math.min(1, retro.trail ?? 0.18));
+      if (retro.crtOn) {
+        for (let y = 0; y < canvasHeight; y += 3) {
+          ctx.fillStyle = `rgba(0, 0, 0, ${0.06 * sc})`;
+          ctx.fillRect(0, y, canvasWidth, 1);
+        }
+        ctx.strokeStyle = `rgba(${Math.min(255, pr + 20)}, ${Math.min(255, pg + 10)}, ${Math.min(255, pb + 30)}, ${0.15 * ca})`;
+        ctx.lineWidth = 1;
+        ctx.strokeRect(2, 2, canvasWidth - 4, canvasHeight - 4);
+      }
+      if (retro.vhsOn) {
+        const jx = (Math.random() - 0.5) * 16 * jt;
+        ctx.fillStyle = `rgba(0, 0, 0, ${0.05 + tr * 0.08})`;
+        ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+        for (let i = 0; i < 8; i++) {
+          const y = Math.random() * canvasHeight;
+          ctx.fillStyle = `rgba(255,255,255,${0.02 + n * 0.08})`;
+          ctx.fillRect(jx, y, canvasWidth, 1);
+        }
+      }
+    }
   }
 
   // 調整パラメータの適用を解除
+  ctx.restore();
   ctx.restore();
   }
 
@@ -1353,6 +2081,10 @@ export const drawBars = (
 
   // エフェクトオーバーレイ（背景→スペアナの上。字幕/UIより下）
   if (effect && effect.type !== "none") {
+    ctx.save();
+    if (imageTimelineFadeAlpha < 0.999) {
+      ctx.globalAlpha = imageTimelineFadeAlpha;
+    }
     let effectForOverlay: EffectParams = effect;
     // 主役埋もれ対策: 雨/ほこり/scanlines はスペアナ表示中に自動減衰
     if ((effect.type === "rain" || effect.type === "dust" || effect.type === "scanlines") && mode !== -1) {
@@ -1363,6 +2095,7 @@ export const drawBars = (
       };
     }
     drawEffectOverlayCanvas(ctx, canvasWidth, canvasHeight, effectForOverlay, getAudioReactive());
+    ctx.restore();
   }
 
   // 字幕オーバーレイ
