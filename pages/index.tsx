@@ -2037,8 +2037,6 @@ const Home: NextPage = () => {
 
   const beginSpaceCenterGuide = useCallback(() => setShowSpaceCenterGuide(true), []);
   const endSpaceCenterGuide = useCallback(() => setShowSpaceCenterGuide(false), []);
-  const beginSpectrumOffsetGuide = useCallback(() => setShowSpectrumOffsetGuide(true), []);
-  const endSpectrumOffsetGuide = useCallback(() => setShowSpectrumOffsetGuide(false), []);
 
   const handleOffsetSliderChange = useCallback(
     (key: "offsetX" | "offsetY", value: number) => {
@@ -6130,19 +6128,12 @@ const Home: NextPage = () => {
                         px: Math.round((getCanvasDimensions(activeCanvasLayout).width * modeAdjustments.offsetX) / 100),
                       })}
                     </Typography>
-                    <Slider
+                    <ResettableSlider
                       value={modeAdjustments.offsetX}
-                      onChange={(_, value) => {
-                        if (mode === 2) setShowSpectrumOffsetGuide(true);
-                        handleAdjustmentChange("offsetX", value as number);
-                      }}
-                      onMouseDown={mode === 2 ? beginSpectrumOffsetGuide : undefined}
-                      onTouchStart={mode === 2 ? beginSpectrumOffsetGuide : undefined}
-                      onFocus={mode === 2 ? beginSpectrumOffsetGuide : undefined}
-                      onChangeCommitted={mode === 2 ? endSpectrumOffsetGuide : undefined}
-                      onMouseUp={mode === 2 ? endSpectrumOffsetGuide : undefined}
-                      onTouchEnd={mode === 2 ? endSpectrumOffsetGuide : undefined}
-                      onBlur={mode === 2 ? endSpectrumOffsetGuide : undefined}
+                      onChange={(_, value) => handleOffsetSliderChange("offsetX", value as number)}
+                      onChangeCommitted={handleOffsetSliderCommitted}
+                      {...spectrumOffsetSliderGuideProps}
+                      onResetToDefault={() => handleAdjustmentChange("offsetX", DEFAULT_ADJUSTMENTS.offsetX)}
                       min={-150}
                       max={150}
                       step={1}
@@ -6158,19 +6149,12 @@ const Home: NextPage = () => {
                         px: Math.round((getCanvasDimensions(activeCanvasLayout).height * modeAdjustments.offsetY) / 100),
                       })}
                     </Typography>
-                    <Slider
+                    <ResettableSlider
                       value={modeAdjustments.offsetY}
-                      onChange={(_, value) => {
-                        if (mode === 2) setShowSpectrumOffsetGuide(true);
-                        handleAdjustmentChange("offsetY", value as number);
-                      }}
-                      onMouseDown={mode === 2 ? beginSpectrumOffsetGuide : undefined}
-                      onTouchStart={mode === 2 ? beginSpectrumOffsetGuide : undefined}
-                      onFocus={mode === 2 ? beginSpectrumOffsetGuide : undefined}
-                      onChangeCommitted={mode === 2 ? endSpectrumOffsetGuide : undefined}
-                      onMouseUp={mode === 2 ? endSpectrumOffsetGuide : undefined}
-                      onTouchEnd={mode === 2 ? endSpectrumOffsetGuide : undefined}
-                      onBlur={mode === 2 ? endSpectrumOffsetGuide : undefined}
+                      onChange={(_, value) => handleOffsetSliderChange("offsetY", value as number)}
+                      onChangeCommitted={handleOffsetSliderCommitted}
+                      {...spectrumOffsetSliderGuideProps}
+                      onResetToDefault={() => handleAdjustmentChange("offsetY", DEFAULT_ADJUSTMENTS.offsetY)}
                       min={-150}
                       max={150}
                       step={1}
@@ -8549,7 +8533,11 @@ const Home: NextPage = () => {
 
         <div className={`${styles.canvasWrapper} ${styles.desktopLeftPreview} rounded-2xl border border-slate-200/80 bg-white/90 px-3 pb-3 pt-2 shadow-sm md:px-4 md:pb-4 dark:border-slate-600/50 dark:bg-slate-900/80 dark:shadow-md`}>
           <div className="flex justify-center py-5 px-2 md:py-7 md:px-4">
-            <div className={styles.previewCanvasStage} data-size={activeCanvasLayout}>
+            <div
+              className={styles.previewCanvasStage}
+              data-size={activeCanvasLayout}
+              ref={previewCanvasStageRef}
+            >
               <canvas
                 key={rendererType}
                 className={styles.canvas}
@@ -8557,9 +8545,9 @@ const Home: NextPage = () => {
                 data-size={activeCanvasLayout}
               ></canvas>
               {isSpaceEffect && showSpaceCenterGuide && (
-                <div className={styles.previewOverlayLayer}>
+                <div className={styles.spaceCenterGuideLayer}>
                   <div
-                    className={styles.previewGuideDot}
+                    className={styles.spaceCenterGuideDot}
                     style={{
                       left: `${spaceCenterGuidePos.leftPercent}%`,
                       top: `${spaceCenterGuidePos.topPercent}%`,
@@ -8568,13 +8556,18 @@ const Home: NextPage = () => {
                 </div>
               )}
               {mode === 2 && showSpectrumOffsetGuide && (
-                <div className={styles.previewOverlayLayer}>
+                <div className={styles.spaceCenterGuideLayer}>
                   <div
-                    className={styles.previewGuideDot}
+                    role="presentation"
+                    className={`${styles.spaceCenterGuideDot} ${styles.spectrumOffsetGuideDot}`}
                     style={{
                       left: `${spectrumOffsetGuidePos.leftPercent}%`,
                       top: `${spectrumOffsetGuidePos.topPercent}%`,
                     }}
+                    onPointerDown={handleSpectrumGuidePointerDown}
+                    onPointerMove={handleSpectrumGuidePointerMove}
+                    onPointerUp={handleSpectrumGuidePointerUp}
+                    onPointerCancel={handleSpectrumGuidePointerUp}
                   />
                 </div>
               )}

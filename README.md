@@ -29,7 +29,7 @@ Static build with SEO-friendly absolute URLs for that host: `npm run build:html:
 - **Video generation**: MP4 output plus a fast-generation path when the alternative encoder route is available; normal recording quality is preserved up to 60 fps
 - **Settings management**: Export/import settings JSON, persistent saved values, and one-click clear
 - **Client persistence**: Most settings use **localStorage** (`lib/mwvCookieStorage.ts`), with one-time migration from legacy cookies on first read
-- **UI extras**: Dark/light mode toggle and bilingual Japanese / English UI
+- **UI extras**: Dark/light mode toggle, bilingual Japanese / English UI, and a **desktop two-pane layout** (preview + controls) from 1024px width upward
 
 ## Quick Start
 

@@ -45,6 +45,7 @@ dist/
 # ビルド出力
 out/
 visualizer/
+visualizer.これが最新/
 
 # postinstall で @ffmpeg/core から生成
 public/ffmpeg-core/

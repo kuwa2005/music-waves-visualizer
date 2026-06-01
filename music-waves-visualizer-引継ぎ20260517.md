@@ -12,8 +12,10 @@
 | スペクトラム | モード 17–19 波形、20 パーティクル、21 放射状、6 レトロEQ＋バー領域のみ暗転 |
 | エフェクト | `waterRipple`（ripple / heart / firework）、軽量モード・適応リング数 |
 | 永続化 | localStorage 正、旧 Cookie 初回移行（`mwvCookieStorage.ts`） |
-| MP4 サムネ | 未指定時は **合成動画の先頭フレーム**（生静止画ではない）— SESSION 文書参照 |
+| MP4 サムネ | **静止画背景**時は原画 JPEG；それ以外は合成の先頭フレーム — [SESSION_20260601.md](docs/SESSION_20260601.md) |
 | 新規 lib | `spectrumAdjustments.ts`, `mp4Thumbnail.ts`, `public/ffmpeg` コピー先追加 |
+| **2ペイン UI** | `≥1024px` 左プレビュー＋右タブ。誤 `checkout HEAD` 後に transcript / 静的 bundle 照合で復元（`a68ec07`） |
+| **offset スライダー** | `ResettableSlider` + モード2プレビューガイド●（ドラッグ可） |
 
 **2026-05-23 セッション追記** — 詳細は [docs/audio-quality.md](docs/audio-quality.md)、[docs/CHANGELOG.md](docs/CHANGELOG.md) Unreleased。
 

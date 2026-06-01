@@ -62,6 +62,8 @@ Effects are shown during preview/recording only. Strength: weak / medium / stron
 - Spectrum and effect adjustment sections are collapsible (default collapsed)
 - Resolution controls are located in **Settings** tab; the chosen preset (including **Auto** resolved to 16:9 / 9:16 / 1:1) is persisted
 - Hidden SRT authoring is toggled from the **SRT** checkbox in the Settings tab under bitrate settings. When enabled, the Subtitle tab shows **Subtitle authoring (hidden feature)** / **字幕作成支援（隠し機能）**.
+- **Desktop layout (≥1024px)**: Two-pane grid (`desktopTwoPane`) — **left**: file drop zone + sticky live preview canvas; **right**: tabbed controls (`pages/index.tsx`, `styles/Home.module.scss`). Below 1024px the layout stacks in a single column.
+- **Spectrum position (all modes)**: Per-layout/mode **offsetX** / **offsetY** sliders are **±150%** of canvas size (integer %). Implemented as **`ResettableSlider`** (double-click or reset control → defaults). **Mode 2 (circle)**: while adjusting offset sliders, a guide dot overlays the preview (`previewCanvasStageRef`); the dot can be dragged to update offset via `spectrumAdjustments` inverse mapping.
 
 ## 5. Settings Export/Import
 
@@ -101,6 +103,7 @@ Effects are shown during preview/recording only. Strength: weak / medium / stron
 
 - スペクトラムは内部で7モードあるが、**UI では OFF＋5種**（折れ線・波形上下対称のボタンは非表示。描画は残す）。
 - **きらきら**はラジアルグロウなし（星形のみ）。**空気感（ほこり）**は単色の小さな円で表現（Canvas/WebGL で方針を揃えた記述は上記）。
-- **設定の保存**は第一党 Cookie が主。クリップは開始＋長さで区間指定（長さ空欄＝末尾まで）。
+- **設定の保存**は **localStorage** が正（旧 Cookie は初回移行）。クリップは開始＋長さで区間指定（長さ空欄＝末尾まで）。
+- **デスクトップ（1024px以上）**は左プレビュー＋右タブの2ペイン。スペクトラム位置は **ResettableSlider**（±150%）、モード2はプレビュー上のガイド●で調整可。
 - **SRT 作成支援**は設定タブの **SRT** チェックで表示する隠し機能。プレビュー時の動画背景は 30fps に間引くが、録画品質は最大 60fps まで維持する。
 - **MP4 の音楽／背景動画の分離**は [VIDEO_BACKGROUND.md](./VIDEO_BACKGROUND.md) と [仕様書.md](./仕様書.md) §3.1 を参照。

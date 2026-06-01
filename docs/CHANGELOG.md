@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed (2026-06-01 — layout recovery follow-up)
+- **Accidental `git checkout HEAD -- pages/index.tsx`**: Reverted the in-progress 2-pane UI (`desktopTwoPane`, left preview + right controls). Restored from agent transcript + diff against static bundles under `visualizer/` / `visualizer.これが最新/` (build artifacts, not tracked).
+- **Spectrum position sliders (mode 2)**: Horizontal/vertical offset use **`ResettableSlider`** with shared `handleOffsetSliderChange` / `spectrumOffsetSliderGuideProps` (double-click reset, guide dot while dragging). Preview overlay uses `previewCanvasStageRef`, `spaceCenterGuideLayer` / `spectrumOffsetGuideDot`, and pointer drag on the guide dot (`lib/spectrumAdjustments.ts` mapping).
+
 ### Added (2026-06-01 session — rendering / lib)
 - **Screen tab (still background)**: `lib/screenMotion.ts`, `lib/drawStillScreenBackground.ts` — zoom/pan (per-axis speed), image fade in/out on clip timeline, audio-reactive brightness/shake/chorus zoom/flash. Excludes background video, gallery transitions, QuickVideoEncoder.
 - **Spectrum modes 17–21**: Wave family (17–19), particle (20), radial (21) in `lib/Canvas.ts` + `lib/WebGLRenderer.ts`; **retro EQ glyco** extensions on mode 6 (`retroEqParams`, region-only background dim via `glycoBarRegionBounds`).
@@ -16,8 +20,9 @@
 - **Performance**: Spectrum throttle for modes 1 & 5; water-ripple adaptive scale; shared target-fps pacing in Canvas/WebGL.
 
 ### Documentation (2026-06-01)
-- **[SESSION_20260601.md](./SESSION_20260601.md)**: Session hub (screen tab, modes 17–21, ripple, persistence, MP4 frame 0 behavior).
+- **[SESSION_20260601.md](./SESSION_20260601.md)**: Session hub (screen tab, modes 17–21, ripple, persistence, MP4 frame 0, 2-pane UI recovery, spectrum offset sliders).
 - **[FFMPEG.md](./FFMPEG.md)**: Clarified `attached_pic` vs unprocessed stills.
+- **[SPECIFICATION.md](./SPECIFICATION.md)**: Desktop 2-pane layout (≥1024px); spectrum offset `ResettableSlider` + preview guide behavior.
 
 ### Added
 - **Mirror ball effect**: Canvas 2D + WebGL overlay (`lib/Effects.ts`, `lib/Canvas.ts`, `lib/WebGLRenderer.ts`). UI picker entry is **hidden** via `EFFECT_TYPES_UI_HIDDEN` in `pages/index.tsx`; settings remain in cookies/export when type is `mirrorBall`.
