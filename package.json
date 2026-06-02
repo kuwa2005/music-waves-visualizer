@@ -1,7 +1,7 @@
 {
   "private": "true",
   "name": "mwv",
-  "version": "1.0.3",
+  "version": "1.0.5",
   "description": "Music Waves Visualizer is a web page to create audio waveforms and movie by loading image and music.",
   "license": "MIT",
   "author": "komura-c",

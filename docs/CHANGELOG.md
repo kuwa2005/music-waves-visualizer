@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.0.5] - 2026-06-02
+
 ### Fixed (2026-06-02 — i18n restore)
 - **Hardcoded English in UI**: Spectrum modes 17–21, retro EQ (mode 6), screen-tab motion sliders, and Settings **SRT** toggle now use `t()` with keys in `locales/ja.json` / `locales/en.json`.
 - **Missing locale keys**: Restored ~58 keys (`waveFamily`, `particleSpectrum`, `radialSpectrum`, `retroEq`, extended `screen.*`, `subtitle.author.panelToggle`) that caused raw key strings or blank labels after the layout-overhaul branch.
