@@ -5922,11 +5922,11 @@ const Home: NextPage = () => {
                     )}
                     {(mode === 17 || mode === 18 || mode === 19) && (
                       <Box sx={{ mb: 3 }}>
-                        <Typography gutterBottom>Wave Height {waveFamilyParams.height.toFixed(2)}</Typography>
+                        <Typography gutterBottom>{t("waveFamily.height", { value: waveFamilyParams.height.toFixed(2) })}</Typography>
                         <ResettableSlider value={waveFamilyParams.height} min={0.1} max={0.8} step={0.01}
                           onChange={(_, v) => setWaveFamilyParams((p) => ({ ...p, height: v as number }))}
                           onResetToDefault={() => setWaveFamilyParams((p) => ({ ...p, height: DEFAULT_WAVE_FAMILY_PARAMS.height }))} />
-                        <Typography gutterBottom sx={{ mt: 2 }}>Wave Width {waveFamilyParams.width.toFixed(2)}</Typography>
+                        <Typography gutterBottom sx={{ mt: 2 }}>{t("waveFamily.width", { value: waveFamilyParams.width.toFixed(2) })}</Typography>
                         <ResettableSlider value={waveFamilyParams.width} min={0.3} max={1.0} step={0.01}
                           onChange={(_, v) => setWaveFamilyParams((p) => ({ ...p, width: v as number }))}
                           onResetToDefault={() => setWaveFamilyParams((p) => ({ ...p, width: DEFAULT_WAVE_FAMILY_PARAMS.width }))} />
@@ -5936,11 +5936,11 @@ const Home: NextPage = () => {
                         <ResettableSlider value={waveFamilyParams.thickness} min={0.8} max={6.0} step={0.1}
                           onChange={(_, v) => setWaveFamilyParams((p) => ({ ...p, thickness: v as number }))}
                           onResetToDefault={() => setWaveFamilyParams((p) => ({ ...p, thickness: DEFAULT_WAVE_FAMILY_PARAMS.thickness }))} />
-                        <Typography gutterBottom sx={{ mt: 2 }}>Flow {waveFamilyParams.flowSpeed.toFixed(2)}</Typography>
+                        <Typography gutterBottom sx={{ mt: 2 }}>{t("waveFamily.flow", { value: waveFamilyParams.flowSpeed.toFixed(2) })}</Typography>
                         <ResettableSlider value={waveFamilyParams.flowSpeed} min={0} max={2} step={0.01}
                           onChange={(_, v) => setWaveFamilyParams((p) => ({ ...p, flowSpeed: v as number }))}
                           onResetToDefault={() => setWaveFamilyParams((p) => ({ ...p, flowSpeed: DEFAULT_WAVE_FAMILY_PARAMS.flowSpeed }))} />
-                        <Typography gutterBottom sx={{ mt: 2 }}>Glow {waveFamilyParams.glow.toFixed(2)}</Typography>
+                        <Typography gutterBottom sx={{ mt: 2 }}>{t("waveFamily.glow", { value: waveFamilyParams.glow.toFixed(2) })}</Typography>
                         <ResettableSlider value={waveFamilyParams.glow} min={0} max={1} step={0.01}
                           onChange={(_, v) => setWaveFamilyParams((p) => ({ ...p, glow: v as number }))}
                           onResetToDefault={() => setWaveFamilyParams((p) => ({ ...p, glow: DEFAULT_WAVE_FAMILY_PARAMS.glow }))} />
@@ -5949,28 +5949,28 @@ const Home: NextPage = () => {
                     {mode === 20 && (
                       <Box sx={{ mb: 3 }}>
                         <FormControl size="small" fullWidth sx={{ mb: 2 }}>
-                          <InputLabel>Particle Pattern</InputLabel>
-                          <Select value={particleSpectrumParams.pattern} label="Particle Pattern"
+                          <InputLabel>{t("particleSpectrum.pattern")}</InputLabel>
+                          <Select value={particleSpectrumParams.pattern} label={t("particleSpectrum.pattern")}
                             onChange={(e) => setParticleSpectrumParams((p) => ({ ...p, pattern: e.target.value as ParticleSpectrumParams["pattern"] }))}>
-                            <MenuItem value="soft">Soft</MenuItem>
-                            <MenuItem value="star">Star</MenuItem>
-                            <MenuItem value="spark">Spark</MenuItem>
-                            <MenuItem value="mist">Mist</MenuItem>
+                            <MenuItem value="soft">{t("particleSpectrum.patternSoft")}</MenuItem>
+                            <MenuItem value="star">{t("particleSpectrum.patternStar")}</MenuItem>
+                            <MenuItem value="spark">{t("particleSpectrum.patternSpark")}</MenuItem>
+                            <MenuItem value="mist">{t("particleSpectrum.patternMist")}</MenuItem>
                           </Select>
                         </FormControl>
-                        <Typography gutterBottom>Count {particleSpectrumParams.count}</Typography>
+                        <Typography gutterBottom>{t("particleSpectrum.count", { value: particleSpectrumParams.count })}</Typography>
                         <ResettableSlider value={particleSpectrumParams.count} min={10} max={300} step={1}
                           onChange={(_, v) => setParticleSpectrumParams((p) => ({ ...p, count: v as number }))}
                           onResetToDefault={() => setParticleSpectrumParams((p) => ({ ...p, count: DEFAULT_PARTICLE_SPECTRUM_PARAMS.count }))} />
-                        <Typography gutterBottom sx={{ mt: 2 }}>Size {particleSpectrumParams.size.toFixed(2)}</Typography>
+                        <Typography gutterBottom sx={{ mt: 2 }}>{t("particleSpectrum.size", { value: particleSpectrumParams.size.toFixed(2) })}</Typography>
                         <ResettableSlider value={particleSpectrumParams.size} min={0.8} max={3} step={0.01}
                           onChange={(_, v) => setParticleSpectrumParams((p) => ({ ...p, size: v as number }))}
                           onResetToDefault={() => setParticleSpectrumParams((p) => ({ ...p, size: DEFAULT_PARTICLE_SPECTRUM_PARAMS.size }))} />
-                        <Typography gutterBottom sx={{ mt: 2 }}>Life {particleSpectrumParams.life.toFixed(2)}</Typography>
+                        <Typography gutterBottom sx={{ mt: 2 }}>{t("particleSpectrum.life", { value: particleSpectrumParams.life.toFixed(2) })}</Typography>
                         <ResettableSlider value={particleSpectrumParams.life} min={0.3} max={3} step={0.01}
                           onChange={(_, v) => setParticleSpectrumParams((p) => ({ ...p, life: v as number }))}
                           onResetToDefault={() => setParticleSpectrumParams((p) => ({ ...p, life: DEFAULT_PARTICLE_SPECTRUM_PARAMS.life }))} />
-                        <Typography gutterBottom sx={{ mt: 2 }}>Boost {particleSpectrumParams.boost.toFixed(2)}</Typography>
+                        <Typography gutterBottom sx={{ mt: 2 }}>{t("particleSpectrum.boost", { value: particleSpectrumParams.boost.toFixed(2) })}</Typography>
                         <ResettableSlider value={particleSpectrumParams.boost} min={0.2} max={2.5} step={0.01}
                           onChange={(_, v) => setParticleSpectrumParams((p) => ({ ...p, boost: v as number }))}
                           onResetToDefault={() => setParticleSpectrumParams((p) => ({ ...p, boost: DEFAULT_PARTICLE_SPECTRUM_PARAMS.boost }))} />
@@ -5978,39 +5978,39 @@ const Home: NextPage = () => {
                     )}
                     {mode === 21 && (
                       <Box sx={{ mb: 3 }}>
-                        <Typography gutterBottom>Bars {radialSpectrumParams.bars}</Typography>
+                        <Typography gutterBottom>{t("radialSpectrum.bars", { value: radialSpectrumParams.bars })}</Typography>
                         <ResettableSlider value={radialSpectrumParams.bars} min={24} max={220} step={1}
                           onChange={(_, v) => setRadialSpectrumParams((p) => ({ ...p, bars: v as number }))}
                           onResetToDefault={() => setRadialSpectrumParams((p) => ({ ...p, bars: DEFAULT_RADIAL_SPECTRUM_PARAMS.bars }))} />
-                        <Typography gutterBottom sx={{ mt: 2 }}>Center Gap {radialSpectrumParams.centerGap.toFixed(2)}</Typography>
+                        <Typography gutterBottom sx={{ mt: 2 }}>{t("radialSpectrum.centerGap", { value: radialSpectrumParams.centerGap.toFixed(2) })}</Typography>
                         <ResettableSlider value={radialSpectrumParams.centerGap} min={0.1} max={0.95} step={0.01}
                           onChange={(_, v) => setRadialSpectrumParams((p) => ({ ...p, centerGap: v as number }))}
                           onResetToDefault={() => setRadialSpectrumParams((p) => ({ ...p, centerGap: DEFAULT_RADIAL_SPECTRUM_PARAMS.centerGap }))} />
-                        <Typography gutterBottom sx={{ mt: 2 }}>Kick Scale {radialSpectrumParams.kickScale.toFixed(2)}</Typography>
+                        <Typography gutterBottom sx={{ mt: 2 }}>{t("radialSpectrum.kickScale", { value: radialSpectrumParams.kickScale.toFixed(2) })}</Typography>
                         <ResettableSlider value={radialSpectrumParams.kickScale} min={0} max={0.5} step={0.01}
                           onChange={(_, v) => setRadialSpectrumParams((p) => ({ ...p, kickScale: v as number }))}
                           onResetToDefault={() => setRadialSpectrumParams((p) => ({ ...p, kickScale: DEFAULT_RADIAL_SPECTRUM_PARAMS.kickScale }))} />
                         <FormControlLabel sx={{ mt: 1 }}
                           control={<Switch checked={radialSpectrumParams.rotate} onChange={(_, c) => setRadialSpectrumParams((p) => ({ ...p, rotate: c }))} size="small" />}
-                          label="Rotate" />
+                          label={t("radialSpectrum.rotate")} />
                       </Box>
                     )}
                     {mode === 6 && (
                       <Box sx={{ mb: 3 }}>
-                        <Typography gutterBottom>Retro EQ Style</Typography>
+                        <Typography gutterBottom>{t("retroEq.style")}</Typography>
                         <FormControl size="small" fullWidth sx={{ mb: 2 }}>
                           <Select value={retroEqParams.style}
                             onChange={(e) => setRetroEqParams((p) => ({ ...p, style: e.target.value as RetroEqParams["style"] }))}>
-                            <MenuItem value="bars">Bars</MenuItem>
-                            <MenuItem value="dots">LED Dots</MenuItem>
+                            <MenuItem value="bars">{t("retroEq.styleBars")}</MenuItem>
+                            <MenuItem value="dots">{t("retroEq.styleLedDots")}</MenuItem>
                           </Select>
                         </FormControl>
                         <FormControlLabel control={<Switch checked={retroEqParams.crtOn}
-                          onChange={(_, c) => setRetroEqParams((p) => ({ ...p, crtOn: c }))} size="small" />} label="CRT FX" />
+                          onChange={(_, c) => setRetroEqParams((p) => ({ ...p, crtOn: c }))} size="small" />} label={t("retroEq.crtFx")} />
                         <FormControlLabel control={<Switch checked={retroEqParams.vhsOn}
-                          onChange={(_, c) => setRetroEqParams((p) => ({ ...p, vhsOn: c }))} size="small" />} label="VHS FX" />
+                          onChange={(_, c) => setRetroEqParams((p) => ({ ...p, vhsOn: c }))} size="small" />} label={t("retroEq.vhsFx")} />
                         <Typography gutterBottom sx={{ mt: 2 }}>
-                          Bars {retroEqParams.bars.toFixed(0)}
+                          {t("retroEq.bars", { value: retroEqParams.bars.toFixed(0) })}
                         </Typography>
                         <ResettableSlider
                           value={retroEqParams.bars}
@@ -6021,7 +6021,7 @@ const Home: NextPage = () => {
                           onResetToDefault={() => setRetroEqParams((p) => ({ ...p, bars: DEFAULT_RETRO_EQ_PARAMS.bars }))}
                         />
                         <Typography gutterBottom sx={{ mt: 2 }}>
-                          Scanline {retroEqParams.scanline.toFixed(2)}
+                          {t("retroEq.scanline", { value: retroEqParams.scanline.toFixed(2) })}
                         </Typography>
                         <ResettableSlider
                           value={retroEqParams.scanline}
@@ -6032,7 +6032,7 @@ const Home: NextPage = () => {
                           onResetToDefault={() => setRetroEqParams((p) => ({ ...p, scanline: DEFAULT_RETRO_EQ_PARAMS.scanline }))}
                         />
                         <Typography gutterBottom sx={{ mt: 2 }}>
-                          Chroma Shift {retroEqParams.chroma.toFixed(2)}
+                          {t("retroEq.chromaShift", { value: retroEqParams.chroma.toFixed(2) })}
                         </Typography>
                         <ResettableSlider
                           value={retroEqParams.chroma}
@@ -6043,7 +6043,7 @@ const Home: NextPage = () => {
                           onResetToDefault={() => setRetroEqParams((p) => ({ ...p, chroma: DEFAULT_RETRO_EQ_PARAMS.chroma }))}
                         />
                         <Typography gutterBottom sx={{ mt: 2 }}>
-                          Noise {retroEqParams.noise.toFixed(2)}
+                          {t("retroEq.noise", { value: retroEqParams.noise.toFixed(2) })}
                         </Typography>
                         <ResettableSlider
                           value={retroEqParams.noise}
@@ -6054,7 +6054,7 @@ const Home: NextPage = () => {
                           onResetToDefault={() => setRetroEqParams((p) => ({ ...p, noise: DEFAULT_RETRO_EQ_PARAMS.noise }))}
                         />
                         <Typography gutterBottom sx={{ mt: 2 }}>
-                          VHS Jitter {retroEqParams.jitter.toFixed(2)}
+                          {t("retroEq.vhsJitter", { value: retroEqParams.jitter.toFixed(2) })}
                         </Typography>
                         <ResettableSlider
                           value={retroEqParams.jitter}
@@ -6065,7 +6065,7 @@ const Home: NextPage = () => {
                           onResetToDefault={() => setRetroEqParams((p) => ({ ...p, jitter: DEFAULT_RETRO_EQ_PARAMS.jitter }))}
                         />
                         <Typography gutterBottom sx={{ mt: 2 }}>
-                          VHS Trail/Bleed {retroEqParams.trail.toFixed(2)}
+                          {t("retroEq.vhsTrailBleed", { value: retroEqParams.trail.toFixed(2) })}
                         </Typography>
                         <ResettableSlider
                           value={retroEqParams.trail}
@@ -6076,7 +6076,7 @@ const Home: NextPage = () => {
                           onResetToDefault={() => setRetroEqParams((p) => ({ ...p, trail: DEFAULT_RETRO_EQ_PARAMS.trail }))}
                         />
                         <Typography gutterBottom sx={{ mt: 2 }}>
-                          VHS Wobble {retroEqParams.decay.toFixed(2)}
+                          {t("retroEq.vhsWobble", { value: retroEqParams.decay.toFixed(2) })}
                         </Typography>
                         <ResettableSlider
                           value={retroEqParams.decay}
@@ -8293,7 +8293,7 @@ const Home: NextPage = () => {
                       disabled={isQuickEncoding || isRecording}
                     />
                   }
-                  label="SRT"
+                  label={t("subtitle.author.panelToggle")}
                   sx={{ display: "block", mb: 2, ml: 0, alignItems: "center" }}
                 />
                 <Divider sx={{ my: 2 }} />

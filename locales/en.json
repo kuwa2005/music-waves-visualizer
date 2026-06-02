@@ -228,6 +228,7 @@
     "displayTimingOffsetHint": "Preview and recording only (does not change SRT data). Negative shows earlier.",
     "author": {
       "sectionTitle": "Subtitle authoring (hidden feature)",
+      "panelToggle": "Subtitle authoring (SRT)",
       "hint": "Paste Suno-style lyrics. Tags in [ ] are removed; blank lines are skipped. Timing uses the loaded audio timeline.",
       "lyricsLabel": "Lyrics text",
       "lyricsPlaceholder": "Paste lyrics here…",
@@ -426,7 +427,7 @@
     "webglCanvasFallbackForMode": "This mode uses Canvas 2D (WebGL unsupported)"
   },
   "encode": {
-    "warning": "Do not switch windows or close while generating",
+    "warning": "Do not switch or close the window while generating the video",
     "loadingFfmpeg": "Loading FFmpeg...",
     "converting": "Converting to MP4… ~{{progress}}%",
     "convertingHint": "When video is stream-copied (not re-encoded), FFmpeg often emits no frame progress. The percentage is an estimate from file size and elapsed time and may not match real completion.",
@@ -492,7 +493,25 @@
     "audioSection": "Audio reactive",
     "brightnessOnPeak": "Slightly brighten background on loud sections",
     "shakeOnChorus": "Shake background slightly on chorus peaks",
-    "flashOnDrop": "Brief flash on drop / peak"
+    "flashOnDrop": "Brief flash on drop / peak",
+    "flashIntensity": "Flash intensity: {{value}}%",
+    "flashDurationSec": "Flash duration: {{value}} s",
+    "flashThreshold": "Flash threshold: {{value}}%",
+    "flashCooldownMs": "Flash cooldown: {{value}} ms",
+    "brightnessStrength": "Brightness boost: {{value}}%",
+    "imageZoom": "Image zoom: {{value}}%",
+    "imageZoomHint": "100% = minimum cover fill (values below are clamped to 100%)",
+    "motionZoomPanHelp": "Forward/back pan oscillates between cover baseline and zoom level. Horizontal/vertical pan moves the crop window.",
+    "panForward": "Forward/back pan: {{value}}%",
+    "panForwardHint": "Depth pan between cover baseline (100%) and image zoom level.",
+    "axisSpeed": "Motion speed: {{value}} (~{{oneWaySec}} s one way / ~{{cycleSec}} s round trip)",
+    "axisSpeedHint": "Per-frame motion is capped even at max speed to avoid jarring jumps.",
+    "panHint": "0% = centered; 100% = full travel between crop edges.",
+    "sensitivityStep": "Sensitivity step: {{value}}",
+    "shakeStrength": "Shake strength: {{value}}",
+    "chorusZoomOnPeak": "Slight background zoom on chorus peaks",
+    "chorusZoomPercent": "Chorus zoom: {{value}}%",
+    "chorusZoomSignHint": "Positive = push in; negative = pull back (%)"
   },
   "titleTab": {
     "title": "Title",
@@ -548,5 +567,42 @@
     "customHex": "Color code (#RRGGBB)",
     "customInvalid": "Use #RRGGBB format",
     "rainbowSymDot": "Rainbow gradient for symmetric bars & dots (modes 3 & 4)"
+  },
+  "waveFamily": {
+    "height": "Wave height: {{value}}",
+    "width": "Wave width: {{value}}",
+    "flow": "Flow: {{value}}",
+    "glow": "Glow: {{value}}"
+  },
+  "particleSpectrum": {
+    "pattern": "Particle pattern",
+    "patternSoft": "Soft",
+    "patternStar": "Star",
+    "patternSpark": "Spark",
+    "patternMist": "Mist",
+    "count": "Count: {{value}}",
+    "size": "Size: {{value}}",
+    "life": "Life: {{value}}",
+    "boost": "Boost: {{value}}"
+  },
+  "radialSpectrum": {
+    "bars": "Bars: {{value}}",
+    "centerGap": "Center gap: {{value}}",
+    "kickScale": "Kick scale: {{value}}",
+    "rotate": "Rotate"
+  },
+  "retroEq": {
+    "style": "Retro EQ style",
+    "styleBars": "Bars",
+    "styleLedDots": "LED dots",
+    "crtFx": "CRT FX",
+    "vhsFx": "VHS FX",
+    "bars": "Bars: {{value}}",
+    "scanline": "Scanline: {{value}}",
+    "chromaShift": "Chroma shift: {{value}}",
+    "noise": "Noise: {{value}}",
+    "vhsJitter": "VHS jitter: {{value}}",
+    "vhsTrailBleed": "VHS trail/bleed: {{value}}",
+    "vhsWobble": "VHS wobble: {{value}}"
   }
 }

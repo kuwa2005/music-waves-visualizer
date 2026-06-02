@@ -228,6 +228,7 @@
     "displayTimingOffsetHint": "プレビュー・録画の表示のみ（SRT データは変更しません）。負の値で早く表示。",
     "author": {
       "sectionTitle": "「字幕作成支援（隠し機能）」",
+      "panelToggle": "字幕作成支援（SRT）",
       "hint": "Suno 等の歌詞を貼り付けます。[ ] 内のタグは無視され、空行はスキップされます。タイミングは現在読み込みの音源の再生位置に合わせます。",
       "lyricsLabel": "歌詞テキスト",
       "lyricsPlaceholder": "ここに歌詞をコピペ…",
@@ -426,7 +427,7 @@
     "webglCanvasFallbackForMode": "このモードはCanvas 2Dで描画します（WebGLは未対応）"
   },
   "encode": {
-    "warning": "生成中はウィンドウを切り替えたり閉じないでください",
+    "warning": "動画を生成中はウィンドウを切り替えたり閉じないでください",
     "loadingFfmpeg": "FFmpegを読み込み中...",
     "converting": "MP4変換中… 目安 {{progress}}%",
     "convertingHint": "映像がコピー（再エンコードなし）のとき、FFmpegはフレーム進捗を出さないことが多いです。％は入力サイズと経過時間から推定した目安で、実際の終了とは一致しません。",
@@ -493,12 +494,24 @@
     "brightnessOnPeak": "曲の盛り上がりで光量を少し上げる",
     "brightnessStrength": "光量アップ強度: {{value}}%",
     "shakeOnChorus": "サビで背景を少し揺らす",
-    "flashOnDrop": "ドロップで一瞬だけフラッシュさせる"
-    ,
+    "flashOnDrop": "ドロップで一瞬だけフラッシュさせる",
     "flashIntensity": "フラッシュ強度: {{value}}%",
     "flashDurationSec": "フラッシュ時間: {{value}} 秒",
     "flashThreshold": "フラッシュ閾値: {{value}}%",
-    "flashCooldownMs": "フラッシュ間隔: {{value}} ms"
+    "flashCooldownMs": "フラッシュ間隔: {{value}} ms",
+    "imageZoom": "画像拡大: {{value}}%",
+    "imageZoomHint": "100%＝画面を埋める最小（それ未満は内部で100%に補正）",
+    "motionZoomPanHelp": "前後パンは cover 基準と拡大率の間を往復します。左右・上下パンはトリミング窓を動かします。",
+    "panForward": "前後パン: {{value}}%",
+    "panForwardHint": "cover 基準(100%)と画像拡大率の間を往復する深度方向のパン量です。",
+    "axisSpeed": "動かす速さ: {{value}}（片道 約{{oneWaySec}}秒 / 往復 約{{cycleSec}}秒）",
+    "axisSpeedHint": "最大でもフレームごとの動きに上限があり、急なカクつきは出ません。",
+    "panHint": "0%=中央固定、100%=はみ出し最大幅の端↔反対端を往復。",
+    "sensitivityStep": "感度ステップ: {{value}}",
+    "shakeStrength": "揺れ強度: {{value}}",
+    "chorusZoomOnPeak": "サビで背景をわずかにズーム",
+    "chorusZoomPercent": "サビ時ズーム: {{value}}%",
+    "chorusZoomSignHint": "＋で押し込み、－で引き（%）"
   },
   "titleTab": {
     "title": "タイトル",
@@ -554,5 +567,42 @@
     "customHex": "カラーコード (#RRGGBB)",
     "customInvalid": "#RRGGBB 形式で入力してください",
     "rainbowSymDot": "上下対称バー・ドットで虹色グラデーション"
+  },
+  "waveFamily": {
+    "height": "波形の高さ: {{value}}",
+    "width": "波形の幅: {{value}}",
+    "flow": "流れ: {{value}}",
+    "glow": "発光: {{value}}"
+  },
+  "particleSpectrum": {
+    "pattern": "パーティクルパターン",
+    "patternSoft": "ソフト",
+    "patternStar": "星",
+    "patternSpark": "スパーク",
+    "patternMist": "ミスト",
+    "count": "数: {{value}}",
+    "size": "サイズ: {{value}}",
+    "life": "寿命: {{value}}",
+    "boost": "ブースト: {{value}}"
+  },
+  "radialSpectrum": {
+    "bars": "バー数: {{value}}",
+    "centerGap": "中心ギャップ: {{value}}",
+    "kickScale": "キックスケール: {{value}}",
+    "rotate": "回転"
+  },
+  "retroEq": {
+    "style": "レトロEQスタイル",
+    "styleBars": "バー",
+    "styleLedDots": "LEDドット",
+    "crtFx": "CRT FX",
+    "vhsFx": "VHS FX",
+    "bars": "バー数: {{value}}",
+    "scanline": "スキャンライン: {{value}}",
+    "chromaShift": "色収差: {{value}}",
+    "noise": "ノイズ: {{value}}",
+    "vhsJitter": "VHSジッター: {{value}}",
+    "vhsTrailBleed": "VHS残像/ブリード: {{value}}",
+    "vhsWobble": "VHS揺れ: {{value}}"
   }
 }

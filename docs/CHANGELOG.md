@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Fixed (2026-06-02 — i18n restore)
+- **Hardcoded English in UI**: Spectrum modes 17–21, retro EQ (mode 6), screen-tab motion sliders, and Settings **SRT** toggle now use `t()` with keys in `locales/ja.json` / `locales/en.json`.
+- **Missing locale keys**: Restored ~58 keys (`waveFamily`, `particleSpectrum`, `radialSpectrum`, `retroEq`, extended `screen.*`, `subtitle.author.panelToggle`) that caused raw key strings or blank labels after the layout-overhaul branch.
+- **`encode.warning`**: Clarified JA/EN copy (“while generating the **video**” / 動画を生成中は…).
+
 ### Fixed (2026-06-01 — layout recovery follow-up)
 - **Accidental `git checkout HEAD -- pages/index.tsx`**: Reverted the in-progress 2-pane UI (`desktopTwoPane`, left preview + right controls). Restored from agent transcript + diff against static bundles under `visualizer/` / `visualizer.これが最新/` (build artifacts, not tracked).
 - **Spectrum position sliders (mode 2)**: Horizontal/vertical offset use **`ResettableSlider`** with shared `handleOffsetSliderChange` / `spectrumOffsetSliderGuideProps` (double-click reset, guide dot while dragging). Preview overlay uses `previewCanvasStageRef`, `spaceCenterGuideLayer` / `spectrumOffsetGuideDot`, and pointer drag on the guide dot (`lib/spectrumAdjustments.ts` mapping).

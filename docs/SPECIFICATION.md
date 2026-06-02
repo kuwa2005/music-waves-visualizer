@@ -27,7 +27,21 @@ https://music-waves-visualizer.vercel.app/
 - **Language**: TypeScript 4.6.2
 - **UI**: Material-UI (MUI) 5.11.4
 - **Styling**: SCSS
-- **i18n**: i18next (Japanese / English)
+- **i18n**: i18next (Japanese / English); strings in `locales/ja.json` and `locales/en.json`
+
+### i18n namespaces (UI)
+
+| Namespace / prefix | Used for |
+|--------------------|----------|
+| `common`, `tabs`, `spectrum`, `effects`, `audio`, `subtitle`, `titleTab`, `clip`, `settings`, `encode`, `videoQuality`, … | Core tabs and shared controls |
+| `screen` | **Screen** tab — still-background zoom/pan, fades, audio-reactive brightness/shake/flash |
+| `waveFamily` | Spectrum modes **17–19** (height/width/flow/glow sliders) |
+| `particleSpectrum` | Mode **20** (pattern, count, size, life, boost) |
+| `radialSpectrum` | Mode **21** (bars, center gap, kick scale, rotate) |
+| `retroEq` | Mode **6** glyco extensions (CRT/VHS, bars/dots style) |
+| `subtitle.author` | Hidden SRT authoring (`panelToggle`, section title, lyrics editor) |
+
+Mode-specific slider labels must exist in both locale files before shipping UI changes in `pages/index.tsx`.
 
 ## 3. Spectrum Modes
 
