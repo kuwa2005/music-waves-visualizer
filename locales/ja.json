@@ -125,7 +125,7 @@
     "waterRippleLightMode": "軽量モード",
     "waterRippleLightModeHint": "ON で描画負荷を抑えます（推奨）",
     "waterRippleAudioSensitivity": "音連動感度: {{value}}",
-    "waterRippleAudioSensitivityHint": "0=音連動オフ（基本の落下のみ）。1〜10で音に合わせた滴の増減・明るさが強くなり、10で最大ブースト",
+    "waterRippleAudioSensitivityHint": "0=音連動オフ。1〜10で水滴・ハート・花火の発生量・明るさが、閾値を超えた音量に比例して強くなります（10で最大）",
     "scanlines": "スキャンライン",
     "mirrorBall": "ミラーボール",
     "mirrorBallPosX": "ボール位置 X: {{value}}%",

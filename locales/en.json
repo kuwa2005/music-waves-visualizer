@@ -125,7 +125,7 @@
     "waterRippleLightMode": "Light mode",
     "waterRippleLightModeHint": "Recommended ON to reduce GPU load",
     "waterRippleAudioSensitivity": "Audio sync sensitivity: {{value}}",
-    "waterRippleAudioSensitivityHint": "0 = audio sync off (base drops only). 1–10 scales spawn rate and brightness with sound; 10 = maximum boost",
+    "waterRippleAudioSensitivityHint": "0 = audio sync off. 1–10 scales ripple, heart, and firework spawn and brightness in proportion to volume above the threshold (10 = max)",
     "scanlines": "Scanlines",
     "mirrorBall": "Mirror ball",
     "mirrorBallPosX": "Ball position X: {{value}}%",

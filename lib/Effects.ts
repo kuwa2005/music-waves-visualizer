@@ -1065,26 +1065,52 @@ export function normalizeRainAudioSensitivity(v: number, fallback = 0): number {
   return Math.round(clamped / RAIN_AUDIO_SENSITIVITY_STEP) * RAIN_AUDIO_SENSITIVITY_STEP;
 }
 
-/** 閾値超えの音源エンベロープ 0〜1（感度とは独立） */
-function resolveRainRawAudioEnvelope(audio: AudioReactiveData): number {
-  const level = Math.max(0, Math.min(1, Math.max(audio.volume, audio.bass * 0.75)));
-  if (level <= RAIN_AUDIO_LEVEL_THRESHOLD) return 0;
-  const span = Math.max(1e-6, 1 - RAIN_AUDIO_LEVEL_THRESHOLD);
-  return Math.min(1, (level - RAIN_AUDIO_LEVEL_THRESHOLD) / span);
+/** 雨・描画エフェクト共通の音レベル 0〜1 */
+function resolveEffectAudioLevel(audio: AudioReactiveData): number {
+  return Math.max(0, Math.min(1, Math.max(audio.volume, audio.bass * 0.75)));
 }
 
 /**
- * 実効変調 0〜1 = 平滑化エンベロープ × (感度/10)。
+ * 閾値超過分の正規化 excess（閾値以下は 0）。
+ * サビ揺れ resolveChorusExcessAboveThreshold と同型: (level - threshold) / (1 - threshold)。
+ */
+export function resolveAudioExcessAboveThreshold(
+  level: number,
+  threshold: number,
+  maxExcess = 1
+): number {
+  if (level <= threshold) return 0;
+  const span = Math.max(1e-6, 1 - threshold);
+  return Math.min(maxExcess, (level - threshold) / span);
+}
+
+/** 閾値超えの音源 excess 0〜1（感度とは独立） */
+function resolveRainRawAudioEnvelope(audio: AudioReactiveData): number {
+  return resolveAudioExcessAboveThreshold(
+    resolveEffectAudioLevel(audio),
+    RAIN_AUDIO_LEVEL_THRESHOLD,
+    1
+  );
+}
+
+function smoothEffectAudioExcess(prev: number, target: number): number {
+  const coeff =
+    target >= prev ? RAIN_AUDIO_ENVELOPE_ATTACK : RAIN_AUDIO_ENVELOPE_RELEASE;
+  return prev + (target - prev) * coeff;
+}
+
+/**
+ * 実効変調 0〜1 = 平滑化 excess × (感度/10)。
  * 感度 0 のとき常に 0（音による増減なし）。
  */
 export function resolveRainAudioModulation(
   audio: AudioReactiveData,
   sensitivity: number,
-  smoothedEnvelope: number
+  smoothedExcess: number
 ): number {
   const sens = normalizeRainAudioSensitivity(sensitivity, 0);
   if (sens <= 0) return 0;
-  return smoothedEnvelope * (sens / RAIN_AUDIO_SENSITIVITY_MAX);
+  return smoothedExcess * (sens / RAIN_AUDIO_SENSITIVITY_MAX);
 }
 
 function pushRainDrop(
@@ -1216,10 +1242,8 @@ export function updateAndGetRainStreaks(
   if (sens <= 0) {
     rainAudioEnvelope = 0;
   } else {
-    const instantRaw = resolveRainRawAudioEnvelope(a);
-    const envCoeff =
-      instantRaw >= rainAudioEnvelope ? RAIN_AUDIO_ENVELOPE_ATTACK : RAIN_AUDIO_ENVELOPE_RELEASE;
-    rainAudioEnvelope += (instantRaw - rainAudioEnvelope) * envCoeff;
+    const instantExcess = resolveRainRawAudioEnvelope(a);
+    rainAudioEnvelope = smoothEffectAudioExcess(rainAudioEnvelope, instantExcess);
   }
   const drive = resolveRainAudioModulation(a, sens, rainAudioEnvelope);
 
@@ -1423,13 +1447,17 @@ interface WaterRippleRing {
   lineWidth: number;
 }
 
-const WATER_RIPPLE_AUDIO_SPAWN_MUL = 0.65;
-const WATER_RIPPLE_AUDIO_ALPHA_BOOST = 0.55;
+/** sens=10・excess=1 時の最大スポーン増幅 (baseRate × (1 + gain)) */
+const WATER_RIPPLE_AUDIO_SPAWN_GAIN = 0.65;
+/** sens=10・excess=1 時の最大明るさ増幅 */
+const WATER_RIPPLE_AUDIO_ALPHA_GAIN = 0.55;
+/** sens=10・excess=1 時の同時表示上限の最大増幅 */
+const WATER_RIPPLE_AUDIO_MAX_RINGS_GAIN = 0.4;
 
 let waterRippleRings: WaterRippleRing[] = [];
 let lastWaterRippleInitKey = "";
 let waterRippleSpawnCarry = 0;
-let waterRippleAudioEnvelope = 0;
+let waterRippleAudioExcess = 0;
 let waterRippleRenderBuffer: WaterRippleRingGl[] = [];
 let waterRippleDrawBuffer: WaterRippleDrawGl[] = [];
 let waterRippleFpsSmoothed = 60;
@@ -1488,32 +1516,40 @@ function capWaterRippleDraws(draws: WaterRippleDrawGl[], cap: number): void {
   draws.splice(0, draws.length - cap);
 }
 
-function spawnWaterRippleHeart(width: number, height: number, nowMs: number): void {
+function spawnWaterRippleHeart(width: number, height: number, nowMs: number, drive = 0): void {
   const minDim = Math.min(width, height);
   const x = Math.random() * width;
   const y = Math.random() * height;
+  const alphaMul = 1 + WATER_RIPPLE_AUDIO_ALPHA_GAIN * drive;
   waterRippleHearts.push({
     x,
     y,
     startMs: nowMs,
     duration: 900 + Math.random() * 600,
-    maxAlpha: 0.52 + Math.random() * 0.2,
+    maxAlpha: (0.52 + Math.random() * 0.2) * alphaMul,
     lineWidth: Math.max(1.3, minDim * 0.0014),
     baseScale: minDim * (0.018 + Math.random() * 0.03),
     rotation: (Math.random() - 0.5) * 0.45,
   });
 }
 
-function spawnWaterRippleFirework(width: number, height: number, nowMs: number, lightMode: boolean): void {
+function spawnWaterRippleFirework(
+  width: number,
+  height: number,
+  nowMs: number,
+  lightMode: boolean,
+  drive = 0
+): void {
   const minDim = Math.min(width, height);
   const x = Math.random() * width;
   const y = Math.random() * height;
+  const alphaMul = 1 + WATER_RIPPLE_AUDIO_ALPHA_GAIN * drive;
   waterRippleFireworks.push({
     x,
     y,
     startMs: nowMs,
     duration: 520 + Math.random() * 520,
-    maxAlpha: 0.5 + Math.random() * 0.25,
+    maxAlpha: (0.5 + Math.random() * 0.25) * alphaMul,
     lineWidth: Math.max(1.1, minDim * 0.0013),
     baseRadius: minDim * (0.02 + Math.random() * 0.055),
     spokes: lightMode ? 5 + Math.floor(Math.random() * 3) : 8 + Math.floor(Math.random() * 7),
@@ -1563,11 +1599,13 @@ function spawnWaterRippleDrop(
   width: number,
   height: number,
   nowMs: number,
-  ringCountLimit: number
+  ringCountLimit: number,
+  drive = 0
 ): void {
   const minDim = Math.min(width, height);
   const size = pickWaterRippleSize();
   const p = waterRippleSizeParams(size, minDim);
+  const alphaMul = 1 + WATER_RIPPLE_AUDIO_ALPHA_GAIN * drive;
   const x = Math.random() * width;
   const y = Math.random() * height;
   const ringCount = Math.min(ringCountLimit, 2 + (Math.random() < 0.55 ? 1 : 0));
@@ -1581,10 +1619,19 @@ function spawnWaterRippleDrop(
       maxRadius: p.maxRadius * radiusScale,
       startMs: nowMs + delay,
       duration: p.duration * (0.92 + i * 0.04),
-      maxAlpha: p.maxAlpha * (1 - i * 0.22),
+      maxAlpha: p.maxAlpha * (1 - i * 0.22) * alphaMul,
       lineWidth: p.lineWidth * (1 - i * 0.08),
     });
   }
+}
+
+/** 描画エフェクト（水滴・ハート・花火）の音連動 drive 0〜1 */
+export function resolveWaterRippleAudioDrive(
+  audio: AudioReactiveData,
+  sensitivity: number,
+  smoothedExcess: number
+): number {
+  return resolveRainAudioModulation(audio, sensitivity, smoothedExcess);
 }
 
 export type WaterRippleRingGl = {
@@ -1682,7 +1729,7 @@ export function updateAndGetWaterRippleDraws(
     waterRippleRenderBuffer = [];
     waterRippleDrawBuffer = [];
     waterRippleSpawnCarry = 0;
-    waterRippleAudioEnvelope = 0;
+    waterRippleAudioExcess = 0;
     waterRippleFpsSmoothed = 60;
     waterRippleAdaptiveScale = 1;
     waterRippleFrameCounter = 0;
@@ -1692,17 +1739,13 @@ export function updateAndGetWaterRippleDraws(
   const a = audio ?? SILENT_AUDIO_REACTIVE;
   const sens = normalizeRainAudioSensitivity(audioSensitivityStep, 0);
   if (sens <= 0) {
-    waterRippleAudioEnvelope = 0;
+    waterRippleAudioExcess = 0;
   } else {
-    const instantRaw = resolveRainRawAudioEnvelope(a);
-    const envCoeff =
-      instantRaw >= waterRippleAudioEnvelope
-        ? RAIN_AUDIO_ENVELOPE_ATTACK
-        : RAIN_AUDIO_ENVELOPE_RELEASE;
-    waterRippleAudioEnvelope +=
-      (instantRaw - waterRippleAudioEnvelope) * envCoeff;
+    const instantExcess = resolveRainRawAudioEnvelope(a);
+    waterRippleAudioExcess = smoothEffectAudioExcess(waterRippleAudioExcess, instantExcess);
   }
-  const drive = resolveRainAudioModulation(a, sens, waterRippleAudioEnvelope);
+  const excessSmooth = waterRippleAudioExcess;
+  const drive = resolveWaterRippleAudioDrive(a, sens, excessSmooth);
 
   const dt = Math.min(deltaTime, 50) / 1000;
   const nowMs = performance.now();
@@ -1721,15 +1764,19 @@ export function updateAndGetWaterRippleDraws(
   waterRippleFrameCounter++;
   const skipSimUpdate = waterRippleAdaptiveScale < 0.62 && (waterRippleFrameCounter & 1) === 1;
 
+  const baseSpawnRate = waterRippleSpawnRateFromIntensity(t) * waterRippleAdaptiveScale;
   const spawnRate =
-    waterRippleSpawnRateFromIntensity(t) *
-    waterRippleAdaptiveScale *
-    (1 + WATER_RIPPLE_AUDIO_SPAWN_MUL * drive);
+    baseSpawnRate * (1 + WATER_RIPPLE_AUDIO_SPAWN_GAIN * excessSmooth * (sens / RAIN_AUDIO_SENSITIVITY_MAX));
   const maxRingsMul = lightMode ? 0.6 : 1;
   const maxRingsFloor = lightMode ? 28 : WATER_RIPPLE_MAX_RINGS_MIN;
   const maxRings = Math.max(
     maxRingsFloor,
-    Math.round(waterRippleMaxRingsFromIntensity(t) * waterRippleAdaptiveScale * maxRingsMul)
+    Math.round(
+      waterRippleMaxRingsFromIntensity(t) *
+        waterRippleAdaptiveScale *
+        maxRingsMul *
+        (1 + WATER_RIPPLE_AUDIO_MAX_RINGS_GAIN * excessSmooth * (sens / RAIN_AUDIO_SENSITIVITY_MAX))
+    )
   );
   const ringCountLimit = t >= 0.75
     ? (waterRippleAdaptiveScale >= 0.75 ? 3 : lightMode ? 1 : 2)
@@ -1741,13 +1788,13 @@ export function updateAndGetWaterRippleDraws(
       waterRippleSpawnCarry -= 1;
       if (variant === "heart") {
         if (waterRippleHearts.length >= maxRings) break;
-        spawnWaterRippleHeart(width, height, nowMs);
+        spawnWaterRippleHeart(width, height, nowMs, drive);
       } else if (variant === "firework") {
         if (waterRippleFireworks.length >= maxRings) break;
-        spawnWaterRippleFirework(width, height, nowMs, lightMode);
+        spawnWaterRippleFirework(width, height, nowMs, lightMode, drive);
       } else {
         if (waterRippleRings.length >= maxRings) break;
-        spawnWaterRippleDrop(width, height, nowMs, ringCountLimit);
+        spawnWaterRippleDrop(width, height, nowMs, ringCountLimit, drive);
       }
     }
 
@@ -1785,7 +1832,9 @@ export function updateAndGetWaterRippleDraws(
   }
 
   waterRippleDrawBuffer.length = 0;
-  const strength = (0.55 + 0.45 * t) * (1 + WATER_RIPPLE_AUDIO_ALPHA_BOOST * drive);
+  const strength =
+    (0.55 + 0.45 * t) *
+    (1 + WATER_RIPPLE_AUDIO_ALPHA_GAIN * excessSmooth * (sens / RAIN_AUDIO_SENSITIVITY_MAX));
   if (variant === "heart") {
     for (const heart of waterRippleHearts) {
       const progress = (nowMs - heart.startMs) / heart.duration;
