@@ -48,6 +48,9 @@ export function parseExplicitDurationSec(durationStr: string): number | null {
   return n;
 }
 
+/** これ未満の区間では FFmpeg afade を付けない（早期停止の極短尺対策） */
+export const MP4_AFADE_MIN_SEGMENT_SEC = 0.05;
+
 export function effectiveFadeSec(fadeSec: number, segmentSec: number): number {
   if (!(fadeSec > 0) || !(segmentSec > 0)) return 0;
   return Math.min(fadeSec, segmentSec / 2);
@@ -89,18 +92,23 @@ export function resolveAudioFadeSchedule(
   };
 }
 
-/** FFmpeg -af 用（afade in/out をカンマ連結） */
+/**
+ * FFmpeg -af 用（afade in/out をカンマ連結）。
+ * segmentSec は計画クリップ長ではなく、実録画／WebM の長さを渡すこと。
+ */
 export function buildFfmpegAfadeFilter(
   segmentSec: number,
   audioFadeInSecRaw: number,
   audioFadeOutSecRaw: number
 ): string | null {
+  if (!(segmentSec > MP4_AFADE_MIN_SEGMENT_SEC)) return null;
+
   const { fadeInSec, fadeOutSec, segmentSec: seg } = resolveAudioFadeSchedule(
     segmentSec,
     audioFadeInSecRaw,
     audioFadeOutSecRaw
   );
-  if (!(seg > 0)) return null;
+  if (!(seg > MP4_AFADE_MIN_SEGMENT_SEC)) return null;
 
   let fadeIn = fadeInSec;
   let fadeOut = fadeOutSec;
@@ -117,7 +125,7 @@ export function buildFfmpegAfadeFilter(
   }
   if (fadeOut > 0) {
     const d = Math.min(fadeOut, seg);
-    const st = Math.max(0, Math.min(seg - d, seg - 1e-3));
+    const st = Math.max(0, seg - d);
     parts.push(`afade=t=out:st=${st}:d=${d}`);
   }
   return parts.length > 0 ? parts.join(",") : null;

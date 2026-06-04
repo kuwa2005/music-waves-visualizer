@@ -109,6 +109,12 @@ import {
 } from "../lib/QuickVideoEncoder";
 import { isWebCodecsSupported, checkHardwareEncoderSupport } from "../lib/WebCodecsEncoder";
 import { generateMp4Video, type Mp4AudioFadeEncode } from "../lib/Ffmpeg";
+import {
+  estimateActualRecordedSec,
+  resolveMp4EncodeDurationSec,
+  type RecordEncodeSnapshot,
+  type RecordStopReason,
+} from "../lib/mp4EncodeDuration";
 import { imageElementToThumbnailJpeg } from "../lib/mp4Thumbnail";
 import { mwvError, mwvLog, mwvMilestone } from "../lib/mwvConsole";
 import {
@@ -612,7 +618,23 @@ const Home: NextPage = () => {
   const isPlaybackFadingOutRef = useRef(false);
   const [isPlaybackFadingOut, setIsPlaybackFadingOut] = useState(false);
   const recordSafeStopRef = useRef<(() => void) | null>(null);
+  const recordingWallStartMsRef = useRef<number | null>(null);
+  const recordingPlaybackAnchorSecRef = useRef<number | null>(null);
+  const recordEncodeSnapshotRef = useRef<RecordEncodeSnapshot | null>(null);
+  /** MediaRecorder.stop 時点の実録画秒（再生位置+フェード尾と wall の短い方） */
+  const recordingActualEncodeSecRef = useRef<number | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+
+  const saveRecordEncodeSnapshot = useCallback(
+    (stopReason: RecordStopReason, playbackEndSec: number, fadeTailSec = 0) => {
+      recordEncodeSnapshotRef.current = {
+        stopReason,
+        playbackEndSec,
+        fadeTailSec: Math.max(0, fadeTailSec),
+      };
+    },
+    []
+  );
 
   const getCurrentPlaybackTimeSec = useCallback((): number => {
     if (playbackFrozenTimeSecRef.current != null) {
@@ -3976,31 +3998,60 @@ const Home: NextPage = () => {
     e.preventDefault();
   };
 
-  const buildMp4AudioFadeEncode = useCallback((): Mp4AudioFadeEncode | null => {
-    const mediaDur = getMediaDurationSec();
-    const clip = resolvePlaybackWindow();
-    const limitActive = isShortOutputMaxLengthSpecified(
+  const buildMp4AudioFadeEncode = useCallback(
+    (
+      encodeInput?: {
+        wallRecordedSec?: number | null;
+        actualRecordedSec?: number | null;
+        snapshot?: RecordEncodeSnapshot | null;
+        playbackAnchorSec?: number | null;
+      } | null
+    ): Mp4AudioFadeEncode | null => {
+      const mediaDur = getMediaDurationSec();
+      const clip = resolvePlaybackWindow();
+      const limitActive = isShortOutputMaxLengthSpecified(
+        shortOutputPreset,
+        shortDurationSecStr
+      );
+      const effectiveMax = getEffectiveMaxDurationSec(clip, mediaDur, limitActive);
+      const plannedSec =
+        limitActive && mediaDur > 0
+          ? getAudibleSegmentSec(clip, mediaDur)
+          : effectiveMax;
+      const snapshot = encodeInput?.snapshot ?? null;
+      const actualRecordedSec =
+        encodeInput?.actualRecordedSec ??
+        estimateActualRecordedSec(
+          encodeInput?.wallRecordedSec,
+          snapshot,
+          encodeInput?.playbackAnchorSec ?? null
+        );
+      const outputDurationSec =
+        actualRecordedSec != null && actualRecordedSec > 0
+          ? resolveMp4EncodeDurationSec(plannedSec, actualRecordedSec)
+          : resolveMp4EncodeDurationSec(plannedSec, null);
+      if (!(outputDurationSec > 0)) return null;
+      const fadeInSec = parseFadeSecStr(audioFadeInSecStr);
+      const fadeOutSec = parseFadeSecStr(audioFadeOutSecStr);
+      if (fadeInSec <= 0 && fadeOutSec <= 0) return null;
+      return {
+        fadeInSec,
+        fadeOutSec,
+        outputDurationSec,
+        plannedSec,
+        actualRecordedSec: actualRecordedSec ?? undefined,
+        recordStopReason: snapshot?.stopReason,
+      };
+    },
+    [
+      getMediaDurationSec,
+      resolvePlaybackWindow,
       shortOutputPreset,
-      shortDurationSecStr
-    );
-    const effectiveMax = getEffectiveMaxDurationSec(clip, mediaDur, limitActive);
-    const outputDurationSec =
-      limitActive && mediaDur > 0
-        ? getAudibleSegmentSec(clip, mediaDur)
-        : effectiveMax;
-    if (!(outputDurationSec > 0)) return null;
-    const fadeInSec = parseFadeSecStr(audioFadeInSecStr);
-    const fadeOutSec = parseFadeSecStr(audioFadeOutSecStr);
-    if (fadeInSec <= 0 && fadeOutSec <= 0) return null;
-    return { fadeInSec, fadeOutSec, outputDurationSec };
-  }, [
-    getMediaDurationSec,
-    resolvePlaybackWindow,
-    shortOutputPreset,
-    shortDurationSecStr,
-    audioFadeInSecStr,
-    audioFadeOutSecStr,
-  ]);
+      shortDurationSecStr,
+      audioFadeInSecStr,
+      audioFadeOutSecStr,
+    ]
+  );
 
   const applyPlaybackGainFade = useCallback(
     (clip: ResolvedClip) => {
@@ -4513,9 +4564,12 @@ const Home: NextPage = () => {
     const imageOut = imageOutRaw > 0 ? imageOutRaw : 0;
     const tailSec = Math.max(audioOut, imageOut);
     if (!(tailSec > 0)) {
+      saveRecordEncodeSnapshot("user_early", getCurrentPlaybackTimeSec(), 0);
       finalizePlaybackStop();
       return;
     }
+
+    saveRecordEncodeSnapshot("user_early", getCurrentPlaybackTimeSec(), tailSec);
 
     mwvMilestone("record: 停止（フェードアウト）", {
       audioOutSec: audioOut,
@@ -4565,14 +4619,18 @@ const Home: NextPage = () => {
     shortOutputPreset,
     shortDurationSecStr,
     getCurrentPlaybackTimeSec,
+    saveRecordEncodeSnapshot,
     finalizePlaybackStop,
     clearPlaybackWindowTimer,
     clearPlaybackStopFinalizeTimer,
   ]);
 
   const finishVideoWindowPlayback = useCallback(() => {
+    if (isRecordingRef.current) {
+      saveRecordEncodeSnapshot("clip_window", getCurrentPlaybackTimeSec(), 0);
+    }
     finalizePlaybackStop();
-  }, [finalizePlaybackStop]);
+  }, [finalizePlaybackStop, getCurrentPlaybackTimeSec, saveRecordEncodeSnapshot]);
 
   // PlaySoundEvent
   const onPlaySound = () => {
@@ -4933,6 +4991,22 @@ const Home: NextPage = () => {
       //録画終了時に動画ファイルのダウンロードリンクを生成する処理
       recorder.addEventListener("stop", async () => {
         recordSafeStopRef.current = null;
+        const wallStartMs = recordingWallStartMsRef.current;
+        const playbackAnchorSec = recordingPlaybackAnchorSecRef.current;
+        const wallRecordedSec =
+          wallStartMs != null
+            ? Math.max(0, (performance.now() - wallStartMs) / 1000)
+            : null;
+        const snapshot = recordEncodeSnapshotRef.current;
+        const actualRecordedSec = estimateActualRecordedSec(
+          wallRecordedSec,
+          snapshot,
+          playbackAnchorSec
+        );
+        recordingActualEncodeSecRef.current = actualRecordedSec;
+        recordingWallStartMsRef.current = null;
+        recordingPlaybackAnchorSecRef.current = null;
+        recordEncodeSnapshotRef.current = null;
         const recordedMimeType =
           recorder.mimeType && recorder.mimeType.length > 0 ? recorder.mimeType : "video/webm";
         mediaRecorderRef.current = null;
@@ -4946,6 +5020,8 @@ const Home: NextPage = () => {
           chunkCount: recordedBlobs.length,
           webmBytes: webmBlob.size,
           mimeType: recordedMimeType,
+          wallRecordedSec,
+          recordStopReason: snapshot?.stopReason ?? "unknown",
         });
 
         if (recordedBlobs.length === 0 || webmBlob.size < 64) {
@@ -4963,7 +5039,20 @@ const Home: NextPage = () => {
           setEncodeStatus("loading");
           setEncodeProgress(0);
           const binaryData = new Uint8Array(await webmBlob.arrayBuffer());
-          mwvMilestone("record: ffmpeg へ渡す直前", { bufferBytes: binaryData.byteLength });
+          const audioFadeEncode = buildMp4AudioFadeEncode({
+            wallRecordedSec,
+            actualRecordedSec,
+            snapshot,
+            playbackAnchorSec,
+          });
+          mwvMilestone("record: ffmpeg へ渡す直前", {
+            bufferBytes: binaryData.byteLength,
+            wallRecordedSec,
+            recordStopReason: snapshot?.stopReason ?? "unknown",
+            plannedSec: audioFadeEncode?.plannedSec ?? null,
+            actualRecordedSec: audioFadeEncode?.actualRecordedSec ?? actualRecordedSec,
+            outputDurationSec: audioFadeEncode?.outputDurationSec ?? null,
+          });
           const thumbnailJpeg = await buildMp4ThumbnailJpeg();
           const video = await generateMp4Video(
             binaryData,
@@ -4984,7 +5073,7 @@ const Home: NextPage = () => {
             targetLufs,
             exportAudioBitrateKbps,
             thumbnailJpeg,
-            buildMp4AudioFadeEncode()
+            audioFadeEncode
           );
           if (!video || video.length === 0) {
             throw new Error("empty_mp4");
@@ -5024,6 +5113,7 @@ const Home: NextPage = () => {
           const originalOnEnded = videoElementRef.current.onended;
           videoElementRef.current.onended = () => {
             mwvMilestone("record: 背景動画再生終了（録画停止へ）");
+            saveRecordEncodeSnapshot("video_ended", getCurrentPlaybackTimeSec(), 0);
             if (originalOnEnded) {
               originalOnEnded.call(videoElementRef.current);
             }
@@ -5039,8 +5129,14 @@ const Home: NextPage = () => {
       // ここ（再生前）に onended を付けても旧ノード／null に当たり、録画が終わらない不具合になる。
       // 録画終了ハンドラは onPlaySound 直後に audioBufferSrcRef へ差し込む（下の else 分岐）。
 
+      recordEncodeSnapshotRef.current = null;
+      recordingPlaybackAnchorSecRef.current = null;
+      recordingActualEncodeSecRef.current = null;
+
       const startRecorder = () => {
         if (recorder.state !== "inactive") return;
+        recordingWallStartMsRef.current = performance.now();
+        recordingPlaybackAnchorSecRef.current = getCurrentPlaybackTimeSec();
         setRecordingActive(true);
         mediaRecorderRef.current = recorder;
         recorder.start();
@@ -5066,6 +5162,7 @@ const Home: NextPage = () => {
           const priorOnEnded = node.onended;
           node.onended = (ev: Event) => {
             mwvMilestone("record: 音声再生終了（録画停止へ）");
+            saveRecordEncodeSnapshot("playback_ended", getCurrentPlaybackTimeSec(), 0);
             try {
               if (typeof priorOnEnded === "function") {
                 priorOnEnded.call(node, ev);

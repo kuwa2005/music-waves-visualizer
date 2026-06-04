@@ -1,6 +1,10 @@
 import { FFmpeg } from "@ffmpeg/ffmpeg";
 import getConfig from "next/config";
 import { buildFfmpegAfadeFilter } from "./clipAudioFade";
+import {
+  parseFfmpegDurationFromLogs,
+  resolveMp4EncodeDurationSec,
+} from "./mp4EncodeDuration";
 import { MP4_THUMB_MAX_LONG_EDGE } from "./mp4Thumbnail";
 import { mwvError, mwvLog, mwvMilestone, mwvVerbose, mwvWarn } from "./mwvConsole";
 
@@ -8,14 +12,19 @@ import { mwvError, mwvLog, mwvMilestone, mwvVerbose, mwvWarn } from "./mwvConsol
 export type Mp4AudioFadeEncode = {
   fadeInSec: number;
   fadeOutSec: number;
+  /** min(planned, actualRecorded, webmProbe) — afade の区間長 */
   outputDurationSec: number;
+  plannedSec?: number;
+  actualRecordedSec?: number;
+  recordStopReason?: string;
 };
 
 function buildMp4AudioFilterChain(
   audioFade: Mp4AudioFadeEncode | null | undefined,
-  encodeLufs: number | null
+  encodeLufs: number | null,
+  segmentSecOverride?: number
 ): string | null {
-  const seg = audioFade?.outputDurationSec ?? 0;
+  const seg = segmentSecOverride ?? audioFade?.outputDurationSec ?? 0;
   const afade =
     seg > 0 && audioFade
       ? buildFfmpegAfadeFilter(seg, audioFade.fadeInSec, audioFade.fadeOutSec)
@@ -194,6 +203,28 @@ async function execFfmpeg(ffmpeg: FFmpeg, args: string[]): Promise<void> {
   await ffmpeg.exec(args);
 }
 
+/** 入力コンテナの長さ（秒）。失敗時は null */
+async function probeInputDurationSec(ffmpeg: FFmpeg, inputName: string): Promise<number | null> {
+  const ffmpegAny = ffmpeg as { on?: (e: string, h: (p: { message?: string }) => void) => void; off?: (e: string, h: (p: { message?: string }) => void) => void };
+  const lines: string[] = [];
+  const onLog = ({ message }: { message?: string }) => {
+    if (message) lines.push(message);
+  };
+  if (typeof ffmpegAny.on === "function") {
+    ffmpegAny.on("log", onLog);
+  }
+  try {
+    await ffmpeg.exec(["-hide_banner", "-i", inputName]);
+  } catch {
+    /* -i のみは出力なしのため非ゼロ終了が普通 */
+  } finally {
+    if (typeof ffmpegAny.off === "function") {
+      ffmpegAny.off("log", onLog);
+    }
+  }
+  return parseFfmpegDurationFromLogs(lines.join("\n"));
+}
+
 function readFfmpegBytes(fileData: Uint8Array | string): Uint8Array {
   if (fileData instanceof Uint8Array) return fileData;
   if (typeof fileData === "string") return new TextEncoder().encode(fileData);
@@ -367,6 +398,25 @@ export async function generateMp4Video(
 
     await ffmpeg.writeFile(webmName, binaryData);
 
+    const plannedSec = sanitizeTrimDurationSec(audioFade?.plannedSec ?? audioFade?.outputDurationSec ?? 0);
+    const webmProbeSec = await probeInputDurationSec(ffmpeg, webmName);
+    const actualHint = audioFade?.actualRecordedSec ?? null;
+    const trimSec = audioFade
+      ? resolveMp4EncodeDurationSec(plannedSec, actualHint, webmProbeSec)
+      : 0;
+    const afadeSegmentSec = trimSec > 0 ? trimSec : 0;
+    const encodeAudioFade: Mp4AudioFadeEncode | null =
+      audioFade && afadeSegmentSec > 0
+        ? { ...audioFade, outputDurationSec: afadeSegmentSec }
+        : audioFade;
+    mwvMilestone("record: MP4 encode params", {
+      recordStopReason: audioFade?.recordStopReason ?? null,
+      plannedSec: audioFade?.plannedSec ?? plannedSec,
+      actualRecordedSec: actualHint,
+      actualWebmSec: webmProbeSec,
+      outputDurationSec: afadeSegmentSec > 0 ? afadeSegmentSec : plannedSec,
+    });
+
     ratioFromFfmpeg = 0;
     smoothedDisplay = 0;
     runStartedAtMs = performance.now();
@@ -382,8 +432,7 @@ export async function generateMp4Video(
     const uiLufs =
       targetLufs != null && targetLufs > -60 && targetLufs < 0 ? targetLufs : null;
     const encodeLufs = uiLufs != null ? resolveLoudnormIntegratedTarget(uiLufs) : null;
-    const trimSec = sanitizeTrimDurationSec(audioFade?.outputDurationSec ?? 0);
-    const audioFilter = buildMp4AudioFilterChain(audioFade, encodeLufs);
+    const audioFilter = buildMp4AudioFilterChain(encodeAudioFade, encodeLufs, afadeSegmentSec);
 
     if (audioFilter != null) {
       try {
