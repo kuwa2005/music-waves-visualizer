@@ -13,38 +13,54 @@ export type RecordStopReason =
 /** 録画停止時点のスナップショット（finalize で再生時刻が消える前に保存） */
 export type RecordEncodeSnapshot = {
   stopReason: RecordStopReason;
-  playbackEndSec: number;
+  /** ユーザーが停止した時点の再生ヘッド（秒） */
+  stopAtSec: number;
+  /** グレースフル停止のフェード尾（音声/画像の長い方・秒） */
   fadeTailSec: number;
+  /** @deprecated stopAtSec と同義（互換） */
+  playbackEndSec: number;
 };
+
+function snapshotStopAtSec(snapshot: RecordEncodeSnapshot): number | null {
+  const t = snapshot.stopAtSec ?? snapshot.playbackEndSec;
+  return Number.isFinite(t) ? t : null;
+}
 
 /** 再生位置ベースの録画尺（停止位置 + グレースフル停止のフェード尾） */
 export function playbackSpanRecordedSec(
   snapshot: RecordEncodeSnapshot | null | undefined,
   playbackAnchorSec: number | null | undefined
 ): number | null {
-  if (!snapshot || !Number.isFinite(snapshot.playbackEndSec)) return null;
+  if (!snapshot) return null;
+  const stopAt = snapshotStopAtSec(snapshot);
+  if (stopAt == null) return null;
   const anchor = Number.isFinite(playbackAnchorSec) ? Math.max(0, playbackAnchorSec) : 0;
   const tail = sanitizePositiveSec(snapshot.fadeTailSec) ?? 0;
-  const span = Math.max(0, snapshot.playbackEndSec - anchor) + tail;
+  const span = Math.max(0, stopAt - anchor) + tail;
   return span > 0 ? span : null;
 }
 
 /**
  * WebM に載った実尺の推定（秒）。
- * recorder の wall 時計と「再生停止位置+フェード尾」の短い方（長い方は afade がストリーム外になる）。
+ * MediaRecorder の wall 時計を優先（フェード尾込みの録画終端と一致）。
+ * wall が無いときのみ stopAt + fadeTail の再生スパンを使う。
  */
 export function estimateActualRecordedSec(
   wallRecordedSec: number | null | undefined,
   snapshot: RecordEncodeSnapshot | null | undefined,
-  playbackAnchorSec: number | null | undefined
+  playbackAnchorSec: number | null | undefined,
+  encodeDurationAtFinalizeSec?: number | null
 ): number | null {
-  const caps: number[] = [];
   const wall = sanitizePositiveSec(wallRecordedSec);
+  const atFinalize = sanitizePositiveSec(encodeDurationAtFinalizeSec);
   const fromPlayback = playbackSpanRecordedSec(snapshot, playbackAnchorSec);
-  if (wall != null) caps.push(wall);
-  if (fromPlayback != null) caps.push(fromPlayback);
-  if (caps.length === 0) return null;
-  return Math.min(...caps);
+
+  if (wall != null && atFinalize != null) {
+    return Math.max(wall, atFinalize);
+  }
+  if (wall != null) return wall;
+  if (atFinalize != null) return atFinalize;
+  return fromPlayback;
 }
 
 /**

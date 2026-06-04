@@ -621,15 +621,17 @@ const Home: NextPage = () => {
   const recordingWallStartMsRef = useRef<number | null>(null);
   const recordingPlaybackAnchorSecRef = useRef<number | null>(null);
   const recordEncodeSnapshotRef = useRef<RecordEncodeSnapshot | null>(null);
-  /** MediaRecorder.stop 時点の実録画秒（再生位置+フェード尾と wall の短い方） */
-  const recordingActualEncodeSecRef = useRef<number | null>(null);
+  /** finalizePlaybackStop 時点の wall 録画秒（フェード尾込み・safeStop 前） */
+  const recordEncodeDurationSecRef = useRef<number | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
 
   const saveRecordEncodeSnapshot = useCallback(
-    (stopReason: RecordStopReason, playbackEndSec: number, fadeTailSec = 0) => {
+    (stopReason: RecordStopReason, stopAtSec: number, fadeTailSec = 0) => {
+      const stop = Math.max(0, stopAtSec);
       recordEncodeSnapshotRef.current = {
         stopReason,
-        playbackEndSec,
+        stopAtSec: stop,
+        playbackEndSec: stop,
         fadeTailSec: Math.max(0, fadeTailSec),
       };
     },
@@ -4019,20 +4021,30 @@ const Home: NextPage = () => {
           ? getAudibleSegmentSec(clip, mediaDur)
           : effectiveMax;
       const snapshot = encodeInput?.snapshot ?? null;
+      const fadeOutSec = parseFadeSecStr(audioFadeOutSecStr);
       const actualRecordedSec =
         encodeInput?.actualRecordedSec ??
         estimateActualRecordedSec(
           encodeInput?.wallRecordedSec,
           snapshot,
-          encodeInput?.playbackAnchorSec ?? null
+          encodeInput?.playbackAnchorSec ?? null,
+          recordEncodeDurationSecRef.current
         );
       const outputDurationSec =
         actualRecordedSec != null && actualRecordedSec > 0
           ? resolveMp4EncodeDurationSec(plannedSec, actualRecordedSec)
           : resolveMp4EncodeDurationSec(plannedSec, null);
+      const stopAtSec = snapshot ? (snapshot.stopAtSec ?? snapshot.playbackEndSec) : null;
+      mwvMilestone("record: MP4 encode duration", {
+        recordStopReason: snapshot?.stopReason ?? null,
+        stopAtSec,
+        fadeOutSec: snapshot?.fadeTailSec ?? fadeOutSec,
+        plannedSec,
+        actualRecordedSec,
+        outputDurationSec,
+      });
       if (!(outputDurationSec > 0)) return null;
       const fadeInSec = parseFadeSecStr(audioFadeInSecStr);
-      const fadeOutSec = parseFadeSecStr(audioFadeOutSecStr);
       if (fadeInSec <= 0 && fadeOutSec <= 0) return null;
       return {
         fadeInSec,
@@ -4526,6 +4538,17 @@ const Home: NextPage = () => {
     if (clipGainRef.current && audioCtxRef.current) {
       resetClipGain(clipGainRef.current, audioCtxRef.current);
     }
+    const recordWallStartMs = recordingWallStartMsRef.current;
+    if (
+      recordWallStartMs != null &&
+      (isRecordingRef.current || mediaRecorderRef.current?.state === "recording")
+    ) {
+      recordEncodeDurationSecRef.current = Math.max(
+        0,
+        (performance.now() - recordWallStartMs) / 1000
+      );
+    }
+
     const safeStop = recordSafeStopRef.current;
     if (safeStop) {
       safeStop();
@@ -4569,11 +4592,15 @@ const Home: NextPage = () => {
       return;
     }
 
-    saveRecordEncodeSnapshot("user_early", getCurrentPlaybackTimeSec(), tailSec);
+    const stopAtSec = getCurrentPlaybackTimeSec();
+    saveRecordEncodeSnapshot("user_early", stopAtSec, tailSec);
 
     mwvMilestone("record: 停止（フェードアウト）", {
+      stopAtSec,
+      fadeOutSec: tailSec,
       audioOutSec: audioOut,
       imageOutSec: imageOut,
+      encodeSpanSec: stopAtSec + tailSec,
       hadRecorder: Boolean(mediaRecorderRef.current),
     });
 
@@ -4998,12 +5025,14 @@ const Home: NextPage = () => {
             ? Math.max(0, (performance.now() - wallStartMs) / 1000)
             : null;
         const snapshot = recordEncodeSnapshotRef.current;
+        const encodeDurationAtFinalize = recordEncodeDurationSecRef.current;
         const actualRecordedSec = estimateActualRecordedSec(
           wallRecordedSec,
           snapshot,
-          playbackAnchorSec
+          playbackAnchorSec,
+          encodeDurationAtFinalize
         );
-        recordingActualEncodeSecRef.current = actualRecordedSec;
+        recordEncodeDurationSecRef.current = actualRecordedSec;
         recordingWallStartMsRef.current = null;
         recordingPlaybackAnchorSecRef.current = null;
         recordEncodeSnapshotRef.current = null;
@@ -5048,7 +5077,10 @@ const Home: NextPage = () => {
           mwvMilestone("record: ffmpeg へ渡す直前", {
             bufferBytes: binaryData.byteLength,
             wallRecordedSec,
+            encodeDurationAtFinalize,
             recordStopReason: snapshot?.stopReason ?? "unknown",
+            stopAtSec: snapshot?.stopAtSec ?? snapshot?.playbackEndSec ?? null,
+            fadeOutSec: snapshot?.fadeTailSec ?? null,
             plannedSec: audioFadeEncode?.plannedSec ?? null,
             actualRecordedSec: audioFadeEncode?.actualRecordedSec ?? actualRecordedSec,
             outputDurationSec: audioFadeEncode?.outputDurationSec ?? null,
@@ -5131,7 +5163,7 @@ const Home: NextPage = () => {
 
       recordEncodeSnapshotRef.current = null;
       recordingPlaybackAnchorSecRef.current = null;
-      recordingActualEncodeSecRef.current = null;
+      recordEncodeDurationSecRef.current = null;
 
       const startRecorder = () => {
         if (recorder.state !== "inactive") return;
