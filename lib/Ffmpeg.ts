@@ -28,15 +28,31 @@ function buildMp4AudioFilterChain(
   return parts.length > 0 ? parts.join(",") : null;
 }
 
+function sanitizeTrimDurationSec(outputDurationSec: number): number {
+  if (!Number.isFinite(outputDurationSec) || outputDurationSec <= 0) return 0;
+  return outputDurationSec;
+}
+
 function mp4EncodeInputArgs(
   webmName: string,
   outputDurationSec: number
 ): string[] {
   const args = ["-i", webmName];
-  if (outputDurationSec > 0) {
-    args.push("-t", String(outputDurationSec));
+  const trimSec = sanitizeTrimDurationSec(outputDurationSec);
+  if (trimSec > 0) {
+    args.push("-t", String(trimSec));
   }
   return args;
+}
+
+function isLikelyValidMp4(bytes: Uint8Array): boolean {
+  if (bytes.length < 12) return false;
+  return (
+    bytes[4] === 0x66 &&
+    bytes[5] === 0x74 &&
+    bytes[6] === 0x79 &&
+    bytes[7] === 0x70
+  );
 }
 
 type FfmpegCoreAssetName = "ffmpeg-core.js" | "ffmpeg-core.wasm" | "ffmpeg-core.worker.js";
@@ -366,7 +382,7 @@ export async function generateMp4Video(
     const uiLufs =
       targetLufs != null && targetLufs > -60 && targetLufs < 0 ? targetLufs : null;
     const encodeLufs = uiLufs != null ? resolveLoudnormIntegratedTarget(uiLufs) : null;
-    const trimSec = audioFade?.outputDurationSec ?? 0;
+    const trimSec = sanitizeTrimDurationSec(audioFade?.outputDurationSec ?? 0);
     const audioFilter = buildMp4AudioFilterChain(audioFade, encodeLufs);
 
     if (audioFilter != null) {
@@ -381,6 +397,7 @@ export async function generateMp4Video(
           "aac",
           "-b:a",
           ab,
+          "-shortest",
           mp4Name,
         ]);
       } catch (error) {
@@ -389,6 +406,7 @@ export async function generateMp4Video(
           ...mp4EncodeInputArgs(webmName, trimSec),
           "-vcodec",
           "copy",
+          "-shortest",
           mp4Name,
         ]);
       }
@@ -397,6 +415,7 @@ export async function generateMp4Video(
         ...mp4EncodeInputArgs(webmName, trimSec),
         "-vcodec",
         "copy",
+        "-shortest",
         mp4Name,
       ]);
     }
@@ -430,6 +449,10 @@ export async function generateMp4Video(
 
     const fileData = await ffmpeg.readFile(mp4Name);
     const videoUint8Array = readFfmpegBytes(fileData as Uint8Array | string);
+
+    if (!isLikelyValidMp4(videoUint8Array)) {
+      throw new Error("invalid_mp4_output");
+    }
 
     onProgress?.(1);
     mwvMilestone("ffmpeg: mp4 ready", { mp4Bytes: videoUint8Array.length });

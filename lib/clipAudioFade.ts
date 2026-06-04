@@ -101,13 +101,24 @@ export function buildFfmpegAfadeFilter(
     audioFadeOutSecRaw
   );
   if (!(seg > 0)) return null;
-  const parts: string[] = [];
-  if (fadeInSec > 0) {
-    parts.push(`afade=t=in:st=0:d=${fadeInSec}`);
+
+  let fadeIn = fadeInSec;
+  let fadeOut = fadeOutSec;
+  fadeIn = Math.min(fadeIn, seg);
+  fadeOut = Math.min(fadeOut, seg);
+  if (fadeIn > 0 && fadeOut > 0 && fadeIn + fadeOut > seg) {
+    fadeIn = effectiveFadeSec(fadeIn, seg);
+    fadeOut = effectiveFadeSec(fadeOut, seg);
   }
-  if (fadeOutSec > 0) {
-    const st = Math.max(0, seg - fadeOutSec);
-    parts.push(`afade=t=out:st=${st}:d=${fadeOutSec}`);
+
+  const parts: string[] = [];
+  if (fadeIn > 0) {
+    parts.push(`afade=t=in:st=0:d=${fadeIn}`);
+  }
+  if (fadeOut > 0) {
+    const d = Math.min(fadeOut, seg);
+    const st = Math.max(0, Math.min(seg - d, seg - 1e-3));
+    parts.push(`afade=t=out:st=${st}:d=${d}`);
   }
   return parts.length > 0 ? parts.join(",") : null;
 }
