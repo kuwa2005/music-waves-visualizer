@@ -11,7 +11,7 @@ import {
 } from './drawStillScreenBackground';
 import {
   DEFAULT_SCREEN_MOTION,
-  resolveImageTimelineFadeAlpha,
+  resolveCombinedImageFadeAlpha,
 } from './screenMotion';
 import {
   GLYCO_COLOR_SETS,
@@ -48,6 +48,7 @@ import {
   type EffectType,
   type AudioReactiveData,
 } from './Effects';
+import { updateAndGetLaserSegments } from './laserEffect';
 import { drawGalleryBackground, peekGalleryImageTransitionFrame } from './galleryImageTransition';
 
 const BASE_LINE_WIDTH_WAVEFORM = 2.0;
@@ -66,6 +67,7 @@ const EFFECT_TYPE_TO_GL: Record<EffectType, number> = {
   waterRipple: 0,
   scanlines: 0,
   mirrorBall: 0,
+  laser: 0,
   filmGrain: 1,
   vignette: 2,
   rainbow: 3,
@@ -572,7 +574,8 @@ function drawBackgroundWebGL(
         canvasHeight,
         spectrumSettings?.screenMotion,
         spectrumSettings?.getPlaybackTiming?.(),
-        bgAudioReactive
+        bgAudioReactive,
+        spectrumSettings?.getStopGracefulImageFade?.() ?? null
       );
       if (!ctx.imageTexture) {
         ctx.imageTexture = gl.createTexture();
@@ -1253,9 +1256,10 @@ function renderFrame(): void {
 
   const spectrumForBg = latestSpectrumSettings;
   const screenMotion = spectrumForBg?.screenMotion ?? DEFAULT_SCREEN_MOTION;
-  const imageTimelineFadeAlpha = resolveImageTimelineFadeAlpha(
+  const imageTimelineFadeAlpha = resolveCombinedImageFadeAlpha(
     screenMotion,
-    spectrumForBg?.getPlaybackTiming?.()
+    spectrumForBg?.getPlaybackTiming?.(),
+    spectrumForBg?.getStopGracefulImageFade?.() ?? null
   );
   imageTimelineFadeMul = imageTimelineFadeAlpha;
 
@@ -1368,6 +1372,7 @@ function renderFrame(): void {
         "snow",
         "waterRipple",
         "mirrorBall",
+        "laser",
       ].includes(latestEffect.type);
     if (needsFreqForEffect) {
       analyser.getByteFrequencyData(freqForEffect);
@@ -1612,7 +1617,8 @@ function renderFrame(): void {
         audioRForEffects,
         latestEffect.weatherAngleDeg ?? 18,
         latestEffect.weatherAmount ?? 0.65,
-        latestEffect.weatherColor
+        latestEffect.weatherColor,
+        latestEffect.rainAudioSensitivity ?? 0
       );
       gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
       for (const s of streaks) {
@@ -1675,7 +1681,9 @@ function renderFrame(): void {
           latestEffect.effectTintColor ??
           latestEffect.weatherColor,
         latestEffect.waterRippleVariant ?? "ripple",
-        wrLightMode
+        wrLightMode,
+        audioRForEffects,
+        latestEffect.waterRippleAudioSensitivity ?? 0
       );
       gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
       for (const d of draws) {
@@ -1769,6 +1777,33 @@ function renderFrame(): void {
           drawRect(glContext, 0, y + 1, canvasWidth, 1, 0, 0, 0, alpha * 0.35);
         }
       }
+    } else if (latestEffect.type === "laser") {
+      const now = performance.now();
+      const deltaTime = Math.min(now - lastEffectTime, 50);
+      lastEffectTime = now;
+      const segments = updateAndGetLaserSegments(
+        canvasWidth,
+        canvasHeight,
+        latestEffect.density,
+        deltaTime
+      );
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+      for (const s of segments) {
+        if (s.a < 0.018) continue;
+        drawLine(
+          glContext,
+          s.x1,
+          s.y1,
+          s.x2,
+          s.y2,
+          s.r / 255,
+          s.g / 255,
+          s.b / 255,
+          s.a,
+          s.lw
+        );
+      }
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     } else if (latestEffect.type === "mirrorBall") {
       const now = performance.now();
       const deltaTime = Math.min(now - lastEffectTime, 50);

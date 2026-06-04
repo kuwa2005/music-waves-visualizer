@@ -14,7 +14,16 @@
     "addImage": "画像を追加",
     "selectAudio": "音楽ファイルを選ぶ",
     "unselected": "未選択",
-    "caption": "静止画・音楽・字幕を自動判定します。MP4 は「画像を選ぶ」で背景動画、音楽側で音声として読み込みます。ドラッグ&ドロップ時は用途を選択できます。"
+    "caption": "静止画・音楽・字幕を自動判定します。MP4 は「画像を選ぶ」で背景動画、音楽側で音声として読み込みます。ドラッグ&ドロップ時は用途を選択できます。",
+    "pickerMask": {
+      "chooseFileType": "ファイルの種類を選ぶ",
+      "imageDefault": "画像のみ",
+      "imageVideo": "動画（MP4 等）",
+      "imageAll": "すべてのファイル",
+      "audioDefault": "音楽・音声",
+      "audioVideo": "動画（MP4 等）",
+      "audioAll": "すべてのファイル"
+    }
   },
   "spectrum": {
     "title": "スペクトラムアナライザー",
@@ -105,6 +114,7 @@
     "rain": "雨",
     "snow": "雪",
     "waterRipple": "描画",
+    "laser": "レーザー",
     "waterRippleType": "種類:",
     "waterRippleVariantRipple": "水滴",
     "waterRippleVariantHeart": "ハート",
@@ -114,6 +124,8 @@
     "waterRippleColor": "波紋の色",
     "waterRippleLightMode": "軽量モード",
     "waterRippleLightModeHint": "ON で描画負荷を抑えます（推奨）",
+    "waterRippleAudioSensitivity": "音連動感度: {{value}}",
+    "waterRippleAudioSensitivityHint": "0=音連動オフ（基本の落下のみ）。1〜10で音に合わせた滴の増減・明るさが強くなり、10で最大ブースト",
     "scanlines": "スキャンライン",
     "mirrorBall": "ミラーボール",
     "mirrorBallPosX": "ボール位置 X: {{value}}%",
@@ -155,6 +167,8 @@
     "mirrorBallAudioSync": "低音で回転をブースト（BPM同期の代替）",
     "weatherAngle": "降り注ぐ角度: {{value}}°",
     "weatherAmount": "量: {{value}}%",
+    "rainAudioSensitivity": "音連動感度: {{value}}",
+    "rainAudioSensitivityHint": "0=音連動オフ（基本の雨のみ）。1〜10で音に合わせた本数・太さ・速さの増減が強くなり、10で最大ブースト",
     "weatherColor": "色",
     "parameters": "パラメータ調整（折りたたみ）",
     "spaceType": "タイプ:",
@@ -187,15 +201,13 @@
   "shortOutput": {
     "title": "動画長制限",
     "all": "OFF",
-    "tiktok": "TikTok",
     "youtube": "YouTube",
     "niconico": "ニコニコ動画",
+    "custom": "任意",
     "startSec": "開始位置（秒）",
     "durationSec": "秒数",
     "durationPlaceholder": "空欄＝開始位置から末尾まで",
-    "fadeInSec": "フェードイン（秒）",
-    "fadeOutSec": "フェードアウト（秒）",
-    "hint": "YouTube / TikTok / ニコニコは秒数欄に目安を入れるだけです。プレビュー・録画の長さは開始位置と秒数が正（秒数が空のときは末尾まで）。フェードアウトは秒数指定で切り詰めるときのみ。0秒で無効。"
+    "hint": "OFF＝曲全体。YouTube / ニコニコは 3 分（180 秒）の上限。任意は秒数を手入力したときだけ上限あり（空欄＝曲全体）。開始位置と秒数がプレビュー・録画の長さです。映像フェードは画面タブの画像フェードを使います。"
   },
   "subtitle": {
     "title": "字幕（SRT）",
@@ -355,6 +367,7 @@
     "caption": "エクスポートは全設定をJSONファイルで出力。インポートはJSONファイルから読み込み、存在する項目のみ上書きします。",
     "exportImport": "設定のエクスポート/インポート",
     "clearAllHint": "すべての設定をクリア:",
+    "clearAllSupplement": "動作が重いと感じたら、上のボタンですべての設定をクリアしてお試しください。負荷が軽くなる場合があります。",
     "clearConfirm": "すべての保存された設定を削除しますか？"
   },
   "dialog": {
@@ -467,8 +480,7 @@
     "resolution": "解像度",
     "effects": "エフェクト",
     "screen": "画面",
-    "clipLength": "動画長制限",
-    "audio": "音設定",
+    "audio": "音・動画長",
     "settings": "設定"
   },
   "screenTab": {
@@ -536,7 +548,14 @@
     "animationDuration": "アニメ時間: {{value}} 秒"
   },
   "audioSettings": {
-    "title": "音設定"
+    "title": "音・動画長",
+    "loudnessSection": "音量（LUFS）",
+    "fadeSection": "音声フェード",
+    "fadeCaption": "フェードインは再生開始から。フェードアウトは「有効な最大長 − フェードアウト秒」から始め、最大長の終端で無音になります。最大長＝動画長上限ありならその秒数、OFF・任意（秒数空欄）なら曲の長さ（開始位置がある場合は曲末まで）。Web Audio と MP4 変換（afade）の両方に反映。0秒で無効。",
+    "fadeInSec": "フェードイン（秒）",
+    "fadeOutSec": "フェードアウト（秒）",
+    "videoLengthSection": "動画長制限",
+    "videoLengthCaption": "再生・録画の開始位置と長さを指定します。プリセットは秒数欄への目安入力です。"
   },
   "videoQuality": {
     "title": "動画品質（録画・MP4変換）",

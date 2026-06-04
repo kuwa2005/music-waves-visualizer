@@ -18,6 +18,7 @@ export const SCREEN_MOTION_SHAKE_STRENGTH_MIN = 1;
 export const SCREEN_MOTION_SHAKE_STRENGTH_MAX = 30;
 export const SCREEN_MOTION_SENSITIVITY_STEP_MIN = -5;
 export const SCREEN_MOTION_SENSITIVITY_STEP_MAX = 5;
+export const SCREEN_MOTION_SENSITIVITY_STEP_INCREMENT = 0.1;
 export const SCREEN_MOTION_CHORUS_ZOOM_PERCENT_MIN = -10;
 export const SCREEN_MOTION_CHORUS_ZOOM_PERCENT_MAX = 10;
 export const SCREEN_MOTION_BRIGHTNESS_STRENGTH_MIN = 0.03;
@@ -139,6 +140,20 @@ export function clampZoomPercent(percent: number): number {
 export function normalizeSpeedSlider(v: number, fallback: number = DEFAULT_SCREEN_MOTION.speedX): number {
   const clamped = clampNum(v, SCREEN_MOTION_SPEED_MIN, SCREEN_MOTION_SPEED_MAX, fallback);
   return Math.round(clamped / SCREEN_MOTION_SPEED_STEP) * SCREEN_MOTION_SPEED_STEP;
+}
+
+/** 音連動の感度ステップ: -5〜5 にクランプし 0.1 単位に丸める */
+export function normalizeSensitivityStep(
+  v: number,
+  fallback: number = DEFAULT_SCREEN_MOTION.shakeSensitivityStep
+): number {
+  const clamped = clampNum(
+    v,
+    SCREEN_MOTION_SENSITIVITY_STEP_MIN,
+    SCREEN_MOTION_SENSITIVITY_STEP_MAX,
+    fallback
+  );
+  return Math.round(clamped / SCREEN_MOTION_SENSITIVITY_STEP_INCREMENT) * SCREEN_MOTION_SENSITIVITY_STEP_INCREMENT;
 }
 
 /** UI 表示用（小数第1位） */
@@ -395,22 +410,16 @@ export function normalizeScreenMotion(s: ScreenMotionSettings): ScreenMotionSett
       SCREEN_MOTION_SHAKE_STRENGTH_MAX,
       DEFAULT_SCREEN_MOTION.shakeStrength
     ),
-    brightnessSensitivityStep: clampNum(
+    brightnessSensitivityStep: normalizeSensitivityStep(
       s.brightnessSensitivityStep,
-      SCREEN_MOTION_SENSITIVITY_STEP_MIN,
-      SCREEN_MOTION_SENSITIVITY_STEP_MAX,
       DEFAULT_SCREEN_MOTION.brightnessSensitivityStep
     ),
-    shakeSensitivityStep: clampNum(
+    shakeSensitivityStep: normalizeSensitivityStep(
       s.shakeSensitivityStep,
-      SCREEN_MOTION_SENSITIVITY_STEP_MIN,
-      SCREEN_MOTION_SENSITIVITY_STEP_MAX,
       DEFAULT_SCREEN_MOTION.shakeSensitivityStep
     ),
-    flashSensitivityStep: clampNum(
+    flashSensitivityStep: normalizeSensitivityStep(
       s.flashSensitivityStep,
-      SCREEN_MOTION_SENSITIVITY_STEP_MIN,
-      SCREEN_MOTION_SENSITIVITY_STEP_MAX,
       DEFAULT_SCREEN_MOTION.flashSensitivityStep
     ),
     flashIntensity: clampNum(
@@ -531,4 +540,31 @@ export function resolveImageTimelineFadeAlpha(
     alpha = Math.min(alpha, remain / fadeOut);
   }
   return Math.max(0, Math.min(1, alpha));
+}
+
+/** 早期停止時の画面輝度フェード（停止時点の alpha から 0 へ） */
+export type StopGracefulImageFade = {
+  startPerfMs: number;
+  fadeOutSec: number;
+  startAlpha: number;
+};
+
+export function resolveStopGracefulImageAlpha(
+  state: StopGracefulImageFade | null | undefined
+): number {
+  if (!state || !(state.fadeOutSec > 0)) return 1;
+  const elapsed = (performance.now() - state.startPerfMs) / 1000;
+  if (elapsed >= state.fadeOutSec) return 0;
+  return Math.max(0, state.startAlpha * (1 - elapsed / state.fadeOutSec));
+}
+
+export function resolveCombinedImageFadeAlpha(
+  settings: ScreenMotionSettings | undefined,
+  timing: { elapsedSec: number; durationSec: number } | undefined,
+  stopGraceful: StopGracefulImageFade | null | undefined
+): number {
+  return (
+    resolveImageTimelineFadeAlpha(settings, timing) *
+    resolveStopGracefulImageAlpha(stopGraceful)
+  );
 }

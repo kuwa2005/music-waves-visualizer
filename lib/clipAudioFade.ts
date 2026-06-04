@@ -2,6 +2,38 @@ import { getPlaybackWindowBounds } from "./srtAuthoring";
 
 export type ResolvedClip = { full: true } | { full: false; start: number; duration: number };
 
+export type ShortOutputLimitPreset = "all" | "youtube" | "niconico" | "custom";
+
+/** 動画長の上限（秒数）が明示されているか。OFF・任意（秒数空欄）は false */
+export function isShortOutputMaxLengthSpecified(
+  preset: ShortOutputLimitPreset,
+  durationStr: string
+): boolean {
+  if (preset === "all") return false;
+  if (preset === "youtube" || preset === "niconico") return true;
+  return parseExplicitDurationSec(durationStr) != null;
+}
+
+/**
+ * 音声フェードアウト・MP4 長さの基準秒数。
+ * 上限あり: 切り出し区間の長さ。上限なし: 曲全体（開始オフセット時は開始〜曲末まで）。
+ */
+export function getEffectiveMaxDurationSec(
+  clip: ResolvedClip,
+  mediaDurationSec: number,
+  maxLengthSpecified: boolean
+): number {
+  if (!(mediaDurationSec > 0)) return 0;
+  if (!maxLengthSpecified) {
+    if (clip.full) return mediaDurationSec;
+    if (clip.full === false) {
+      return Math.max(0, mediaDurationSec - clip.start);
+    }
+    return 0;
+  }
+  return getAudibleSegmentSec(clip, mediaDurationSec);
+}
+
 export function parseFadeSecStr(value: string): number {
   const n = parseFloat(String(value).replace(",", "."));
   if (!Number.isFinite(n) || n < 0) return 0;
@@ -16,23 +48,6 @@ export function parseExplicitDurationSec(durationStr: string): number | null {
   return n;
 }
 
-/**
- * 実際の区間長がユーザー指定の動画長と一致し、メディア末尾より前で切り詰めているときのみフェードアウト
- */
-export function shouldApplyClipFadeOut(
-  clip: ResolvedClip,
-  mediaDurationSec: number,
-  explicitDurationSec: number | null
-): boolean {
-  if (clip.full || explicitDurationSec == null || !(explicitDurationSec > 0)) {
-    return false;
-  }
-  if (!(mediaDurationSec > 0)) return false;
-  const win = getPlaybackWindowBounds(clip, mediaDurationSec);
-  const segLen = win.endSec - win.startSec;
-  return Math.abs(segLen - explicitDurationSec) < 0.02;
-}
-
 export function effectiveFadeSec(fadeSec: number, segmentSec: number): number {
   if (!(fadeSec > 0) || !(segmentSec > 0)) return 0;
   return Math.min(fadeSec, segmentSec / 2);
@@ -45,28 +60,56 @@ export type ClipFadeSchedule = {
   applyFadeOut: boolean;
 };
 
-export function resolveClipFadeSchedule(
-  clip: ResolvedClip,
-  mediaDurationSec: number,
-  fadeInSecRaw: number,
-  fadeOutSecRaw: number,
-  explicitDurationSec: number | null
-): ClipFadeSchedule {
-  if (clip.full || !(mediaDurationSec > 0)) {
-    return { fadeInSec: 0, fadeOutSec: 0, segmentSec: 0, applyFadeOut: false };
-  }
+/** 再生・録画・MP4 の可聴区間長（秒） */
+export function getAudibleSegmentSec(clip: ResolvedClip, mediaDurationSec: number): number {
+  if (!(mediaDurationSec > 0)) return 0;
+  if (clip.full) return mediaDurationSec;
   const win = getPlaybackWindowBounds(clip, mediaDurationSec);
-  const segmentSec = win.endSec - win.startSec;
+  return Math.max(0, win.endSec - win.startSec);
+}
+
+/**
+ * 音設定の音声フェード。
+ * フェードイン: 区間先頭から fadeIn 秒。
+ * フェードアウト: 区間末尾で無音になるよう、st = segmentSec - fadeOut から fadeOut 秒。
+ */
+export function resolveAudioFadeSchedule(
+  segmentSec: number,
+  audioFadeInSecRaw: number,
+  audioFadeOutSecRaw: number
+): ClipFadeSchedule {
   if (!(segmentSec > 0)) {
     return { fadeInSec: 0, fadeOutSec: 0, segmentSec: 0, applyFadeOut: false };
   }
-  const applyFadeOut = shouldApplyClipFadeOut(clip, mediaDurationSec, explicitDurationSec);
   return {
-    fadeInSec: effectiveFadeSec(fadeInSecRaw, segmentSec),
-    fadeOutSec: applyFadeOut ? effectiveFadeSec(fadeOutSecRaw, segmentSec) : 0,
+    fadeInSec: effectiveFadeSec(audioFadeInSecRaw, segmentSec),
+    fadeOutSec: effectiveFadeSec(audioFadeOutSecRaw, segmentSec),
     segmentSec,
-    applyFadeOut,
+    applyFadeOut: audioFadeOutSecRaw > 0,
   };
+}
+
+/** FFmpeg -af 用（afade in/out をカンマ連結） */
+export function buildFfmpegAfadeFilter(
+  segmentSec: number,
+  audioFadeInSecRaw: number,
+  audioFadeOutSecRaw: number
+): string | null {
+  const { fadeInSec, fadeOutSec, segmentSec: seg } = resolveAudioFadeSchedule(
+    segmentSec,
+    audioFadeInSecRaw,
+    audioFadeOutSecRaw
+  );
+  if (!(seg > 0)) return null;
+  const parts: string[] = [];
+  if (fadeInSec > 0) {
+    parts.push(`afade=t=in:st=0:d=${fadeInSec}`);
+  }
+  if (fadeOutSec > 0) {
+    const st = Math.max(0, seg - fadeOutSec);
+    parts.push(`afade=t=out:st=${st}:d=${fadeOutSec}`);
+  }
+  return parts.length > 0 ? parts.join(",") : null;
 }
 
 export function resetClipGain(gain: GainNode, audioCtx: AudioContext): void {
@@ -104,4 +147,22 @@ export function scheduleClipGainFade(
     }
     gain.gain.linearRampToValueAtTime(0, t0 + segmentSec);
   }
+}
+
+/**
+ * 早期停止: 停止時点のゲインから fadeOutSec かけて 0 へ（自然終了の末尾フェードとは別）。
+ */
+export function scheduleEarlyStopGainFade(
+  gain: GainNode,
+  audioCtx: AudioContext,
+  fadeOutSecRaw: number
+): boolean {
+  const fadeOutSec = fadeOutSecRaw > 0 ? fadeOutSecRaw : 0;
+  if (!(fadeOutSec > 0)) return false;
+  const t = audioCtx.currentTime;
+  gain.gain.cancelScheduledValues(t);
+  const current = gain.gain.value;
+  gain.gain.setValueAtTime(current, t);
+  gain.gain.linearRampToValueAtTime(0, t + fadeOutSec);
+  return true;
 }

@@ -4,7 +4,18 @@
 フォーク: [kuwa2005/music-waves-visualizer](https://github.com/kuwa2005/music-waves-visualizer)（元: [komura-c/music-waves-visualizer](https://github.com/komura-c/music-waves-visualizer)）  
 作成時点のローカルブランチ: **`main`**（2026-05-23 更新: 本セッション分をコミット予定）
 
-**2026-06-01 セッション追記** — 詳細は [docs/SESSION_20260601.md](docs/SESSION_20260601.md)、[docs/CHANGELOG.md](docs/CHANGELOG.md) Unreleased。
+**2026-06-05（v1.0.6）** — [docs/CHANGELOG.md](docs/CHANGELOG.md) [1.0.6]、[docs/SESSION_20260601.md](docs/SESSION_20260601.md) §2026-06-05。
+
+| 領域 | 内容 |
+|------|------|
+| レーザー | `laserEffect.ts`、エフェクト UI |
+| ピッカー | 静止画/動画/すべて、音声/動画/すべて（`FilePickerSplitButton`） |
+| 音設定 | 動画長・フェードを音設定タブへ統合 |
+| 雨・水滴 | 音連動感度 0–10 |
+| 停止 | 早期停止の音声・画像フェード |
+| YouTube | loudnorm +0.05（UI -14 のまま） |
+
+**2026-06-01 セッション追記** — 詳細は [docs/SESSION_20260601.md](docs/SESSION_20260601.md)、[docs/CHANGELOG.md](docs/CHANGELOG.md) [1.0.5] 以降。
 
 | 領域 | 内容 |
 |------|------|

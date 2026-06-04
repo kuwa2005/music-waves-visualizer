@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+## [1.0.6] - 2026-06-05
+
+### Added
+- **Laser effect**: `lib/laserEffect.ts` — edge-burst colored beams (Canvas 2D + WebGL `drawLine`); density-only tuning; UI type `laser` with i18n `effect.laser`.
+- **File picker masks**: `components/FilePickerSplitButton.tsx` + `lib/fileValidation.ts` — split button (default / alternate / all) for image (still vs video), music (audio vs video), extension gates (`gateImageFile`, `gateAudioFile`, `gateVideoAsMediaFile`).
+- **Rain / water ripple audio sensitivity**: Sliders 0–10 (0.1 step, 0 = off); shared envelope in `lib/Effects.ts` (`rainAudioSensitivity`, `waterRippleAudioSensitivity`).
+
+### Changed
+- **Audio tab**: **Clip length** controls (presets, start/duration, fades) merged into **Audio** tab (`audioSettings.videoLengthSection`); dedicated Clip Length tab removed from tab order.
+- **Screen tab — sabi shake**: Chorus shake uses instant level + smoothed drive with higher peak (`SHAKE_EXCESS_CAP`); stronger response on loud hits (`lib/drawStillScreenBackground.ts`).
+- **Graceful stop on record end**: Early stop schedules GainNode fade (`scheduleEarlyStopGainFade`) and optional image alpha fade (`StopGracefulImageFade`, `resolveCombinedImageFadeAlpha`) so preview/recording does not cut abruptly.
+- **Clip / MP4 audio fade**: `resolveAudioFadeSchedule` applies in/out on the **audible segment** (not only when explicit platform max length matches); FFmpeg path adds `afade` + `-t` trim via `buildFfmpegAfadeFilter` / `Mp4AudioFadeEncode` (`lib/Ffmpeg.ts`, `lib/clipAudioFade.ts`).
+- **YouTube LUFS encode calibration**: UI stays **-14**; `loudnorm` integrated target **-13.95** (+0.05) when UI is -14 (`resolveLoudnormIntegratedTarget` in `lib/Ffmpeg.ts`). See [audio-quality.md](./audio-quality.md).
+- **Settings**: Supplement hint under **Clear all** (`settings.clearAllSupplement` JA/EN).
+- **React hooks**: Stabilized callbacks/refs around playback stop, spectrum settings, and encode paths in `pages/index.tsx` (exhaustive-deps / stale-closure fixes).
+
+### Documentation
+- [SESSION_20260601.md](./SESSION_20260601.md) §2026-06-05, [SPECIFICATION.md](./SPECIFICATION.md) (effects, file pickers, audio tab), [audio-quality.md](./audio-quality.md) (YouTube +0.05 note).
+
 ## [1.0.5] - 2026-06-02
 
 ### Fixed (2026-06-02 — i18n restore)
@@ -118,6 +137,12 @@
 ---
 
 ## 日本語（変更履歴の概要）
+
+### [1.0.6] 概要（2026-06-05）
+
+- レーザーエフェクト、ファイルピッカー（静止画/動画/すべて・音声/動画/すべて）、雨・水滴の音連動感度。
+- 動画長・フェードを音設定タブに統合。早期停止時の音声・画像フェード。YouTube 向け loudnorm +0.05（UI は -14 のまま）。
+- サビ揺れの動的応答、設定「すべてクリア」補足文、hooks 整理。
 
 - バイリンガルUI（日本語/英語）を追加。ブラウザ言語で自動切り替え。
 - Reactハイドレーションエラーを修正（英語環境での言語切り替えをuseEffectに移動）。

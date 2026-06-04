@@ -60,6 +60,7 @@ import {
 } from "@mui/icons-material";
 import i18n from "i18next";
 import { CustomSnackbar } from "../components/CustomSnackbar";
+import { FilePickerSplitButton } from "../components/FilePickerSplitButton";
 import {
   drawBars,
   clearImageCache,
@@ -89,6 +90,10 @@ import {
 } from "../lib/spectrumAdjustments";
 import {
   densityToWaterRippleIntensity,
+  normalizeRainAudioSensitivity,
+  RAIN_AUDIO_SENSITIVITY_MAX,
+  RAIN_AUDIO_SENSITIVITY_MIN,
+  RAIN_AUDIO_SENSITIVITY_STEP,
   waterRippleSpawnRateFromIntensity,
   type EffectType,
   type EffectDensity,
@@ -103,7 +108,7 @@ import {
   type QuickEncoderConfig
 } from "../lib/QuickVideoEncoder";
 import { isWebCodecsSupported, checkHardwareEncoderSupport } from "../lib/WebCodecsEncoder";
-import { generateMp4Video } from "../lib/Ffmpeg";
+import { generateMp4Video, type Mp4AudioFadeEncode } from "../lib/Ffmpeg";
 import { imageElementToThumbnailJpeg } from "../lib/mp4Thumbnail";
 import { mwvError, mwvLog, mwvMilestone } from "../lib/mwvConsole";
 import {
@@ -113,6 +118,9 @@ import {
   MAX_IMAGE_BYTES,
   MAX_MEDIA_BYTES,
   MAX_SETTINGS_JSON_BYTES,
+  FILE_PICKER_ACCEPT_IMAGE,
+  FILE_PICKER_ACCEPT_VIDEO,
+  FILE_PICKER_ACCEPT_AUDIO,
   isImageFileByName,
   isAudioFileByName,
   isVideoFileByName,
@@ -136,11 +144,14 @@ import {
 } from "../lib/subtitles";
 import { mwvGetItem, mwvSetItem, mwvRemoveItem } from "../lib/mwvCookieStorage";
 import {
-  parseExplicitDurationSec,
+  effectiveFadeSec,
+  getEffectiveMaxDurationSec,
+  isShortOutputMaxLengthSpecified,
   parseFadeSecStr,
   resetClipGain,
-  resolveClipFadeSchedule,
+  resolveAudioFadeSchedule,
   scheduleClipGainFade,
+  scheduleEarlyStopGainFade,
 } from "../lib/clipAudioFade";
 import { resetScreenEffectRuntime } from "../lib/drawStillScreenBackground";
 import {
@@ -151,6 +162,7 @@ import {
   parseScreenMotion,
   resolveImageFadePlaybackTiming,
   resolveImageTimelineFadeAlpha,
+  type StopGracefulImageFade,
   SCREEN_MOTION_BRIGHTNESS_STRENGTH_MAX,
   SCREEN_MOTION_BRIGHTNESS_STRENGTH_MIN,
   SCREEN_MOTION_CHORUS_ZOOM_PERCENT_MAX,
@@ -168,6 +180,7 @@ import {
   SCREEN_MOTION_IMAGE_FADE_STEP,
   SCREEN_MOTION_PAN_MAX,
   SCREEN_MOTION_PAN_MIN,
+  SCREEN_MOTION_SENSITIVITY_STEP_INCREMENT,
   SCREEN_MOTION_SENSITIVITY_STEP_MAX,
   SCREEN_MOTION_SENSITIVITY_STEP_MIN,
   SCREEN_MOTION_SHAKE_STRENGTH_MAX,
@@ -180,7 +193,15 @@ import {
   type ScreenMotionSettings,
 } from "../lib/screenMotion";
 
-type ShortOutputPreset = "all" | "tiktok" | "youtube" | "niconico";
+type ShortOutputPreset = "all" | "youtube" | "niconico" | "custom";
+
+function normalizeShortOutputPreset(raw: string): ShortOutputPreset | null {
+  if (raw === "all" || raw === "youtube" || raw === "niconico" || raw === "custom") {
+    return raw;
+  }
+  if (raw === "tiktok") return "custom";
+  return null;
+}
 type ExportAudioBitrateKbps = 128 | 192 | 256 | 320;
 type ResolvedClip = { full: true } | { full: false; start: number; duration: number };
 
@@ -584,10 +605,19 @@ const Home: NextPage = () => {
   const backgroundOnlyVideoRef = useRef<HTMLVideoElement | null>(null);
   const mediaElementSourceRef = useRef<MediaElementAudioSourceNode | null>(null);
   const playbackWindowTimerRef = useRef<number | null>(null);
+  const playbackStopFinalizeTimerRef = useRef<number | null>(null);
+  const playbackStopGracefulRef = useRef<StopGracefulImageFade | null>(null);
+  const playbackFrozenTimeSecRef = useRef<number | null>(null);
+  const isPlaybackFadingOutRef = useRef(false);
+  const [isPlaybackFadingOut, setIsPlaybackFadingOut] = useState(false);
+  const recordSafeStopRef = useRef<(() => void) | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
 
   const getCurrentPlaybackTimeSec = useCallback((): number => {
-    if (!isPlaySoundRef.current && !isRecording) return 0;
+    if (playbackFrozenTimeSecRef.current != null) {
+      return playbackFrozenTimeSecRef.current;
+    }
+    if (!isPlaySoundRef.current && !isRecording && !isPlaybackFadingOutRef.current) return 0;
     const v = videoElementRef.current;
     if (v && Number.isFinite(v.currentTime)) {
       if (!v.paused) {
@@ -609,7 +639,9 @@ const Home: NextPage = () => {
     const duration = v?.duration ?? 0;
     if (!v || !Number.isFinite(duration) || duration <= 0) return;
     const isAudioTimelineActive =
-      isPlaySoundRef.current || (isRecording && audioPlaybackStartCtxTimeRef.current != null);
+      isPlaySoundRef.current ||
+      isPlaybackFadingOutRef.current ||
+      (isRecording && audioPlaybackStartCtxTimeRef.current != null);
     const t = getCurrentPlaybackTimeSec();
     const epsilon = Math.min(0.04, duration / 4);
     const start = t <= 0 ? 0 : epsilon;
@@ -720,6 +752,7 @@ const Home: NextPage = () => {
     "rain",
     "snow",
     "waterRipple",
+    "laser",
     "mirrorBall",
   ];
   /** UI ボタン非表示（描画・保存キー互換は残す） */
@@ -748,6 +781,8 @@ const Home: NextPage = () => {
     "dust",
     "rain",
     "snow",
+    "waterRipple",
+    "laser",
     "mirrorBall",
   ];
   const defaultEffectDensities = (): Partial<Record<EffectType, EffectDensity>> => {
@@ -767,6 +802,8 @@ const Home: NextPage = () => {
   const [shortDurationSecStr, setShortDurationSecStr] = useState<string>("");
   const [shortFadeInSecStr, setShortFadeInSecStr] = useState<string>("0");
   const [shortFadeOutSecStr, setShortFadeOutSecStr] = useState<string>("0");
+  const [audioFadeInSecStr, setAudioFadeInSecStr] = useState<string>("0");
+  const [audioFadeOutSecStr, setAudioFadeOutSecStr] = useState<string>("0");
 
   type WeatherAdjust = { angleDeg: number; amount: number; color: string };
   const DEFAULT_RAIN_WEATHER: WeatherAdjust = { angleDeg: 22, amount: 0.7, color: "#6ba3ff" };
@@ -822,8 +859,10 @@ const Home: NextPage = () => {
     audioSyncRotation: false,
   };
   const [rainWeather, setRainWeather] = useState<WeatherAdjust>(DEFAULT_RAIN_WEATHER);
+  const [rainAudioSensitivity, setRainAudioSensitivity] = useState<number>(0);
   const [snowWeather, setSnowWeather] = useState<WeatherAdjust>(DEFAULT_SNOW_WEATHER);
   const [waterRippleIntensity, setWaterRippleIntensity] = useState<number>(DEFAULT_WATER_RIPPLE_INTENSITY);
+  const [waterRippleAudioSensitivity, setWaterRippleAudioSensitivity] = useState<number>(0);
   const [waterRippleColor, setWaterRippleColor] = useState<string>(DEFAULT_WATER_RIPPLE_COLOR);
   const [waterRippleVariant, setWaterRippleVariant] = useState<WaterRippleVariant>(DEFAULT_WATER_RIPPLE_VARIANT);
   const [waterRippleLightMode, setWaterRippleLightMode] = useState<boolean>(DEFAULT_WATER_RIPPLE_LIGHT_MODE);
@@ -981,6 +1020,7 @@ const Home: NextPage = () => {
       base.weatherAngleDeg = rainWeather.angleDeg;
       base.weatherAmount = rainWeather.amount;
       base.weatherColor = rainWeather.color;
+      base.rainAudioSensitivity = rainAudioSensitivity;
     } else if (effectType === "snow") {
       base.weatherAngleDeg = snowWeather.angleDeg;
       base.weatherAmount = snowWeather.amount;
@@ -1003,6 +1043,7 @@ const Home: NextPage = () => {
       base.waterRippleColor = waterRippleColor;
       base.waterRippleVariant = waterRippleVariant;
       base.waterRippleLightMode = waterRippleLightMode;
+      base.waterRippleAudioSensitivity = waterRippleAudioSensitivity;
     } else if (effectType === "mirrorBall") {
       base.mirrorBallX = mirrorBall.ballX;
       base.mirrorBallY = mirrorBall.ballY;
@@ -1031,11 +1072,13 @@ const Home: NextPage = () => {
     effectType,
     effectDensity,
     rainWeather,
+    rainAudioSensitivity,
     snowWeather,
     waterRippleIntensity,
     waterRippleColor,
     waterRippleVariant,
     waterRippleLightMode,
+    waterRippleAudioSensitivity,
     spaceParticleColor,
     spaceDirection,
     spaceSpeed,
@@ -1156,6 +1199,10 @@ const Home: NextPage = () => {
   }, [rainWeather]);
 
   useEffect(() => {
+    mwvSetItem("common_rainAudioSensitivity", String(rainAudioSensitivity));
+  }, [rainAudioSensitivity]);
+
+  useEffect(() => {
     if (typeof window === "undefined") return;
     mwvSetItem("common_mirrorBall", JSON.stringify(mirrorBall));
   }, [mirrorBall]);
@@ -1187,6 +1234,11 @@ const Home: NextPage = () => {
     if (typeof window === "undefined") return;
     mwvSetItem("common_waterRippleLightMode", waterRippleLightMode ? "1" : "0");
   }, [waterRippleLightMode]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    mwvSetItem("common_waterRippleAudioSensitivity", String(waterRippleAudioSensitivity));
+  }, [waterRippleAudioSensitivity]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1224,6 +1276,12 @@ const Home: NextPage = () => {
     mwvSetItem("common_shortFadeInSecStr", shortFadeInSecStr);
     mwvSetItem("common_shortFadeOutSecStr", shortFadeOutSecStr);
   }, [shortOutputPreset, shortStartSecStr, shortDurationSecStr, shortFadeInSecStr, shortFadeOutSecStr]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    mwvSetItem("common_audioFadeInSecStr", audioFadeInSecStr);
+    mwvSetItem("common_audioFadeOutSecStr", audioFadeOutSecStr);
+  }, [audioFadeInSecStr, audioFadeOutSecStr]);
 
   const detectCanvasLayoutFromImage = useCallback((image: HTMLImageElement | null): CanvasLayout => {
     if (!image || !(image.naturalWidth > 0) || !(image.naturalHeight > 0)) return "1920x1080";
@@ -1267,14 +1325,14 @@ const Home: NextPage = () => {
   }, []);
 
   // レイアウト×モードの設定を保存
-  const saveSettings = (layout: CanvasLayout, m: number, adjustments: ModeAdjustments) => {
+  const saveSettings = useCallback((layout: CanvasLayout, m: number, adjustments: ModeAdjustments) => {
     try {
       const key = getSettingsKey(layout, m);
       mwvSetItem(key, JSON.stringify(adjustments));
     } catch (error) {
       console.error("設定の保存に失敗しました:", error);
     }
-  };
+  }, [getSettingsKey]);
 
   const clampModeAdjustments = useCallback((adj: ModeAdjustments): ModeAdjustments => {
     const clampOffset = (v: number) =>
@@ -1350,11 +1408,13 @@ const Home: NextPage = () => {
         srtAuthorPanelEnabled,
         rendererType,
         rainWeather,
+        rainAudioSensitivity,
         snowWeather,
         waterRippleIntensity,
         waterRippleColor,
         waterRippleVariant,
         waterRippleLightMode,
+        waterRippleAudioSensitivity,
         mirrorBall,
         galleryTransitionMode,
         spaceParticleColor,
@@ -1383,6 +1443,8 @@ const Home: NextPage = () => {
         shortDurationSecStr,
         shortFadeInSecStr,
         shortFadeOutSecStr,
+        audioFadeInSecStr,
+        audioFadeOutSecStr,
         galleryAutoEnabled,
         galleryAutoSec,
       },
@@ -1436,17 +1498,20 @@ const Home: NextPage = () => {
       "common_recordAudioBitrateKbps",
       "common_srtAuthorPanelEnabled",
       "common_rainWeather",
+      "common_rainAudioSensitivity",
       "common_snowWeather",
       "common_waterRippleIntensity",
       "common_waterRippleColor",
       "common_waterRippleVariant",
       "common_waterRippleLightMode",
+      "common_waterRippleAudioSensitivity",
       "common_mirrorBall",
       "common_galleryAutoEnabled",
       "common_galleryAutoSec",
       "common_canvasSize",
       "common_settingsTab",
       "common_settingsTab_screenMigrated",
+      "common_settingsTab_clipMerged",
       "common_screenMotion",
       "common_lineWidthWaveform",
       "common_lineWidthCircle",
@@ -1461,8 +1526,8 @@ const Home: NextPage = () => {
       "common_shortDurationSecStr",
       "common_shortFadeInSecStr",
       "common_shortFadeOutSecStr",
-      "common_shortFadeInSecStr",
-      "common_shortFadeOutSecStr",
+      "common_audioFadeInSecStr",
+      "common_audioFadeOutSecStr",
       "common_rendererType",
     ].forEach((k) => mwvRemoveItem(k));
   };
@@ -1750,6 +1815,11 @@ const Home: NextPage = () => {
             });
           }
         }
+        if (typeof c.rainAudioSensitivity === "number" && !isNaN(c.rainAudioSensitivity)) {
+          const step = normalizeRainAudioSensitivity(c.rainAudioSensitivity, 0);
+          setRainAudioSensitivity(step);
+          mwvSetItem("common_rainAudioSensitivity", String(step));
+        }
         if (typeof c.waterRippleIntensity === "number" && !isNaN(c.waterRippleIntensity)) {
           setWaterRippleIntensity(Math.max(0, Math.min(1, c.waterRippleIntensity)));
           mwvSetItem("common_waterRippleIntensity", String(Math.max(0, Math.min(1, c.waterRippleIntensity))));
@@ -1771,6 +1841,11 @@ const Home: NextPage = () => {
         if (typeof c.waterRippleLightMode === "boolean") {
           setWaterRippleLightMode(c.waterRippleLightMode);
           mwvSetItem("common_waterRippleLightMode", c.waterRippleLightMode ? "1" : "0");
+        }
+        if (typeof c.waterRippleAudioSensitivity === "number" && !isNaN(c.waterRippleAudioSensitivity)) {
+          const step = normalizeRainAudioSensitivity(c.waterRippleAudioSensitivity, 0);
+          setWaterRippleAudioSensitivity(step);
+          mwvSetItem("common_waterRippleAudioSensitivity", String(step));
         }
         if (c.snowWeather && typeof c.snowWeather === "object") {
           const sw = c.snowWeather as WeatherAdjust;
@@ -1840,9 +1915,11 @@ const Home: NextPage = () => {
         if (typeof c.settingsTab === "number") {
           let tab = c.settingsTab;
           if (c.screenMotion == null && tab >= 2) {
-            tab = Math.min(7, tab + 1);
+            tab = Math.min(6, tab + 1);
           }
-          if (tab >= 0 && tab <= 7) {
+          if (tab === 6) tab = 5;
+          else if (tab > 6) tab = 6;
+          if (tab >= 0 && tab <= 6) {
             mwvSetItem("common_settingsTab", String(tab));
             setSettingsTab(tab);
           }
@@ -1899,9 +1976,12 @@ const Home: NextPage = () => {
           mwvSetItem("common_retroEqParams", JSON.stringify(next));
           setRetroEqParams(next);
         }
-        if (c.shortOutputPreset === "all" || c.shortOutputPreset === "tiktok" || c.shortOutputPreset === "youtube" || c.shortOutputPreset === "niconico") {
-          mwvSetItem("common_shortOutputPreset", c.shortOutputPreset);
-          setShortOutputPreset(c.shortOutputPreset);
+        if (typeof c.shortOutputPreset === "string") {
+          const preset = normalizeShortOutputPreset(c.shortOutputPreset);
+          if (preset) {
+            mwvSetItem("common_shortOutputPreset", preset);
+            setShortOutputPreset(preset);
+          }
         }
         if (typeof c.shortStartSecStr === "string") {
           mwvSetItem("common_shortStartSecStr", c.shortStartSecStr);
@@ -1918,6 +1998,14 @@ const Home: NextPage = () => {
         if (typeof c.shortFadeOutSecStr === "string") {
           mwvSetItem("common_shortFadeOutSecStr", c.shortFadeOutSecStr);
           setShortFadeOutSecStr(c.shortFadeOutSecStr);
+        }
+        if (typeof c.audioFadeInSecStr === "string") {
+          mwvSetItem("common_audioFadeInSecStr", c.audioFadeInSecStr);
+          setAudioFadeInSecStr(c.audioFadeInSecStr);
+        }
+        if (typeof c.audioFadeOutSecStr === "string") {
+          mwvSetItem("common_audioFadeOutSecStr", c.audioFadeOutSecStr);
+          setAudioFadeOutSecStr(c.audioFadeOutSecStr);
         }
         if (c.galleryAutoEnabled === true || c.galleryAutoEnabled === false) {
           mwvSetItem("common_galleryAutoEnabled", c.galleryAutoEnabled ? "1" : "0");
@@ -2024,48 +2112,8 @@ const Home: NextPage = () => {
     }
   };
 
-  const handleAdjustmentChange = (key: keyof ModeAdjustments, value: number) => {
-    setModeAdjustments((prev) => {
-      const newAdjustments = clampModeAdjustments({
-        ...prev,
-        [key]: value,
-      });
-      saveSettings(activeCanvasLayout, mode, newAdjustments);
-      return newAdjustments;
-    });
-  };
-
   const beginSpaceCenterGuide = useCallback(() => setShowSpaceCenterGuide(true), []);
   const endSpaceCenterGuide = useCallback(() => setShowSpaceCenterGuide(false), []);
-
-  const handleOffsetSliderChange = useCallback(
-    (key: "offsetX" | "offsetY", value: number) => {
-      handleAdjustmentChange(key, value);
-      if (mode === 2) {
-        setShowSpectrumOffsetGuide(true);
-      }
-    },
-    [handleAdjustmentChange, mode]
-  );
-
-  const handleOffsetSliderCommitted = useCallback(() => {
-    if (mode === 2) {
-      setShowSpectrumOffsetGuide(false);
-    }
-  }, [mode]);
-
-  /** 円形モードのみ: スライダー操作の開始/終了で●表示（marks は ResettableSlider で透過） */
-  const spectrumOffsetSliderGuideProps =
-    mode === 2
-      ? {
-          onMouseDown: () => setShowSpectrumOffsetGuide(true),
-          onTouchStart: () => setShowSpectrumOffsetGuide(true),
-          onFocus: () => setShowSpectrumOffsetGuide(true),
-          onMouseUp: handleOffsetSliderCommitted,
-          onTouchEnd: handleOffsetSliderCommitted,
-          onBlur: handleOffsetSliderCommitted,
-        }
-      : {};
 
   useEffect(() => {
     setRainColorInput(rainWeather.color.toUpperCase());
@@ -2355,6 +2403,49 @@ const Home: NextPage = () => {
     resolveCanvasLayout,
   ]);
 
+  const handleAdjustmentChange = useCallback(
+    (key: keyof ModeAdjustments, value: number) => {
+      setModeAdjustments((prev) => {
+        const newAdjustments = clampModeAdjustments({
+          ...prev,
+          [key]: value,
+        });
+        saveSettings(activeCanvasLayout, mode, newAdjustments);
+        return newAdjustments;
+      });
+    },
+    [activeCanvasLayout, mode, saveSettings, clampModeAdjustments]
+  );
+
+  const handleOffsetSliderChange = useCallback(
+    (key: "offsetX" | "offsetY", value: number) => {
+      handleAdjustmentChange(key, value);
+      if (mode === 2) {
+        setShowSpectrumOffsetGuide(true);
+      }
+    },
+    [handleAdjustmentChange, mode]
+  );
+
+  const handleOffsetSliderCommitted = useCallback(() => {
+    if (mode === 2) {
+      setShowSpectrumOffsetGuide(false);
+    }
+  }, [mode]);
+
+  /** 円形モードのみ: スライダー操作の開始/終了で●表示（marks は ResettableSlider で透過） */
+  const spectrumOffsetSliderGuideProps =
+    mode === 2
+      ? {
+          onMouseDown: () => setShowSpectrumOffsetGuide(true),
+          onTouchStart: () => setShowSpectrumOffsetGuide(true),
+          onFocus: () => setShowSpectrumOffsetGuide(true),
+          onMouseUp: handleOffsetSliderCommitted,
+          onTouchEnd: handleOffsetSliderCommitted,
+          onBlur: handleOffsetSliderCommitted,
+        }
+      : {};
+
   const previewGuideCanvasDims = getCanvasDimensions(activeCanvasLayout);
   const spectrumOffsetGuidePos = useMemo(
     () =>
@@ -2389,7 +2480,14 @@ const Home: NextPage = () => {
         return next;
       });
     },
-    [previewGuideCanvasDims.width, previewGuideCanvasDims.height, modeAdjustments, mode, activeCanvasLayout]
+    [
+      previewGuideCanvasDims.width,
+      previewGuideCanvasDims.height,
+      modeAdjustments,
+      mode,
+      activeCanvasLayout,
+      saveSettings,
+    ]
   );
 
   const handleSpectrumGuidePointerDown = useCallback(
@@ -2737,13 +2835,21 @@ const Home: NextPage = () => {
     if (savedSettingsTab != null) {
       const n = parseInt(savedSettingsTab, 10);
       if (!isNaN(n) && n >= 0) {
-        const migrated = mwvGetItem("common_settingsTab_screenMigrated") === "1";
-        if (!migrated && n >= 2 && n <= 6) {
-          setSettingsTab(Math.min(7, n + 1));
-          mwvSetItem("common_settingsTab", String(Math.min(7, n + 1)));
+        let tab = n;
+        const screenMigrated = mwvGetItem("common_settingsTab_screenMigrated") === "1";
+        if (!screenMigrated && tab >= 2 && tab <= 6) {
+          tab = Math.min(6, tab + 1);
           mwvSetItem("common_settingsTab_screenMigrated", "1");
-        } else if (n <= 7) {
-          setSettingsTab(n);
+        }
+        const clipMerged = mwvGetItem("common_settingsTab_clipMerged") === "1";
+        if (!clipMerged) {
+          if (tab === 6) tab = 5;
+          else if (tab > 6) tab = 6;
+          mwvSetItem("common_settingsTab_clipMerged", "1");
+        }
+        if (tab <= 6) {
+          setSettingsTab(tab);
+          mwvSetItem("common_settingsTab", String(tab));
         }
       }
     }
@@ -2788,8 +2894,9 @@ const Home: NextPage = () => {
     }
 
     const sop = mwvGetItem("common_shortOutputPreset");
-    if (sop === "all" || sop === "tiktok" || sop === "youtube" || sop === "niconico") {
-      setShortOutputPreset(sop as ShortOutputPreset);
+    if (sop != null) {
+      const preset = normalizeShortOutputPreset(sop);
+      if (preset) setShortOutputPreset(preset);
     }
     const ssStart = mwvGetItem("common_shortStartSecStr");
     if (ssStart != null) setShortStartSecStr(ssStart);
@@ -2799,6 +2906,10 @@ const Home: NextPage = () => {
     if (sfi != null) setShortFadeInSecStr(sfi);
     const sfo = mwvGetItem("common_shortFadeOutSecStr");
     if (sfo != null) setShortFadeOutSecStr(sfo);
+    const afi = mwvGetItem("common_audioFadeInSecStr");
+    if (afi != null) setAudioFadeInSecStr(afi);
+    const afo = mwvGetItem("common_audioFadeOutSecStr");
+    if (afo != null) setAudioFadeOutSecStr(afo);
 
     const gae = mwvGetItem("common_galleryAutoEnabled");
     if (gae === "0") setGalleryAutoEnabled(false);
@@ -2849,6 +2960,14 @@ const Home: NextPage = () => {
       setWaterRippleLightMode(false);
     } else if (savedWrLight === "1") {
       setWaterRippleLightMode(true);
+    }
+
+    const savedWrAudioSens = mwvGetItem("common_waterRippleAudioSensitivity");
+    if (savedWrAudioSens != null && savedWrAudioSens !== "") {
+      const n = parseFloat(savedWrAudioSens);
+      if (!isNaN(n)) {
+        setWaterRippleAudioSensitivity(normalizeRainAudioSensitivity(n, 0));
+      }
     }
 
     const savedGlyco = mwvGetItem("common_glycoColorSet");
@@ -3118,6 +3237,14 @@ const Home: NextPage = () => {
       }
     } catch (_e) { /* ignore */ }
 
+    const savedRainAudioSens = mwvGetItem("common_rainAudioSensitivity");
+    if (savedRainAudioSens != null && savedRainAudioSens !== "") {
+      const n = parseFloat(savedRainAudioSens);
+      if (!isNaN(n)) {
+        setRainAudioSensitivity(normalizeRainAudioSensitivity(n, 0));
+      }
+    }
+
     try {
       const sw = mwvGetItem("common_snowWeather");
       if (sw) {
@@ -3320,6 +3447,42 @@ const Home: NextPage = () => {
     };
   }, []);
 
+  const getMediaDurationSec = useCallback((): number => {
+    const v = videoElementRef.current;
+    if (v && Number.isFinite(v.duration) && v.duration > 0) {
+      return v.duration;
+    }
+    const b = decodedAudioBufferRef.current;
+    if (b && Number.isFinite(b.duration) && b.duration > 0) {
+      return b.duration;
+    }
+    return 0;
+  }, []);
+
+  const resolvePlaybackWindow = useCallback((): ResolvedClip => {
+    if (shortOutputPreset === "all") {
+      return { full: true };
+    }
+    const mediaDur = getMediaDurationSec();
+    if (!(mediaDur > 0)) {
+      return { full: true };
+    }
+    let start = parseFloat(shortStartSecStr.replace(",", "."));
+    if (!Number.isFinite(start)) {
+      start = 0;
+    }
+    const durationParsed = parseFloat(shortDurationSecStr.replace(",", "."));
+    let duration: number;
+    if (!shortDurationSecStr.trim() || !Number.isFinite(durationParsed)) {
+      duration = Math.max(0, mediaDur - start);
+    } else {
+      duration = durationParsed;
+    }
+    start = Math.max(0, Math.min(start, mediaDur));
+    duration = Math.max(0, Math.min(duration, mediaDur - start));
+    return { full: false, start, duration };
+  }, [shortOutputPreset, shortStartSecStr, shortDurationSecStr, getMediaDurationSec]);
+
   // Canvas Animation
   useEffect(() => {
     if (!canvasRef.current) {
@@ -3333,7 +3496,7 @@ const Home: NextPage = () => {
 
     // レンダラータイプに応じて描画関数を選択
     const effect = effectForCanvas;
-    const isEffectActive = isPlaySound || isRecording;
+    const isEffectActive = isPlaySound || isRecording || isPlaybackFadingOut;
     const spectrumSettings = {
       opacity: 1 - spectrumOpacityPercent / 100,
       lineWidthWaveform,
@@ -3377,6 +3540,7 @@ const Home: NextPage = () => {
           getMediaDurationSec(),
           resolvePlaybackWindow()
         ),
+      getStopGracefulImageFade: () => playbackStopGracefulRef.current,
       ...spectrumVideoBackground,
     };
 
@@ -3417,6 +3581,7 @@ const Home: NextPage = () => {
     effectForCanvas,
     isPlaySound,
     isRecording,
+    isPlaybackFadingOut,
     glycoColorSet,
     glycoRotationDeg,
     spectrumOpacityPercent,
@@ -3443,9 +3608,8 @@ const Home: NextPage = () => {
     titleStyle,
     getCurrentPlaybackTimeSec,
     screenMotion,
-    shortOutputPreset,
-    shortStartSecStr,
-    shortDurationSecStr,
+    getMediaDurationSec,
+    resolvePlaybackWindow,
     backgroundMediaMode,
     spectrumVideoBackground,
   ]);
@@ -3811,63 +3975,51 @@ const Home: NextPage = () => {
     e.preventDefault();
   };
 
-  const getMediaDurationSec = useCallback((): number => {
-    const v = videoElementRef.current;
-    if (v && Number.isFinite(v.duration) && v.duration > 0) {
-      return v.duration;
-    }
-    const b = decodedAudioBufferRef.current;
-    if (b && Number.isFinite(b.duration) && b.duration > 0) {
-      return b.duration;
-    }
-    return 0;
-  }, []);
-
-  const resolvePlaybackWindow = useCallback((): ResolvedClip => {
-    if (shortOutputPreset === "all") {
-      return { full: true };
-    }
+  const buildMp4AudioFadeEncode = useCallback((): Mp4AudioFadeEncode | null => {
     const mediaDur = getMediaDurationSec();
-    if (!(mediaDur > 0)) {
-      return { full: true };
-    }
-    let start = parseFloat(shortStartSecStr.replace(",", "."));
-    if (!Number.isFinite(start)) {
-      start = 0;
-    }
-    const durationParsed = parseFloat(shortDurationSecStr.replace(",", "."));
-    let duration: number;
-    if (!shortDurationSecStr.trim() || !Number.isFinite(durationParsed)) {
-      duration = Math.max(0, mediaDur - start);
-    } else {
-      duration = durationParsed;
-    }
-    start = Math.max(0, Math.min(start, mediaDur));
-    duration = Math.max(0, Math.min(duration, mediaDur - start));
-    return { full: false, start, duration };
-  }, [shortOutputPreset, shortStartSecStr, shortDurationSecStr, getMediaDurationSec]);
+    const clip = resolvePlaybackWindow();
+    const limitActive = isShortOutputMaxLengthSpecified(
+      shortOutputPreset,
+      shortDurationSecStr
+    );
+    const effectiveMax = getEffectiveMaxDurationSec(clip, mediaDur, limitActive);
+    if (!(effectiveMax > 0)) return null;
+    const fadeInSec = parseFadeSecStr(audioFadeInSecStr);
+    const fadeOutSec = parseFadeSecStr(audioFadeOutSecStr);
+    if (fadeInSec <= 0 && fadeOutSec <= 0) return null;
+    return { fadeInSec, fadeOutSec, outputDurationSec: effectiveMax };
+  }, [
+    getMediaDurationSec,
+    resolvePlaybackWindow,
+    shortOutputPreset,
+    shortDurationSecStr,
+    audioFadeInSecStr,
+    audioFadeOutSecStr,
+  ]);
 
-  const applyPlaybackClipFade = useCallback(
+  const applyPlaybackGainFade = useCallback(
     (clip: ResolvedClip) => {
       const gain = clipGainRef.current;
       const ctx = audioCtxRef.current;
       if (!gain || !ctx) return;
-      if (shortOutputPreset === "all" || clip.full) {
+      const mediaDur = getMediaDurationSec();
+      const limitActive = isShortOutputMaxLengthSpecified(
+        shortOutputPreset,
+        shortDurationSecStr
+      );
+      const effectiveMax = getEffectiveMaxDurationSec(clip, mediaDur, limitActive);
+      const schedule = resolveAudioFadeSchedule(
+        effectiveMax,
+        parseFadeSecStr(audioFadeInSecStr),
+        parseFadeSecStr(audioFadeOutSecStr)
+      );
+      if (schedule.fadeInSec <= 0 && schedule.fadeOutSec <= 0) {
         resetClipGain(gain, ctx);
         return;
       }
-      const mediaDur = getMediaDurationSec();
-      const explicitDur = parseExplicitDurationSec(shortDurationSecStr);
-      const schedule = resolveClipFadeSchedule(
-        clip,
-        mediaDur,
-        parseFadeSecStr(shortFadeInSecStr),
-        parseFadeSecStr(shortFadeOutSecStr),
-        explicitDur
-      );
       scheduleClipGainFade(gain, ctx, schedule, ctx.currentTime);
     },
-    [getMediaDurationSec, shortDurationSecStr, shortFadeInSecStr, shortFadeOutSecStr, shortOutputPreset]
+    [getMediaDurationSec, shortOutputPreset, shortDurationSecStr, audioFadeInSecStr, audioFadeOutSecStr]
   );
 
   const clearPlaybackWindowTimer = useCallback(() => {
@@ -4291,60 +4443,153 @@ const Home: NextPage = () => {
     audioPlaybackOffsetSecRef.current = clip.full === false ? clip.start : 0;
   };
 
-  const finishVideoWindowPlayback = useCallback(() => {
+  const clearPlaybackStopFinalizeTimer = useCallback(() => {
+    if (playbackStopFinalizeTimerRef.current != null) {
+      window.clearTimeout(playbackStopFinalizeTimerRef.current);
+      playbackStopFinalizeTimerRef.current = null;
+    }
+  }, []);
+
+  const finalizePlaybackStop = useCallback(() => {
+    clearPlaybackStopFinalizeTimer();
+    playbackStopGracefulRef.current = null;
+    playbackFrozenTimeSecRef.current = null;
+    isPlaybackFadingOutRef.current = false;
+    setIsPlaybackFadingOut(false);
     clearPlaybackWindowTimer();
+    if (audioBufferSrcRef.current) {
+      try {
+        audioBufferSrcRef.current.stop(0);
+      } catch {
+        /* already stopped */
+      }
+    }
     if (videoElementRef.current) {
       videoElementRef.current.pause();
     }
     if (clipGainRef.current && audioCtxRef.current) {
       resetClipGain(clipGainRef.current, audioCtxRef.current);
     }
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
-      mediaRecorderRef.current.stop();
+    const safeStop = recordSafeStopRef.current;
+    if (safeStop) {
+      safeStop();
+    } else if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
+      try {
+        mediaRecorderRef.current.stop();
+      } catch {
+        /* ignore */
+      }
     }
     audioPlaybackStartCtxTimeRef.current = null;
     isPlaySoundRef.current = false;
     setIsPlaySound(false);
     stopCanvas2DAnimation();
     stopWebGLAnimation();
-  }, [clearPlaybackWindowTimer]);
+  }, [clearPlaybackStopFinalizeTimer, clearPlaybackWindowTimer]);
+
+  const beginGracefulPlaybackStop = useCallback(() => {
+    if (isPlaybackFadingOutRef.current) return;
+    if (!isRecordingRef.current) {
+      finalizePlaybackStop();
+      return;
+    }
+    const audioOutRaw = parseFadeSecStr(audioFadeOutSecStr);
+    const imageOutRaw = screenMotion.imageFadeOutSec;
+    const mediaDur = getMediaDurationSec();
+    const clip = resolvePlaybackWindow();
+    const limitActive = isShortOutputMaxLengthSpecified(
+      shortOutputPreset,
+      shortDurationSecStr
+    );
+    const effectiveMax = getEffectiveMaxDurationSec(clip, mediaDur, limitActive);
+    const segForFade = Math.max(0.001, effectiveMax > 0 ? effectiveMax : mediaDur || 0.001);
+    const audioOut =
+      audioOutRaw > 0 ? effectiveFadeSec(audioOutRaw, segForFade) : 0;
+    const imageOut = imageOutRaw > 0 ? imageOutRaw : 0;
+    const tailSec = Math.max(audioOut, imageOut);
+    if (!(tailSec > 0)) {
+      finalizePlaybackStop();
+      return;
+    }
+
+    mwvMilestone("record: 停止（フェードアウト）", {
+      audioOutSec: audioOut,
+      imageOutSec: imageOut,
+      hadRecorder: Boolean(mediaRecorderRef.current),
+    });
+
+    clearPlaybackWindowTimer();
+    playbackFrozenTimeSecRef.current = getCurrentPlaybackTimeSec();
+
+    const gain = clipGainRef.current;
+    const ctx = audioCtxRef.current;
+    if (audioOut > 0 && gain && ctx) {
+      scheduleEarlyStopGainFade(gain, ctx, audioOut);
+    }
+
+    if (imageOut > 0) {
+      const timing = resolveImageFadePlaybackTiming(
+        playbackFrozenTimeSecRef.current,
+        mediaDur,
+        clip
+      );
+      playbackStopGracefulRef.current = {
+        startPerfMs: performance.now(),
+        fadeOutSec: imageOut,
+        startAlpha: resolveImageTimelineFadeAlpha(screenMotion, timing),
+      };
+    } else {
+      playbackStopGracefulRef.current = null;
+    }
+
+    isPlaybackFadingOutRef.current = true;
+    setIsPlaybackFadingOut(true);
+    isPlaySoundRef.current = false;
+    setIsPlaySound(false);
+
+    clearPlaybackStopFinalizeTimer();
+    playbackStopFinalizeTimerRef.current = window.setTimeout(() => {
+      playbackStopFinalizeTimerRef.current = null;
+      finalizePlaybackStop();
+    }, tailSec * 1000 + 30);
+  }, [
+    audioFadeOutSecStr,
+    screenMotion,
+    getMediaDurationSec,
+    resolvePlaybackWindow,
+    shortOutputPreset,
+    shortDurationSecStr,
+    getCurrentPlaybackTimeSec,
+    finalizePlaybackStop,
+    clearPlaybackWindowTimer,
+    clearPlaybackStopFinalizeTimer,
+  ]);
+
+  const finishVideoWindowPlayback = useCallback(() => {
+    finalizePlaybackStop();
+  }, [finalizePlaybackStop]);
 
   // PlaySoundEvent
   const onPlaySound = () => {
-    if (isPlaySound) {
-      mwvMilestone("preview: 停止（再生オフ）", {
-        hadRecorder: Boolean(mediaRecorderRef.current),
-        recorderState: mediaRecorderRef.current?.state,
-      });
-      clearPlaybackWindowTimer();
-      // MediaRecorder を先に止めて partial WebM の stop イベントを発火させる
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
-        try {
-          mediaRecorderRef.current.stop();
-        } catch {
-          /* ignore */
-        }
+    if (isPlaySound || isPlaybackFadingOutRef.current) {
+      if (isPlaybackFadingOutRef.current) return;
+      if (isRecordingRef.current) {
+        mwvMilestone("record: 停止（録画フェードへ）", {
+          recorderState: mediaRecorderRef.current?.state,
+        });
+        beginGracefulPlaybackStop();
+      } else {
+        mwvMilestone("preview: 停止（即時）");
+        finalizePlaybackStop();
       }
-      if (audioBufferSrcRef.current) {
-        try {
-          audioBufferSrcRef.current.stop(0);
-        } catch {
-          /* already stopped */
-        }
-      }
-      if (videoElementRef.current) {
-        videoElementRef.current.pause();
-      }
-      if (clipGainRef.current && audioCtxRef.current) {
-        resetClipGain(clipGainRef.current, audioCtxRef.current);
-      }
-      audioPlaybackStartCtxTimeRef.current = null;
-      stopCanvas2DAnimation();
-      stopWebGLAnimation();
-      isPlaySoundRef.current = false;
-      setIsPlaySound(false);
       return;
     }
+    clearPlaybackStopFinalizeTimer();
+    playbackStopGracefulRef.current = null;
+    playbackFrozenTimeSecRef.current = null;
+    isPlaybackFadingOutRef.current = false;
+    setIsPlaybackFadingOut(false);
+
     const clip = resolvePlaybackWindow();
     if (clip.full === false && clip.duration <= 0) {
       openSnackBar(t("snackbar.shortClipInvalid"));
@@ -4360,7 +4605,7 @@ const Home: NextPage = () => {
     if (videoElementRef.current) {
       audioPlaybackStartCtxTimeRef.current = null;
       videoElementRef.current.play().then(() => {
-        applyPlaybackClipFade(clip);
+        applyPlaybackGainFade(clip);
         if (clip.full === false && clip.duration > 0) {
           clearPlaybackWindowTimer();
           const durationSec = clip.duration;
@@ -4377,7 +4622,7 @@ const Home: NextPage = () => {
       } else {
         audioBufferSrcRef.current.start(0);
       }
-      applyPlaybackClipFade(clip);
+      applyPlaybackGainFade(clip);
     }
 
     isPlaySoundRef.current = true;
@@ -4479,10 +4724,10 @@ const Home: NextPage = () => {
       } else {
         node.start(0, absoluteSec);
       }
-      applyPlaybackClipFade(clip);
+      applyPlaybackGainFade(clip);
       schedulePlaybackWindowEndFromNow(clip);
     },
-    [resolvePlaybackWindow, applyPlaybackClipFade, schedulePlaybackWindowEndFromNow]
+    [resolvePlaybackWindow, applyPlaybackGainFade, schedulePlaybackWindowEndFromNow]
   );
 
   const seekPreviewToRelative = useCallback(
@@ -4524,9 +4769,9 @@ const Home: NextPage = () => {
       video.addEventListener("seeked", bump);
     }
     let raf = 0;
-    if (isPlaySound && !video) {
+    if ((isPlaySound || isPlaybackFadingOut) && !video) {
       const loop = () => {
-        if (isPlaySoundRef.current) bump();
+        if (isPlaySoundRef.current || isPlaybackFadingOutRef.current) bump();
         raf = requestAnimationFrame(loop);
       };
       raf = requestAnimationFrame(loop);
@@ -4538,18 +4783,23 @@ const Home: NextPage = () => {
       }
       if (raf) cancelAnimationFrame(raf);
     };
-  }, [playSoundDisabled, isPlaySound, audioFileName]);
+  }, [playSoundDisabled, isPlaySound, isPlaybackFadingOut, audioFileName]);
+
+  useEffect(() => {
+    if (!isPlaybackFadingOut) return;
+    let raf = 0;
+    const loop = () => {
+      setPreviewPlaybackTick((n) => n + 1);
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, [isPlaybackFadingOut]);
 
   const previewTimeline = useMemo(() => {
     void previewPlaybackTick;
     return resolvePreviewTimeline();
-  }, [
-    resolvePreviewTimeline,
-    previewPlaybackTick,
-    shortOutputPreset,
-    shortStartSecStr,
-    shortDurationSecStr,
-  ]);
+  }, [resolvePreviewTimeline, previewPlaybackTick]);
 
   const previewSeekValue =
     previewTimeline != null
@@ -4674,8 +4924,10 @@ const Home: NextPage = () => {
           }
         }, 140);
       };
+      recordSafeStopRef.current = safeStopRecorder;
       //録画終了時に動画ファイルのダウンロードリンクを生成する処理
       recorder.addEventListener("stop", async () => {
+        recordSafeStopRef.current = null;
         const recordedMimeType =
           recorder.mimeType && recorder.mimeType.length > 0 ? recorder.mimeType : "video/webm";
         mediaRecorderRef.current = null;
@@ -4715,7 +4967,8 @@ const Home: NextPage = () => {
             },
             targetLufs,
             exportAudioBitrateKbps,
-            thumbnailJpeg
+            thumbnailJpeg,
+            buildMp4AudioFadeEncode()
           );
           if (!video || video.length === 0) {
             throw new Error("empty_mp4");
@@ -4917,7 +5170,8 @@ const Home: NextPage = () => {
         },
         targetLufs,
         exportAudioBitrateKbps,
-        thumbnailJpeg
+        thumbnailJpeg,
+        buildMp4AudioFadeEncode()
       );
 
       if (!video || video.length === 0) {
@@ -4956,6 +5210,12 @@ const Home: NextPage = () => {
   // クリア（ページロード時の状態に戻す）
   const onClear = () => {
     clearPlaybackWindowTimer();
+    clearPlaybackStopFinalizeTimer();
+    playbackStopGracefulRef.current = null;
+    playbackFrozenTimeSecRef.current = null;
+    isPlaybackFadingOutRef.current = false;
+    setIsPlaybackFadingOut(false);
+    recordSafeStopRef.current = null;
     mediaRecorderRef.current = null;
     quickEncodeCancelRef.current = true;
     quickEncoderRef.current?.cancel();
@@ -5037,6 +5297,7 @@ const Home: NextPage = () => {
     setShortFadeInSecStr("0");
     setShortFadeOutSecStr("0");
     setRainWeather(DEFAULT_RAIN_WEATHER);
+    setRainAudioSensitivity(0);
     setSnowWeather(DEFAULT_SNOW_WEATHER);
     setMirrorBall(DEFAULT_MIRROR_BALL);
     setTargetLufs(-14);
@@ -5277,23 +5538,21 @@ const Home: NextPage = () => {
                 flexWrap: "wrap",
               }}
             >
-              <Button
-                variant="outlined"
-                component="label"
+              <FilePickerSplitButton
+                label={t("dropZone.selectImage")}
                 startIcon={<PhotoLibrary />}
-                size="medium"
                 disabled={isQuickEncoding || isRecording || isPlaySound}
-                sx={{ flexShrink: 0, minWidth: 200 }}
-              >
-                {t("dropZone.selectImage")}
-                <input
-                  type="file"
-                  accept="image/*,video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov"
-                  multiple
-                  onChange={imageLoad}
-                  hidden
-                />
-              </Button>
+                multiple
+                defaultAccept={FILE_PICKER_ACCEPT_IMAGE}
+                alternateAccept={FILE_PICKER_ACCEPT_VIDEO}
+                onChange={imageLoad}
+                chooseTypeAriaLabel={t("dropZone.pickerMask.chooseFileType")}
+                menuLabels={{
+                  default: t("dropZone.pickerMask.imageDefault"),
+                  alternate: t("dropZone.pickerMask.imageVideo"),
+                  all: t("dropZone.pickerMask.imageAll"),
+                }}
+              />
               <Typography
                 variant="body2"
                 color="textSecondary"
@@ -5406,22 +5665,20 @@ const Home: NextPage = () => {
               </>
             )}
             <Box sx={{ display: "flex", gap: 1.5, alignItems: "center", justifyContent: "center", width: "100%" }}>
-              <Button
-                variant="outlined"
-                component="label"
+              <FilePickerSplitButton
+                label={t("dropZone.selectAudio")}
                 startIcon={<LibraryMusic />}
-                size="medium"
                 disabled={isQuickEncoding || isRecording || isPlaySound}
-                sx={{ flexShrink: 0, minWidth: 210 }}
-              >
-                {t("dropZone.selectAudio")}
-                <input
-                  type="file"
-                  accept="audio/*,video/*"
-                  onChange={audioLoad}
-                  hidden
-                />
-              </Button>
+                defaultAccept={FILE_PICKER_ACCEPT_AUDIO}
+                alternateAccept={FILE_PICKER_ACCEPT_VIDEO}
+                onChange={audioLoad}
+                chooseTypeAriaLabel={t("dropZone.pickerMask.chooseFileType")}
+                menuLabels={{
+                  default: t("dropZone.pickerMask.audioDefault"),
+                  alternate: t("dropZone.pickerMask.audioVideo"),
+                  all: t("dropZone.pickerMask.audioAll"),
+                }}
+              />
               <Typography 
                 variant="body2" 
                 color="textSecondary" 
@@ -5478,7 +5735,6 @@ const Home: NextPage = () => {
               <Tab label={t("tabs.title")} />
               <Tab label={t("tabs.subtitle")} />
               <Tab label={t("tabs.audio")} />
-              <Tab label={t("tabs.clipLength")} />
               <Tab label={t("tabs.settings")} />
             </Tabs>
           </Box>
@@ -6200,6 +6456,13 @@ const Home: NextPage = () => {
                   >
                     {t("effect.waterRipple")}
                   </Button>
+                  <Button
+                    variant={effectType === "laser" ? "contained" : "outlined"}
+                    onClick={() => setEffectType("laser")}
+                    size="small"
+                  >
+                    {t("effect.laser")}
+                  </Button>
                 </Box>
                 <Accordion defaultExpanded sx={{ mt: 2 }}>
                   <AccordionSummary expandIcon={<ExpandMore />}>
@@ -6613,6 +6876,23 @@ const Home: NextPage = () => {
                             sx={{ width: 220 }}
                           />
                         </Box>
+                        <Typography variant="caption" color="textSecondary" display="block" sx={{ mt: 1.5 }}>
+                          {t("effect.rainAudioSensitivity", { value: rainAudioSensitivity.toFixed(1) })}
+                        </Typography>
+                        <ResettableSlider
+                          value={rainAudioSensitivity}
+                          min={RAIN_AUDIO_SENSITIVITY_MIN}
+                          max={RAIN_AUDIO_SENSITIVITY_MAX}
+                          step={RAIN_AUDIO_SENSITIVITY_STEP}
+                          onChange={(_, v) =>
+                            setRainAudioSensitivity(normalizeRainAudioSensitivity(v as number, 0))
+                          }
+                          onResetToDefault={() => setRainAudioSensitivity(0)}
+                          sx={{ mt: 0.5 }}
+                        />
+                        <Typography variant="caption" color="textSecondary" display="block" sx={{ mt: 0.5 }}>
+                          {t("effect.rainAudioSensitivityHint")}
+                        </Typography>
                       </Box>
                     )}
                     {effectType === "snow" && (
@@ -6682,6 +6962,146 @@ const Home: NextPage = () => {
                             sx={{ width: 220 }}
                           />
                         </Box>
+                      </Box>
+                    )}
+                    {effectType === "waterRipple" && (
+                      <Box sx={{ width: "100%", maxWidth: 440, mt: 2, mx: "auto" }}>
+                        <Box
+                          sx={{
+                            display: "flex",
+                            flexWrap: "wrap",
+                            gap: 1,
+                            justifyContent: "center",
+                            alignItems: "center",
+                            mb: 1,
+                          }}
+                        >
+                          <Typography variant="caption" color="textSecondary">
+                            {t("effect.waterRippleType")}
+                          </Typography>
+                          <Button
+                            variant={waterRippleVariant === "ripple" ? "contained" : "outlined"}
+                            onClick={() => setWaterRippleVariant("ripple")}
+                            size="small"
+                          >
+                            {t("effect.waterRippleVariantRipple")}
+                          </Button>
+                          <Button
+                            variant={waterRippleVariant === "heart" ? "contained" : "outlined"}
+                            onClick={() => setWaterRippleVariant("heart")}
+                            size="small"
+                          >
+                            {t("effect.waterRippleVariantHeart")}
+                          </Button>
+                          <Button
+                            variant={waterRippleVariant === "firework" ? "contained" : "outlined"}
+                            onClick={() => setWaterRippleVariant("firework")}
+                            size="small"
+                          >
+                            {t("effect.waterRippleVariantFirework")}
+                          </Button>
+                        </Box>
+                        <Typography variant="caption" color="textSecondary" display="block">
+                          {t("effect.waterRippleIntensity", {
+                            value: Math.round(waterRippleIntensity * 100),
+                            rate: waterRippleSpawnRateFromIntensity(waterRippleIntensity).toFixed(2),
+                          })}
+                        </Typography>
+                        <Slider
+                          value={waterRippleIntensity}
+                          min={0}
+                          max={1}
+                          step={0.01}
+                          onChange={(_, v) => setWaterRippleIntensity(v as number)}
+                        />
+                        <Typography variant="caption" color="textSecondary" display="block" sx={{ mt: 0.5 }}>
+                          {t("effect.waterRippleIntensityHint")}
+                        </Typography>
+                        <Typography variant="caption" color="textSecondary" display="block" sx={{ mt: 1.5 }}>
+                          {t("effect.waterRippleAudioSensitivity", {
+                            value: waterRippleAudioSensitivity.toFixed(1),
+                          })}
+                        </Typography>
+                        <ResettableSlider
+                          value={waterRippleAudioSensitivity}
+                          min={RAIN_AUDIO_SENSITIVITY_MIN}
+                          max={RAIN_AUDIO_SENSITIVITY_MAX}
+                          step={RAIN_AUDIO_SENSITIVITY_STEP}
+                          onChange={(_, v) =>
+                            setWaterRippleAudioSensitivity(normalizeRainAudioSensitivity(v as number, 0))
+                          }
+                          onResetToDefault={() => setWaterRippleAudioSensitivity(0)}
+                          sx={{ mt: 0.5 }}
+                        />
+                        <Typography variant="caption" color="textSecondary" display="block" sx={{ mt: 0.5 }}>
+                          {t("effect.waterRippleAudioSensitivityHint")}
+                        </Typography>
+                        <Box sx={{ mt: 1.5 }}>
+                          <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 0.5 }}>
+                            {t("effect.waterRippleColor")}
+                          </Typography>
+                          <Box sx={paletteGridSx}>
+                            {DEFAULT_COLOR_PALETTE_20.map((c) => (
+                              <Box
+                                key={`waterRipple-${c}`}
+                                component="button"
+                                type="button"
+                                aria-label={`${t("effect.waterRipple")} ${c}`}
+                                onClick={() => {
+                                  const u = c.toUpperCase();
+                                  setWaterRippleColor(u);
+                                  setWaterRippleColorInput(u);
+                                }}
+                                sx={{
+                                  width: 28,
+                                  height: 28,
+                                  borderRadius: 0.75,
+                                  border:
+                                    waterRippleColor.toUpperCase() === c.toUpperCase()
+                                      ? "2px solid #111"
+                                      : "1px solid #999",
+                                  backgroundColor: c,
+                                  cursor: "pointer",
+                                  p: 0,
+                                }}
+                              />
+                            ))}
+                          </Box>
+                          <TextField
+                            size="small"
+                            label={t("effect.weatherColorCode")}
+                            value={waterRippleColorInput}
+                            onChange={(e) => {
+                              const next = normalizeHexColorInput(e.target.value);
+                              setWaterRippleColorInput(next);
+                              if (isHexColorCode(next)) {
+                                setWaterRippleColor(next);
+                              }
+                            }}
+                            error={waterRippleColorInput.length > 0 && !isHexColorCode(waterRippleColorInput)}
+                            helperText={
+                              waterRippleColorInput.length > 0 && !isHexColorCode(waterRippleColorInput)
+                                ? t("effect.weatherColorCodeInvalid")
+                                : " "
+                            }
+                            inputProps={{ inputMode: "text", pattern: "#?[0-9a-fA-F]{6}" }}
+                            sx={{ width: 220, mt: 0.5 }}
+                          />
+                        </Box>
+                        <FormControlLabel
+                          sx={{ mt: 1.5, display: "flex", justifyContent: "center" }}
+                          control={
+                            <Switch
+                              checked={waterRippleLightMode}
+                              onChange={(_, c) => setWaterRippleLightMode(c)}
+                              size="small"
+                            />
+                          }
+                          label={t("effect.waterRippleLightMode")}
+                        />
+                        <Typography variant="caption" color="textSecondary" display="block" sx={{ textAlign: "center" }}>
+                          {t("effect.waterRippleLightModeHint")}
+                        </Typography>
                       </Box>
                     )}
                     {effectType === "mirrorBall" && (
@@ -7221,13 +7641,13 @@ const Home: NextPage = () => {
                   sx={{ ml: 4, mr: 1 }}
                 />
                 <Typography sx={{ pl: 4, mt: 0.5, mb: 0.5 }}>
-                  {t("screenTab.sensitivityStep", { value: screenMotion.brightnessSensitivityStep })}
+                  {t("screenTab.sensitivityStep", { value: screenMotion.brightnessSensitivityStep.toFixed(1) })}
                 </Typography>
                 <ResettableSlider
                   value={screenMotion.brightnessSensitivityStep}
                   min={SCREEN_MOTION_SENSITIVITY_STEP_MIN}
                   max={SCREEN_MOTION_SENSITIVITY_STEP_MAX}
-                  step={1}
+                  step={SCREEN_MOTION_SENSITIVITY_STEP_INCREMENT}
                   disabled={!screenMotion.brightnessOnPeak}
                   onChange={(_, v) => patchScreenMotion({ brightnessSensitivityStep: v as number })}
                   onResetToDefault={() =>
@@ -7260,13 +7680,13 @@ const Home: NextPage = () => {
                   sx={{ ml: 4, mr: 1 }}
                 />
                 <Typography sx={{ pl: 4, mt: 0.5, mb: 0.5 }}>
-                  {t("screenTab.sensitivityStep", { value: screenMotion.shakeSensitivityStep })}
+                  {t("screenTab.sensitivityStep", { value: screenMotion.shakeSensitivityStep.toFixed(1) })}
                 </Typography>
                 <ResettableSlider
                   value={screenMotion.shakeSensitivityStep}
                   min={SCREEN_MOTION_SENSITIVITY_STEP_MIN}
                   max={SCREEN_MOTION_SENSITIVITY_STEP_MAX}
-                  step={1}
+                  step={SCREEN_MOTION_SENSITIVITY_STEP_INCREMENT}
                   disabled={!screenMotion.shakeOnChorus}
                   onChange={(_, v) => patchScreenMotion({ shakeSensitivityStep: v as number })}
                   onResetToDefault={() =>
@@ -7367,13 +7787,13 @@ const Home: NextPage = () => {
                   sx={{ ml: 4, mr: 1 }}
                 />
                 <Typography sx={{ pl: 4, mt: 0.5, mb: 0.5 }}>
-                  {t("screenTab.sensitivityStep", { value: screenMotion.flashSensitivityStep })}
+                  {t("screenTab.sensitivityStep", { value: screenMotion.flashSensitivityStep.toFixed(1) })}
                 </Typography>
                 <ResettableSlider
                   value={screenMotion.flashSensitivityStep}
                   min={SCREEN_MOTION_SENSITIVITY_STEP_MIN}
                   max={SCREEN_MOTION_SENSITIVITY_STEP_MAX}
-                  step={1}
+                  step={SCREEN_MOTION_SENSITIVITY_STEP_INCREMENT}
                   disabled={!screenMotion.flashOnDrop}
                   onChange={(_, v) => patchScreenMotion({ flashSensitivityStep: v as number })}
                   onResetToDefault={() =>
@@ -7983,13 +8403,16 @@ const Home: NextPage = () => {
 
             {settingsTab === 5 && (
               <Box sx={{ width: "100%", maxWidth: 600, margin: "0 auto", py: 1 }}>
-                <Typography variant="subtitle2" sx={{ mb: 2, fontWeight: 600 }}>
+                <Typography variant="body2" sx={{ mb: 2, textAlign: "center", fontWeight: 500 }}>
                   {t("audioSettings.title")}
+                </Typography>
+                <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600 }}>
+                  {t("audioSettings.loudnessSection")}
                 </Typography>
                 <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 1 }}>
                   {t("displayVolume.volumeCaption")}
                 </Typography>
-                <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap", alignItems: "center" }}>
+                <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap", alignItems: "center", mb: 2 }}>
                   <Button
                     variant={targetLufs === null ? "contained" : "outlined"}
                     size="small"
@@ -8043,116 +8466,127 @@ const Home: NextPage = () => {
                     inputProps={{ min: -60, max: 0, step: 0.5 }}
                   />
                 </Box>
-              </Box>
-            )}
-
-            {settingsTab === 5 && (
-              <div className={styles.effectButtons} style={{ paddingTop: 8 }}>
-                <Typography variant="body2" sx={{ mb: 1, textAlign: "center", fontWeight: 500 }}>
-                  {t("shortOutput.title")}
+                <Typography variant="subtitle2" sx={{ mb: 1, mt: 1, fontWeight: 600 }}>
+                  {t("audioSettings.fadeSection")}
+                </Typography>
+                <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 1 }}>
+                  {t("audioSettings.fadeCaption")}
                 </Typography>
                 <Box
                   sx={{
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 1,
-                    alignItems: "center",
+                    display: "grid",
+                    gridTemplateColumns: { xs: "1fr", sm: "repeat(2, minmax(0, 1fr))" },
+                    gap: 1.5,
+                    mb: 2,
+                    maxWidth: 420,
                   }}
                 >
-                  <Box sx={{ display: "flex", gap: 1, justifyContent: "center", flexWrap: "wrap", alignItems: "center" }}>
-                    <Button
-                      variant={shortOutputPreset === "all" ? "contained" : "outlined"}
-                      onClick={() => setShortOutputPreset("all")}
-                      size="small"
-                      sx={{ height: 36 }}
-                    >
-                      {t("shortOutput.all")}
-                    </Button>
-                    <Button
-                      variant={shortOutputPreset === "youtube" ? "contained" : "outlined"}
-                      onClick={() => {
-                        setShortOutputPreset("youtube");
-                        setShortDurationSecStr("180");
-                      }}
-                      size="small"
-                      sx={{ height: 36, textTransform: "none" }}
-                    >
-                      {t("shortOutput.youtube")}
-                    </Button>
-                    <Button
-                      variant={shortOutputPreset === "tiktok" ? "contained" : "outlined"}
-                      onClick={() => {
-                        setShortOutputPreset("tiktok");
-                        setShortDurationSecStr("60");
-                      }}
-                      size="small"
-                      sx={{ height: 36 }}
-                    >
-                      {t("shortOutput.tiktok")}
-                    </Button>
-                    <Button
-                      variant={shortOutputPreset === "niconico" ? "contained" : "outlined"}
-                      onClick={() => {
-                        setShortOutputPreset("niconico");
-                        setShortDurationSecStr("300");
-                      }}
-                      size="small"
-                      sx={{ height: 36, textTransform: "none" }}
-                    >
-                      {t("shortOutput.niconico")}
-                    </Button>
-                  </Box>
-                  <Box sx={{ display: "flex", gap: 1, justifyContent: "center", flexWrap: "wrap", alignItems: "center" }}>
-                    <TextField
-                      label={t("shortOutput.startSec")}
-                      size="small"
-                      value={shortStartSecStr}
-                      onChange={(e) => setShortStartSecStr(e.target.value)}
-                      disabled={shortOutputPreset === "all"}
-                      sx={{ width: 120, "& .MuiInputBase-root": { height: 36 } }}
-                      inputProps={{ inputMode: "decimal" }}
-                    />
-                    <TextField
-                      label={t("shortOutput.durationSec")}
-                      size="small"
-                      value={shortDurationSecStr}
-                      onChange={(e) => setShortDurationSecStr(e.target.value)}
-                      disabled={shortOutputPreset === "all"}
-                      placeholder={shortOutputPreset === "all" ? "" : t("shortOutput.durationPlaceholder")}
-                      sx={{ width: 140, "& .MuiInputBase-root": { height: 36 } }}
-                      inputProps={{ inputMode: "decimal" }}
-                    />
-                  </Box>
-                  <Box sx={{ display: "flex", gap: 1, justifyContent: "center", flexWrap: "wrap", alignItems: "center" }}>
-                    <TextField
-                      label={t("shortOutput.fadeInSec")}
-                      size="small"
-                      value={shortFadeInSecStr}
-                      onChange={(e) => setShortFadeInSecStr(e.target.value)}
-                      disabled={shortOutputPreset === "all"}
-                      sx={{ width: 120, "& .MuiInputBase-root": { height: 36 } }}
-                      inputProps={{ inputMode: "decimal", min: 0, step: 0.1 }}
-                    />
-                    <TextField
-                      label={t("shortOutput.fadeOutSec")}
-                      size="small"
-                      value={shortFadeOutSecStr}
-                      onChange={(e) => setShortFadeOutSecStr(e.target.value)}
-                      disabled={shortOutputPreset === "all"}
-                      sx={{ width: 120, "& .MuiInputBase-root": { height: 36 } }}
-                      inputProps={{ inputMode: "decimal", min: 0, step: 0.1 }}
-                    />
-                  </Box>
+                  <TextField
+                    fullWidth
+                    label={t("audioSettings.fadeInSec")}
+                    size="small"
+                    value={audioFadeInSecStr}
+                    onChange={(e) => setAudioFadeInSecStr(e.target.value)}
+                    sx={{ "& .MuiInputBase-root": { height: 36 } }}
+                    inputProps={{ inputMode: "decimal", min: 0, step: 0.1 }}
+                  />
+                  <TextField
+                    fullWidth
+                    label={t("audioSettings.fadeOutSec")}
+                    size="small"
+                    value={audioFadeOutSecStr}
+                    onChange={(e) => setAudioFadeOutSecStr(e.target.value)}
+                    sx={{ "& .MuiInputBase-root": { height: 36 } }}
+                    inputProps={{ inputMode: "decimal", min: 0, step: 0.1 }}
+                  />
+                </Box>
+                <Divider sx={{ my: 2 }} />
+                <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600 }}>
+                  {t("audioSettings.videoLengthSection")}
+                </Typography>
+                <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 1 }}>
+                  {t("audioSettings.videoLengthCaption")}
+                </Typography>
+                <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap", alignItems: "center", mb: 1.5 }}>
+                  <Button
+                    variant={shortOutputPreset === "all" ? "contained" : "outlined"}
+                    onClick={() => setShortOutputPreset("all")}
+                    size="small"
+                    sx={{ height: 36 }}
+                  >
+                    {t("shortOutput.all")}
+                  </Button>
+                  <Button
+                    variant={shortOutputPreset === "youtube" ? "contained" : "outlined"}
+                    onClick={() => {
+                      setShortOutputPreset("youtube");
+                      setShortDurationSecStr("180");
+                    }}
+                    size="small"
+                    sx={{ height: 36, textTransform: "none" }}
+                  >
+                    {t("shortOutput.youtube")}
+                  </Button>
+                  <Button
+                    variant={shortOutputPreset === "niconico" ? "contained" : "outlined"}
+                    onClick={() => {
+                      setShortOutputPreset("niconico");
+                      setShortDurationSecStr("180");
+                    }}
+                    size="small"
+                    sx={{ height: 36, textTransform: "none" }}
+                  >
+                    {t("shortOutput.niconico")}
+                  </Button>
+                  <Button
+                    variant={shortOutputPreset === "custom" ? "contained" : "outlined"}
+                    onClick={() => setShortOutputPreset("custom")}
+                    size="small"
+                    sx={{ height: 36 }}
+                  >
+                    {t("shortOutput.custom")}
+                  </Button>
+                </Box>
+                <Box
+                  sx={{
+                    display: "grid",
+                    gridTemplateColumns: { xs: "1fr", sm: "repeat(2, minmax(0, 1fr))" },
+                    gap: 1.5,
+                    mb: 1.5,
+                    maxWidth: 420,
+                  }}
+                >
+                  <TextField
+                    fullWidth
+                    label={t("shortOutput.startSec")}
+                    size="small"
+                    value={shortStartSecStr}
+                    onChange={(e) => setShortStartSecStr(e.target.value)}
+                    disabled={shortOutputPreset === "all"}
+                    sx={{ "& .MuiInputBase-root": { height: 36 } }}
+                    inputProps={{ inputMode: "decimal" }}
+                  />
+                  <TextField
+                    fullWidth
+                    label={t("shortOutput.durationSec")}
+                    size="small"
+                    value={shortDurationSecStr}
+                    onChange={(e) => setShortDurationSecStr(e.target.value)}
+                    disabled={shortOutputPreset === "all"}
+                    placeholder={shortOutputPreset === "all" ? "" : t("shortOutput.durationPlaceholder")}
+                    sx={{ "& .MuiInputBase-root": { height: 36 } }}
+                    inputProps={{ inputMode: "decimal" }}
+                  />
                 </Box>
                 {shortOutputPreset !== "all" && (
-                  <Typography variant="caption" color="textSecondary" display="block" sx={{ mt: 0.5, textAlign: "center" }}>
+                  <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 2 }}>
                     {t("shortOutput.hint")}
                   </Typography>
                 )}
-              </div>
+              </Box>
             )}
 
-            {settingsTab === 7 && (
+            {settingsTab === 6 && (
               <Box sx={{ width: "100%", maxWidth: 800, margin: "0 auto", py: 1 }}>
                 <Typography variant="subtitle2" color="primary" sx={{ mb: 1 }}>
                   {t("resolution.title")}
@@ -8510,6 +8944,7 @@ const Home: NextPage = () => {
                           setEffectType("none");
                           setEffectDensities(defaultEffectDensities());
                           setRainWeather(DEFAULT_RAIN_WEATHER);
+                          setRainAudioSensitivity(0);
                           setSnowWeather(DEFAULT_SNOW_WEATHER);
                           setTargetLufs(-14);
                           setTargetLufsCustom("-14");
@@ -8524,6 +8959,9 @@ const Home: NextPage = () => {
                     >
                       {t("buttons.clearAll")}
                     </Button>
+                  </Typography>
+                  <Typography variant="caption" color="textSecondary" display="block" sx={{ mt: 0.5 }}>
+                    {t("settings.clearAllSupplement")}
                   </Typography>
                 </Box>
               </Box>
@@ -8724,11 +9162,11 @@ const Home: NextPage = () => {
             <Button
               variant="outlined"
               startIcon={<VideoLibrary />}
-              disabled={playSoundDisabled || isQuickEncoding}
+              disabled={playSoundDisabled || isQuickEncoding || isPlaybackFadingOut}
               onClick={onPlaySound}
               size="medium"
             >
-              {isPlaySound ? t("buttons.stop") : t("buttons.preview")}
+              {isPlaySound || isPlaybackFadingOut ? t("buttons.stop") : t("buttons.preview")}
             </Button>
             <Button
               variant="outlined"

@@ -14,7 +14,16 @@
     "addImage": "Add image",
     "selectAudio": "Select Music File",
     "unselected": "Not selected",
-    "caption": "Still images, audio, and subtitles are auto-detected. MP4 loads as a background from “Select image(s)” and as audio from the music picker. Drag-and-drop asks which use you want."
+    "caption": "Still images, audio, and subtitles are auto-detected. MP4 loads as a background from “Select image(s)” and as audio from the music picker. Drag-and-drop asks which use you want.",
+    "pickerMask": {
+      "chooseFileType": "Choose file type",
+      "imageDefault": "Images only",
+      "imageVideo": "Video (MP4, etc.)",
+      "imageAll": "All files",
+      "audioDefault": "Music & audio",
+      "audioVideo": "Video (MP4, etc.)",
+      "audioAll": "All files"
+    }
   },
   "spectrum": {
     "title": "Spectrum Analyzer",
@@ -105,6 +114,7 @@
     "rain": "Rain",
     "snow": "Snow",
     "waterRipple": "Draw",
+    "laser": "Laser",
     "waterRippleType": "Variant:",
     "waterRippleVariantRipple": "Ripple",
     "waterRippleVariantHeart": "Heart",
@@ -114,6 +124,8 @@
     "waterRippleColor": "Ripple color",
     "waterRippleLightMode": "Light mode",
     "waterRippleLightModeHint": "Recommended ON to reduce GPU load",
+    "waterRippleAudioSensitivity": "Audio sync sensitivity: {{value}}",
+    "waterRippleAudioSensitivityHint": "0 = audio sync off (base drops only). 1–10 scales spawn rate and brightness with sound; 10 = maximum boost",
     "scanlines": "Scanlines",
     "mirrorBall": "Mirror ball",
     "mirrorBallPosX": "Ball position X: {{value}}%",
@@ -155,6 +167,8 @@
     "mirrorBallAudioSync": "Boost rotation with bass (no BPM detection)",
     "weatherAngle": "Fall angle: {{value}}°",
     "weatherAmount": "Amount: {{value}}%",
+    "rainAudioSensitivity": "Audio sync sensitivity: {{value}}",
+    "rainAudioSensitivityHint": "0 = audio sync off (base rain only). 1–10 scales streak count, thickness, and speed with sound; 10 = maximum boost",
     "weatherColor": "Color",
     "parameters": "Parameter adjustments (collapsed)",
     "spaceType": "Type:",
@@ -187,15 +201,13 @@
   "shortOutput": {
     "title": "Clip length limit",
     "all": "OFF",
-    "tiktok": "TikTok",
     "youtube": "YouTube",
     "niconico": "Niconico",
+    "custom": "Custom",
     "startSec": "Start (sec)",
     "durationSec": "Duration (sec)",
     "durationPlaceholder": "Empty = from start to end of media",
-    "fadeInSec": "Fade-in (sec)",
-    "fadeOutSec": "Fade-out (sec)",
-    "hint": "YouTube / TikTok / Niconico buttons only fill a suggested duration. Preview and recording follow Start and Duration (empty duration = to end of media). Fade-out applies only when trimming to the set duration. 0 sec disables fade."
+    "hint": "OFF = full track. YouTube / Niconico cap at 3 minutes (180 s). Custom caps only when Duration is filled (empty = full track). Start and Duration set preview/recording length. Visual fades use image fades on the Screen tab."
   },
   "subtitle": {
     "title": "Subtitles (SRT)",
@@ -355,6 +367,7 @@
     "caption": "Export saves all settings to JSON. Import overwrites only existing keys.",
     "exportImport": "Export / Import",
     "clearAllHint": "Clear all settings:",
+    "clearAllSupplement": "If the app feels slow or heavy, try clearing all settings with the button above. That may reduce load and improve performance.",
     "clearConfirm": "Delete all saved settings?"
   },
   "dialog": {
@@ -467,8 +480,7 @@
     "resolution": "Resolution",
     "effects": "Effects",
     "screen": "Screen",
-    "clipLength": "Clip Length",
-    "audio": "Audio",
+    "audio": "Audio & length",
     "settings": "Settings"
   },
   "screenTab": {
@@ -536,7 +548,14 @@
     "animationDuration": "Animation duration: {{value}} s"
   },
   "audioSettings": {
-    "title": "Audio Settings"
+    "title": "Audio & length",
+    "loudnessSection": "Loudness (LUFS)",
+    "fadeSection": "Audio fade",
+    "fadeCaption": "Fade-in from playback start. Fade-out begins at (effective max length − fade-out seconds) and reaches silence at the end. Effective max = capped clip length when a limit is active, otherwise full track length (or from Start to track end). Applied in Web Audio and MP4 conversion (afade). 0 sec disables.",
+    "fadeInSec": "Fade-in (sec)",
+    "fadeOutSec": "Fade-out (sec)",
+    "videoLengthSection": "Clip length limit",
+    "videoLengthCaption": "Set the start and length for preview and recording. Presets only fill typical durations."
   },
   "videoQuality": {
     "title": "Video quality (record & MP4)",

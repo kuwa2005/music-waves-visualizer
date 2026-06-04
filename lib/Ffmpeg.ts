@@ -1,7 +1,43 @@
 import { FFmpeg } from "@ffmpeg/ffmpeg";
 import getConfig from "next/config";
+import { buildFfmpegAfadeFilter } from "./clipAudioFade";
 import { MP4_THUMB_MAX_LONG_EDGE } from "./mp4Thumbnail";
 import { mwvError, mwvLog, mwvMilestone, mwvVerbose, mwvWarn } from "./mwvConsole";
+
+/** MP4 変換時の音声フェード（可聴区間長に対する in/out） */
+export type Mp4AudioFadeEncode = {
+  fadeInSec: number;
+  fadeOutSec: number;
+  outputDurationSec: number;
+};
+
+function buildMp4AudioFilterChain(
+  audioFade: Mp4AudioFadeEncode | null | undefined,
+  encodeLufs: number | null
+): string | null {
+  const seg = audioFade?.outputDurationSec ?? 0;
+  const afade =
+    seg > 0 && audioFade
+      ? buildFfmpegAfadeFilter(seg, audioFade.fadeInSec, audioFade.fadeOutSec)
+      : null;
+  const parts: string[] = [];
+  if (afade) parts.push(afade);
+  if (encodeLufs != null) {
+    parts.push(`loudnorm=I=${encodeLufs}:LRA=11:TP=-1.5`);
+  }
+  return parts.length > 0 ? parts.join(",") : null;
+}
+
+function mp4EncodeInputArgs(
+  webmName: string,
+  outputDurationSec: number
+): string[] {
+  const args = ["-i", webmName];
+  if (outputDurationSec > 0) {
+    args.push("-t", String(outputDurationSec));
+  }
+  return args;
+}
 
 type FfmpegCoreAssetName = "ffmpeg-core.js" | "ffmpeg-core.wasm" | "ffmpeg-core.worker.js";
 type FfmpegCoreUrls = { coreURL: string; wasmURL: string; workerURL: string; basePath: string };
@@ -111,6 +147,30 @@ function displayEstimateSeconds(estimateSec: number): number {
 function capFfmpegRatioForMerge(r: number): number {
   if (!Number.isFinite(r) || r <= 0) return 0;
   return Math.min(0.86, r);
+}
+
+/**
+ * UI の「YouTube等 -14 LUFS」→ FFmpeg loudnorm の integrated target。
+ * 単一パス loudnorm と YouTube 計測の差を埋める小さな加算（UI は -14 のまま）。
+ *
+ * 実測（Stats for nerds / 同一素材・再アップロード後）:
+ * | 補正 | encode 目標 | Normalized | Content loudness |
+ * |------|-------------|------------|------------------|
+ * | +0   | -14.0       | ~96%       | （やや静か）     |
+ * | +0.35| -13.65      | 89%        | -13.0 dB         |
+ * | +0.2 | -13.8       | 90%        | -13.0 dB         |
+ * | +0.1 | -13.9       | （要再計測）| 目標 -14.0      |
+ * | +0.05| -13.95      | （要再計測）| 目標 -14.0      |
+ */
+const YOUTUBE_UI_TARGET_LUFS = -14;
+/** エンコード時のみ加算（UI 表示・保存値は -14 のまま） */
+const YOUTUBE_LOUDNORM_CALIBRATION_LUFS = 0.05;
+
+function resolveLoudnormIntegratedTarget(uiLufs: number): number {
+  if (uiLufs === YOUTUBE_UI_TARGET_LUFS) {
+    return YOUTUBE_UI_TARGET_LUFS + YOUTUBE_LOUDNORM_CALIBRATION_LUFS;
+  }
+  return uiLufs;
 }
 
 async function execFfmpeg(ffmpeg: FFmpeg, args: string[]): Promise<void> {
@@ -228,7 +288,8 @@ export async function generateMp4Video(
   callbacks?: EncodeProgressCallbacks,
   targetLufs?: number | null,
   audioBitrateKbps?: number | null,
-  thumbnailJpeg?: Uint8Array | null
+  thumbnailJpeg?: Uint8Array | null,
+  audioFade?: Mp4AudioFadeEncode | null
 ) {
   const { onLoadStart, onLoadComplete, onProgress } = callbacks || {};
   mwvMilestone("ffmpeg: encode start", {
@@ -236,6 +297,7 @@ export async function generateMp4Video(
     mp4Name,
     targetLufs: targetLufs ?? null,
     audioBitrateKbps: audioBitrateKbps ?? null,
+    audioFade: audioFade ?? null,
     hasThumbnailInput: !!(thumbnailJpeg && thumbnailJpeg.length > 0),
   });
 
@@ -301,17 +363,20 @@ export async function generateMp4Video(
       audioBitrateKbps != null && audioBitrateKbps >= 64 && audioBitrateKbps <= 320
         ? `${Math.round(audioBitrateKbps)}k`
         : "192k";
-    const lufs = targetLufs != null && targetLufs > -60 && targetLufs < 0 ? targetLufs : null;
+    const uiLufs =
+      targetLufs != null && targetLufs > -60 && targetLufs < 0 ? targetLufs : null;
+    const encodeLufs = uiLufs != null ? resolveLoudnormIntegratedTarget(uiLufs) : null;
+    const trimSec = audioFade?.outputDurationSec ?? 0;
+    const audioFilter = buildMp4AudioFilterChain(audioFade, encodeLufs);
 
-    if (lufs != null) {
+    if (audioFilter != null) {
       try {
         await execFfmpeg(ffmpeg, [
-          "-i",
-          webmName,
+          ...mp4EncodeInputArgs(webmName, trimSec),
           "-vcodec",
           "copy",
           "-af",
-          `loudnorm=I=${lufs}:LRA=11:TP=-1.5`,
+          audioFilter,
           "-c:a",
           "aac",
           "-b:a",
@@ -319,11 +384,21 @@ export async function generateMp4Video(
           mp4Name,
         ]);
       } catch (error) {
-        mwvWarn("ffmpeg: loudnorm failed, remux copy only", error);
-        await execFfmpeg(ffmpeg, ["-i", webmName, "-vcodec", "copy", mp4Name]);
+        mwvWarn("ffmpeg: audio filter failed, remux copy only", error);
+        await execFfmpeg(ffmpeg, [
+          ...mp4EncodeInputArgs(webmName, trimSec),
+          "-vcodec",
+          "copy",
+          mp4Name,
+        ]);
       }
     } else {
-      await execFfmpeg(ffmpeg, ["-i", webmName, "-vcodec", "copy", mp4Name]);
+      await execFfmpeg(ffmpeg, [
+        ...mp4EncodeInputArgs(webmName, trimSec),
+        "-vcodec",
+        "copy",
+        mp4Name,
+      ]);
     }
 
     let thumbBytes =

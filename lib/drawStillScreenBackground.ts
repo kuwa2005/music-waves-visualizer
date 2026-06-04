@@ -14,7 +14,8 @@ import {
   getAxisMotionProgress,
   hasImageTimelineFade,
   resolveForwardScalePercentAtProgress,
-  resolveImageTimelineFadeAlpha,
+  resolveCombinedImageFadeAlpha,
+  type StopGracefulImageFade,
   resolvePanOffsetPixels,
   type ScreenMotionSettings,
 } from "./screenMotion";
@@ -34,6 +35,8 @@ export type StillBackgroundRect = {
 };
 
 const CHORUS_VOLUME_THRESHOLD = 0.52;
+/** 閾値超過の正規化 excess の上限（1=旧フル、>1 でピークに応じて揺れを増幅） */
+const SHAKE_EXCESS_CAP = 2;
 
 const CHORUS_ENVELOPE_ATTACK = 0.28;
 const CHORUS_ENVELOPE_RELEASE = 0.08;
@@ -79,8 +82,28 @@ function resolveChorusEnvelope(
 }
 
 function resolveChorusDrive(envelope: number, sensitivityStep: number): number {
+  return resolveChorusExcessAboveThreshold(envelope, sensitivityStep, 1);
+}
+
+function resolveInstantChorusLevel(audioR: AudioReactiveData, sensitivityStep: number): number {
+  const sensitivityGain = getSensitivityGain(sensitivityStep);
+  return Math.max(0, Math.max(audioR.volume, audioR.bass * 0.75) * sensitivityGain);
+}
+
+function resolveChorusExcessAboveThreshold(
+  level: number,
+  sensitivityStep: number,
+  maxExcess: number
+): number {
   const threshold = getThresholdWithSensitivity(CHORUS_VOLUME_THRESHOLD, sensitivityStep, 0.3, 0.85);
-  return Math.max(0, Math.min(1, (envelope - threshold) / Math.max(1e-6, 1 - threshold)));
+  if (level <= threshold) return 0;
+  const span = Math.max(1e-6, 1 - threshold);
+  return Math.min(maxExcess, (level - threshold) / span);
+}
+
+function smoothChorusTarget(prev: number, target: number): number {
+  const coeff = target >= prev ? CHORUS_ENVELOPE_ATTACK : CHORUS_ENVELOPE_RELEASE;
+  return prev + (target - prev) * coeff;
 }
 
 export function resetScreenEffectRuntime(): void {
@@ -125,13 +148,16 @@ function resolveShakeOffset(settings: ScreenMotionSettings, audioR: AudioReactiv
   if (!settings.shakeOnChorus || !audioR) {
     return { x: 0, y: 0 };
   }
-  shakeEnvelope = resolveChorusEnvelope(settings.shakeSensitivityStep, audioR, shakeEnvelope);
-  const baseDrive = resolveChorusDrive(shakeEnvelope, settings.shakeSensitivityStep);
-  const sensitivityScalar = Math.max(0.55, Math.min(1.7, 1 + settings.shakeSensitivityStep * 0.12));
-  const chorusDrive = Math.max(0, Math.min(1, Math.pow(baseDrive * sensitivityScalar, 0.92)));
-  if (chorusDrive <= 0.001) return { x: 0, y: 0 };
+  const instantLevel = resolveInstantChorusLevel(audioR, settings.shakeSensitivityStep);
+  const targetDrive = resolveChorusExcessAboveThreshold(
+    instantLevel,
+    settings.shakeSensitivityStep,
+    SHAKE_EXCESS_CAP
+  );
+  shakeEnvelope = smoothChorusTarget(shakeEnvelope, targetDrive);
+  if (shakeEnvelope <= 0.001) return { x: 0, y: 0 };
   const t = nowMs * 0.02;
-  const amp = settings.shakeStrength * chorusDrive;
+  const amp = settings.shakeStrength * shakeEnvelope;
   return { x: Math.sin(t * 1.7) * amp, y: Math.cos(t * 2.3) * amp };
 }
 
@@ -214,7 +240,8 @@ export function drawStillScreenBackground(
   canvasHeight: number,
   settings: ScreenMotionSettings | undefined,
   timing: PlaybackTiming | undefined,
-  audioReactive?: AudioReactiveData
+  audioReactive?: AudioReactiveData,
+  stopGracefulImageFade?: StopGracefulImageFade | null
 ): void {
   const sm = settings ?? DEFAULT_SCREEN_MOTION;
   const nowMs = performance.now();
@@ -234,7 +261,7 @@ export function drawStillScreenBackground(
   };
   const brightnessBoost = updateSmoothedBrightness(sm, audioReactive, nowMs);
   const flashAlpha = updateFlashState(sm, audioReactive, nowMs);
-  const timelineFadeAlpha = resolveImageTimelineFadeAlpha(sm, timing);
+  const timelineFadeAlpha = resolveCombinedImageFadeAlpha(sm, timing, stopGracefulImageFade);
 
   ctx.fillStyle = "rgba(34, 34, 34, 1.0)";
   ctx.fillRect(0, 0, canvasWidth, canvasHeight);

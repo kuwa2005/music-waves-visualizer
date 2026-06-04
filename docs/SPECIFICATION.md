@@ -11,7 +11,7 @@ Music Waves Visualizer is a web application that creates audio waveform videos b
 - **Real-time waveform**: Seven internal modes; **five plus OFF** are exposed in the UI (modes 1 and 5 hidden)
 - **Resolution**: Manual (1920×1080, 1080×1920, 1920×1920) + **Auto** (detect from loaded image aspect ratio and map to 16:9 / 9:16 / 1:1)
 - **Display adjustment**: Scale and position per mode (saved per resolved layout)
-- **Clip length limit (short platforms)**: When enabled, **Start (sec)** and **Duration (sec)** define the preview/recording window. Preset buttons only **fill suggested durations**; they do not hard-cap playback. **Empty duration** = play from start **to end of media**.
+- **Clip length limit (short platforms)**: Under the **Audio** tab — **Start (sec)** and **Duration (sec)** define the preview/recording window. Preset buttons only **fill suggested durations**; they do not hard-cap playback. **Empty duration** = play from start **to end of media**. **Fade in/out** apply to the audible segment (preview GainNode + FFmpeg `afade` on MP4 encode).
 - **Client persistence**: Most settings use **localStorage** via [`lib/mwvCookieStorage.ts`](../lib/mwvCookieStorage.ts), with one-time migration from legacy **cookies** on first read. **Not persisted**: loaded media files, **title body text**, **SRT file content** (subtitle/title style toggles may be saved).
 - **Subtitles**: SRT import, styling, animation, display timing offset, and an optional hidden authoring panel for pasted lyrics and timing recording.
 - **Preview**: Real-time waveform while playing
@@ -66,13 +66,20 @@ Mode-specific slider labels must exist in both locale files before shipping UI c
 - **Curtain**: Flowing curtain
 - **Sparkle** (きらきら): White +/X/* star shapes with twinkle; **no radial glow** (Canvas 2D and WebGL both draw star strokes + core only)
 - **Dust** (空気感 / atmosphere): Low-contrast drifting particles; Canvas uses solid circles + `lighter` blend; WebGL uses additive circles (no large soft bloom)
-- **Rain / Snow**: Weather-style particles with adjustable angle, amount, and color
+- **Rain / Snow**: Weather-style particles with adjustable angle, amount, and color; **rain** supports **audio sensitivity** 0–10 (spawn rate, streak alpha/length)
+- **Water ripple** (`waterRipple`): Variants ripple / heart / firework; **audio sensitivity** 0–10 (spawn rate, ring strength)
+- **Laser**: Multi-color edge bursts; Canvas 2D and WebGL; density weak / medium / strong (`lib/laserEffect.ts`)
 
 Effects are shown during preview/recording only. Strength: weak / medium / strong per effect.
 
+### File pickers (split button)
+
+- **Choose image(s)**: Default still images (`FILE_PICKER_ACCEPT_IMAGE`); menu alternate **video (MP4, etc.)** or **all files** (`components/FilePickerSplitButton.tsx`, `lib/fileValidation.ts`)
+- **Choose music**: Default audio; alternate **video (MP4, etc.)** or all; gates by extension + MIME + size caps
+
 ## 4. Settings UI
 
-- Tab order: **Spectrum Analyzer / Effects / Audio / Subtitles / Title / Clip Length / Settings** (labels depend on locale)
+- Tab order: **Spectrum Analyzer / Effects / Audio / Subtitles / Title / Settings** — **clip length** (presets, start/duration, audio fades) lives under the **Audio** tab (`audioSettings.videoLengthSection`)
 - Spectrum and effect adjustment sections are collapsible (default collapsed)
 - Resolution controls are located in **Settings** tab; the chosen preset (including **Auto** resolved to 16:9 / 9:16 / 1:1) is persisted
 - Hidden SRT authoring is toggled from the **SRT** checkbox in the Settings tab under bitrate settings. When enabled, the Subtitle tab shows **Subtitle authoring (hidden feature)** / **字幕作成支援（隠し機能）**.

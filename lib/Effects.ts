@@ -2,6 +2,8 @@
  * オーバーレイエフェクト（スペクトラムとは独立してON/OFF可能）
  */
 
+import { drawLaserCanvas } from "./laserEffect";
+
 export type EffectType =
   | "none"
   | "space"
@@ -18,7 +20,8 @@ export type EffectType =
   | "snow"
   | "waterRipple"
   | "scanlines"
-  | "mirrorBall";
+  | "mirrorBall"
+  | "laser";
 
 export type EffectDensity = 1 | 2 | 3;
 export type AtmosphereVariant = "dust" | "sparks" | "fireflies";
@@ -35,6 +38,8 @@ export interface EffectParams {
   weatherAmount?: number;
   /** 雨・雪: 色 #RRGGBB */
   weatherColor?: string;
+  /** 雨: 音連動感度 0〜10（0.1刻み、0=音連動オフ） */
+  rainAudioSensitivity?: number;
   /** 水滴: 落下強度 0〜1（スポーン率・同時リング上限） */
   waterRippleIntensity?: number;
   /** 水滴: 波紋の色 #RRGGBB */
@@ -43,6 +48,8 @@ export interface EffectParams {
   waterRippleVariant?: WaterRippleVariant;
   /** 描画: 軽量モード（既定 ON — shadowBlur 無効・描画数制限） */
   waterRippleLightMode?: boolean;
+  /** 水滴: 音連動感度 0〜10（0.1刻み、0=音連動オフ） */
+  waterRippleAudioSensitivity?: number;
   /** 宇宙・きらきら・空気感: トーン色 #RRGGBB */
   effectTintColor?: string;
   /** 宇宙空間: 前進/後退 */
@@ -1033,6 +1040,70 @@ export function parseWeatherColorHex(
 const RAIN_BASE_COUNTS: Record<EffectDensity, number> = { 1: 140, 2: 260, 3: 420 };
 const SNOW_BASE_COUNTS: Record<EffectDensity, number> = { 1: 160, 2: 300, 3: 480 };
 
+export const RAIN_AUDIO_SENSITIVITY_MIN = 0;
+export const RAIN_AUDIO_SENSITIVITY_MAX = 10;
+export const RAIN_AUDIO_SENSITIVITY_STEP = 0.1;
+
+const RAIN_AUDIO_LEVEL_THRESHOLD = 0.35;
+const RAIN_AUDIO_ENVELOPE_ATTACK = 0.32;
+const RAIN_AUDIO_ENVELOPE_RELEASE = 0.14;
+const RAIN_AUDIO_MAX_DROP_MUL = 0.65;
+const RAIN_AUDIO_ALPHA_BOOST = 0.55;
+const RAIN_AUDIO_LEN_BOOST = 0.3;
+const RAIN_AUDIO_LW_BOOST = 0.15;
+const RAIN_AUDIO_FLOW_VOLUME = 0.2;
+const RAIN_AUDIO_FLOW_DRIVE = 0.28;
+
+let rainAudioEnvelope = 0;
+
+export function normalizeRainAudioSensitivity(v: number, fallback = 0): number {
+  const base = Number.isFinite(v) ? v : fallback;
+  const clamped = Math.max(
+    RAIN_AUDIO_SENSITIVITY_MIN,
+    Math.min(RAIN_AUDIO_SENSITIVITY_MAX, base)
+  );
+  return Math.round(clamped / RAIN_AUDIO_SENSITIVITY_STEP) * RAIN_AUDIO_SENSITIVITY_STEP;
+}
+
+/** 閾値超えの音源エンベロープ 0〜1（感度とは独立） */
+function resolveRainRawAudioEnvelope(audio: AudioReactiveData): number {
+  const level = Math.max(0, Math.min(1, Math.max(audio.volume, audio.bass * 0.75)));
+  if (level <= RAIN_AUDIO_LEVEL_THRESHOLD) return 0;
+  const span = Math.max(1e-6, 1 - RAIN_AUDIO_LEVEL_THRESHOLD);
+  return Math.min(1, (level - RAIN_AUDIO_LEVEL_THRESHOLD) / span);
+}
+
+/**
+ * 実効変調 0〜1 = 平滑化エンベロープ × (感度/10)。
+ * 感度 0 のとき常に 0（音による増減なし）。
+ */
+export function resolveRainAudioModulation(
+  audio: AudioReactiveData,
+  sensitivity: number,
+  smoothedEnvelope: number
+): number {
+  const sens = normalizeRainAudioSensitivity(sensitivity, 0);
+  if (sens <= 0) return 0;
+  return smoothedEnvelope * (sens / RAIN_AUDIO_SENSITIVITY_MAX);
+}
+
+function pushRainDrop(
+  width: number,
+  height: number,
+  density: EffectDensity,
+  ux: number,
+  uy: number
+): void {
+  const span = Math.max(width, height) + 200;
+  const t = Math.random();
+  rainDrops.push({
+    x: Math.random() * width + ux * (t - 0.5) * span * 0.3,
+    y: Math.random() * height + uy * (t - 0.5) * span * 0.3,
+    speed: 0.75 + Math.random() * 0.45,
+    len: 10 + Math.random() * (16 + DENSITY_STRENGTH[density] * 10),
+  });
+}
+
 interface RainDrop {
   x: number;
   y: number;
@@ -1126,7 +1197,8 @@ export function updateAndGetRainStreaks(
   audio: AudioReactiveData | undefined,
   angleDeg: number,
   amount: number,
-  hexColor: string | undefined
+  hexColor: string | undefined,
+  audioSensitivityStep = 0
 ): RainStreakGl[] {
   const [r0, g0, b0] = parseWeatherColorHex(hexColor, [110, 160, 255]);
   const amt = Math.max(0.05, Math.min(1, amount));
@@ -1134,18 +1206,50 @@ export function updateAndGetRainStreaks(
   if (key !== lastRainInitKey) {
     initRainDrops(width, height, density, amt, angleDeg);
     lastRainInitKey = key;
+    rainAudioEnvelope = 0;
   }
   const rad = (angleDeg * Math.PI) / 180;
   const ux = Math.sin(rad);
   const uy = Math.cos(rad);
   const a = audio ?? SILENT_AUDIO_REACTIVE;
-  const flow = 0.85 + 0.2 * a.volume;
+  const sens = normalizeRainAudioSensitivity(audioSensitivityStep, 0);
+  if (sens <= 0) {
+    rainAudioEnvelope = 0;
+  } else {
+    const instantRaw = resolveRainRawAudioEnvelope(a);
+    const envCoeff =
+      instantRaw >= rainAudioEnvelope ? RAIN_AUDIO_ENVELOPE_ATTACK : RAIN_AUDIO_ENVELOPE_RELEASE;
+    rainAudioEnvelope += (instantRaw - rainAudioEnvelope) * envCoeff;
+  }
+  const drive = resolveRainAudioModulation(a, sens, rainAudioEnvelope);
+
+  const baseN = Math.max(
+    30,
+    Math.round(RAIN_BASE_COUNTS[density] * (0.2 + 0.8 * amt))
+  );
+  const targetN = Math.round(baseN * (1 + RAIN_AUDIO_MAX_DROP_MUL * drive));
+  while (rainDrops.length < targetN) {
+    pushRainDrop(width, height, density, ux, uy);
+  }
+  while (rainDrops.length > targetN) {
+    rainDrops.pop();
+  }
+
+  const flow =
+    sens <= 0
+      ? 0.85
+      : 0.85 + RAIN_AUDIO_FLOW_VOLUME * a.volume * (sens / RAIN_AUDIO_SENSITIVITY_MAX) + RAIN_AUDIO_FLOW_DRIVE * drive;
   const baseSpeed = (520 + DENSITY_STRENGTH[density] * 220) * flow;
   const dt = Math.min(deltaTime, 50) / 1000;
   const minDim = Math.min(width, height);
-  const lw = Math.max(1.0, minDim * 0.0018);
+  const lwBase = Math.max(1.0, minDim * 0.0018);
   const margin = 80;
   const out: RainStreakGl[] = [];
+  const strength = DENSITY_STRENGTH[density];
+  const alphaBase = 0.35 + 0.25 * strength;
+  const alphaMul = 1 + RAIN_AUDIO_ALPHA_BOOST * drive;
+  const lenMul = 1 + RAIN_AUDIO_LEN_BOOST * drive;
+  const lwMul = 1 + RAIN_AUDIO_LW_BOOST * drive;
 
   for (const p of rainDrops) {
     const sp = p.speed * baseSpeed;
@@ -1154,13 +1258,27 @@ export function updateAndGetRainStreaks(
     if (p.x < -margin || p.x > width + margin || p.y < -margin || p.y > height + margin) {
       p.x = Math.random() * (width + margin) - margin * 0.5;
       p.y = -margin - Math.random() * height * 0.4;
+      if (drive > 0.05 && Math.random() < drive * 0.35) {
+        pushRainDrop(width, height, density, ux, uy);
+      }
     }
     const x2 = p.x;
     const y2 = p.y;
-    const x1 = x2 - ux * p.len;
-    const y1 = y2 - uy * p.len;
-    const alpha = 0.35 + 0.25 * DENSITY_STRENGTH[density];
-    out.push({ x1, y1, x2, y2, lw, r: r0, g: g0, b: b0, a: alpha });
+    const streakLen = p.len * lenMul;
+    const x1 = x2 - ux * streakLen;
+    const y1 = y2 - uy * streakLen;
+    const alpha = Math.min(1, alphaBase * alphaMul);
+    out.push({
+      x1,
+      y1,
+      x2,
+      y2,
+      lw: lwBase * lwMul,
+      r: r0,
+      g: g0,
+      b: b0,
+      a: alpha,
+    });
   }
   return out;
 }
@@ -1242,7 +1360,17 @@ function drawRainCanvas(
 ): void {
   const angle = effect.weatherAngleDeg ?? 18;
   const amount = effect.weatherAmount ?? 0.65;
-  const streaks = updateAndGetRainStreaks(width, height, density, deltaTime, audio, angle, amount, effect.weatherColor);
+  const streaks = updateAndGetRainStreaks(
+    width,
+    height,
+    density,
+    deltaTime,
+    audio,
+    angle,
+    amount,
+    effect.weatherColor,
+    effect.rainAudioSensitivity ?? 0
+  );
   ctx.save();
   ctx.lineCap = "round";
   for (const s of streaks) {
@@ -1295,9 +1423,13 @@ interface WaterRippleRing {
   lineWidth: number;
 }
 
+const WATER_RIPPLE_AUDIO_SPAWN_MUL = 0.65;
+const WATER_RIPPLE_AUDIO_ALPHA_BOOST = 0.55;
+
 let waterRippleRings: WaterRippleRing[] = [];
 let lastWaterRippleInitKey = "";
 let waterRippleSpawnCarry = 0;
+let waterRippleAudioEnvelope = 0;
 let waterRippleRenderBuffer: WaterRippleRingGl[] = [];
 let waterRippleDrawBuffer: WaterRippleDrawGl[] = [];
 let waterRippleFpsSmoothed = 60;
@@ -1536,7 +1668,9 @@ export function updateAndGetWaterRippleDraws(
   deltaTime: number,
   hexColor: string | undefined,
   variant: WaterRippleVariant = "ripple",
-  lightMode = true
+  lightMode = true,
+  audio?: AudioReactiveData,
+  audioSensitivityStep = 0
 ): WaterRippleDrawGl[] {
   const t = Math.max(0, Math.min(1, intensity));
   const [r0, g0, b0] = parseWeatherColorHex(hexColor, [210, 245, 255]);
@@ -1548,11 +1682,27 @@ export function updateAndGetWaterRippleDraws(
     waterRippleRenderBuffer = [];
     waterRippleDrawBuffer = [];
     waterRippleSpawnCarry = 0;
+    waterRippleAudioEnvelope = 0;
     waterRippleFpsSmoothed = 60;
     waterRippleAdaptiveScale = 1;
     waterRippleFrameCounter = 0;
     lastWaterRippleInitKey = key;
   }
+
+  const a = audio ?? SILENT_AUDIO_REACTIVE;
+  const sens = normalizeRainAudioSensitivity(audioSensitivityStep, 0);
+  if (sens <= 0) {
+    waterRippleAudioEnvelope = 0;
+  } else {
+    const instantRaw = resolveRainRawAudioEnvelope(a);
+    const envCoeff =
+      instantRaw >= waterRippleAudioEnvelope
+        ? RAIN_AUDIO_ENVELOPE_ATTACK
+        : RAIN_AUDIO_ENVELOPE_RELEASE;
+    waterRippleAudioEnvelope +=
+      (instantRaw - waterRippleAudioEnvelope) * envCoeff;
+  }
+  const drive = resolveRainAudioModulation(a, sens, waterRippleAudioEnvelope);
 
   const dt = Math.min(deltaTime, 50) / 1000;
   const nowMs = performance.now();
@@ -1571,7 +1721,10 @@ export function updateAndGetWaterRippleDraws(
   waterRippleFrameCounter++;
   const skipSimUpdate = waterRippleAdaptiveScale < 0.62 && (waterRippleFrameCounter & 1) === 1;
 
-  const spawnRate = waterRippleSpawnRateFromIntensity(t) * waterRippleAdaptiveScale;
+  const spawnRate =
+    waterRippleSpawnRateFromIntensity(t) *
+    waterRippleAdaptiveScale *
+    (1 + WATER_RIPPLE_AUDIO_SPAWN_MUL * drive);
   const maxRingsMul = lightMode ? 0.6 : 1;
   const maxRingsFloor = lightMode ? 28 : WATER_RIPPLE_MAX_RINGS_MIN;
   const maxRings = Math.max(
@@ -1632,7 +1785,7 @@ export function updateAndGetWaterRippleDraws(
   }
 
   waterRippleDrawBuffer.length = 0;
-  const strength = 0.55 + 0.45 * t;
+  const strength = (0.55 + 0.45 * t) * (1 + WATER_RIPPLE_AUDIO_ALPHA_BOOST * drive);
   if (variant === "heart") {
     for (const heart of waterRippleHearts) {
       const progress = (nowMs - heart.startMs) / heart.duration;
@@ -1729,6 +1882,7 @@ function drawWaterRippleCanvas(
   height: number,
   _density: EffectDensity,
   deltaTime: number,
+  audio: AudioReactiveData,
   effect: EffectParams
 ): void {
   const intensity =
@@ -1746,7 +1900,9 @@ function drawWaterRippleCanvas(
     deltaTime,
     hex,
     variant,
-    lightMode
+    lightMode,
+    audio,
+    effect.waterRippleAudioSensitivity ?? 0
   );
   if (draws.length === 0) return;
   ctx.save();
@@ -2792,13 +2948,16 @@ export function drawEffectOverlayCanvas(
         drawSnowCanvas(ctx, width, height, effect.density, overlayDelta, a, effect);
         break;
       case "waterRipple":
-        drawWaterRippleCanvas(ctx, width, height, effect.density, overlayDelta, effect);
+        drawWaterRippleCanvas(ctx, width, height, effect.density, overlayDelta, a, effect);
         break;
       case "scanlines":
         drawScanlinesCanvas(ctx, width, height, effect.density, a);
         break;
       case "mirrorBall":
         drawMirrorBallCanvas(ctx, width, height, effect, overlayDelta, a);
+        break;
+      case "laser":
+        drawLaserCanvas(ctx, width, height, effect.density, overlayDelta);
         break;
       default:
         break;

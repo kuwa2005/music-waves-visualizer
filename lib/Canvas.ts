@@ -14,7 +14,7 @@ import {
 } from "./drawStillScreenBackground";
 import {
   DEFAULT_SCREEN_MOTION,
-  resolveImageTimelineFadeAlpha,
+  resolveCombinedImageFadeAlpha,
   type ScreenMotionSettings,
 } from "./screenMotion";
 import { applyModeAdjustments } from "./spectrumAdjustments";
@@ -87,6 +87,8 @@ export type SpectrumSettings = {
   screenMotion?: ScreenMotionSettings;
   /** モーション進行用の再生位置 */
   getPlaybackTiming?: () => PlaybackTiming;
+  /** 早期停止中の画像フェード状態 */
+  getStopGracefulImageFade?: () => import("./screenMotion").StopGracefulImageFade | null;
   /** 波形型ビジュアライザー（mode17-19） */
   waveFamilyParams?: {
     height: number;
@@ -907,9 +909,10 @@ export const drawBars = (
   const canvasHeight = canvas.height;
 
   const screenMotion = settings.screenMotion ?? DEFAULT_SCREEN_MOTION;
-  const imageTimelineFadeAlpha = resolveImageTimelineFadeAlpha(
+  const imageTimelineFadeAlpha = resolveCombinedImageFadeAlpha(
     screenMotion,
-    settings.getPlaybackTiming?.()
+    settings.getPlaybackTiming?.(),
+    settings.getStopGracefulImageFade?.() ?? null
   );
 
   // 調整パラメータのデフォルト値
@@ -980,7 +983,8 @@ export const drawBars = (
       canvasHeight,
       settings.screenMotion,
       settings.getPlaybackTiming?.(),
-      bgAudioReactive
+      bgAudioReactive,
+      settings.getStopGracefulImageFade?.() ?? null
     );
   } else if (imageCtx) {
     ctx.fillStyle = "rgba(34, 34, 34, 1.0)";

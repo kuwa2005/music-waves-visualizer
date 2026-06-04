@@ -7,6 +7,17 @@ const IMAGE_EXT = [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".svg"];
 const AUDIO_EXT = [".mp3", ".wav", ".ogg", ".aac", ".m4a", ".flac", ".wma"];
 const VIDEO_EXT = [".mp4", ".webm", ".mov", ".avi", ".mkv"];
 
+function acceptFromMimeAndExt(mime: string, exts: readonly string[]): string {
+  return `${mime}${exts.join(",")}`;
+}
+
+/** 画像ピッカー: 静止画のみ */
+export const FILE_PICKER_ACCEPT_IMAGE = acceptFromMimeAndExt("image/*", IMAGE_EXT);
+/** 画像ピッカー: 背景動画用 */
+export const FILE_PICKER_ACCEPT_VIDEO = acceptFromMimeAndExt("video/*", VIDEO_EXT);
+/** 音楽ピッカー: 音声のみ */
+export const FILE_PICKER_ACCEPT_AUDIO = acceptFromMimeAndExt("audio/*", AUDIO_EXT);
+
 function extOf(name: string): string {
   const i = name.lastIndexOf(".");
   return i >= 0 ? name.slice(i).toLowerCase() : "";
