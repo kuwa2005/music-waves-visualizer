@@ -145,6 +145,7 @@ import {
 import { mwvGetItem, mwvSetItem, mwvRemoveItem } from "../lib/mwvCookieStorage";
 import {
   effectiveFadeSec,
+  getAudibleSegmentSec,
   getEffectiveMaxDurationSec,
   isShortOutputMaxLengthSpecified,
   parseFadeSecStr,
@@ -3983,11 +3984,15 @@ const Home: NextPage = () => {
       shortDurationSecStr
     );
     const effectiveMax = getEffectiveMaxDurationSec(clip, mediaDur, limitActive);
-    if (!(effectiveMax > 0)) return null;
+    const outputDurationSec =
+      limitActive && mediaDur > 0
+        ? getAudibleSegmentSec(clip, mediaDur)
+        : effectiveMax;
+    if (!(outputDurationSec > 0)) return null;
     const fadeInSec = parseFadeSecStr(audioFadeInSecStr);
     const fadeOutSec = parseFadeSecStr(audioFadeOutSecStr);
     if (fadeInSec <= 0 && fadeOutSec <= 0) return null;
-    return { fadeInSec, fadeOutSec, outputDurationSec: effectiveMax };
+    return { fadeInSec, fadeOutSec, outputDurationSec };
   }, [
     getMediaDurationSec,
     resolvePlaybackWindow,
@@ -4942,6 +4947,17 @@ const Home: NextPage = () => {
           webmBytes: webmBlob.size,
           mimeType: recordedMimeType,
         });
+
+        if (recordedBlobs.length === 0 || webmBlob.size < 64) {
+          mwvError("record: WebM が空または極小", {
+            chunkCount: recordedBlobs.length,
+            webmBytes: webmBlob.size,
+          });
+          openSnackBar(t("snackbar.convertFailed", { error: "empty_webm" }));
+          setEncodeStatus("idle");
+          setRecordMovieDisabled(false);
+          return;
+        }
 
         try {
           setEncodeStatus("loading");
