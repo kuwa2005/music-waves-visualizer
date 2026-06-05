@@ -431,20 +431,25 @@ export function getSpectrumSecondaryRgb(settings: SpectrumSettings): [number, nu
   ];
 }
 
-/** 対数マップの上限ビン（ナイキストに近い割合まで。旧0.66は高域が無反応に見えやすかった） */
-const GLYCO_LOG_BIN_MAX_FRAC = 0.98;
+/** 対数マップの上限ビン（可聴域の下位約80%をバー全幅に割り当て。旧0.98は右端が無音帯域になり反応しない） */
+export const GLYCO_LOG_BIN_MAX_FRAC = 0.8;
 /** 対数マップの下限 FFT ビン（DC～超低域はエネルギーが張り付きやすいので参照開始を少し上げる） */
 const GLYCO_LOG_MIN_BIN = 5;
 
+/** グライコ系が参照する FFT ビン上限（bufferLength に対する割合） */
+export function glycoMaxFftBin(bufferLength: number): number {
+  return Math.max(3, Math.floor((bufferLength - 1) * GLYCO_LOG_BIN_MAX_FRAC));
+}
+
 /**
  * グライコ風（モード6）: バー index を FFT ビンへ対数周波数で対応付け。
- * 線形割り当てだと右側がナイキスト近傍の高域のみになり、音楽では無音に近く見える問題を避ける。
+ * 線形割り当てだと右側がナイキスト近傍の高域のみになり、音楽では無音に近く見える問題を避える。
  */
 export function glycoBarToFftBin(i: number, barsLength: number, bufferLength: number): number {
   if (bufferLength < 2 || barsLength < 1) return 0;
-  if (barsLength === 1) return Math.min(1, bufferLength - 1);
+  if (barsLength === 1) return Math.min(1, glycoMaxFftBin(bufferLength));
   const t = i / (barsLength - 1);
-  const maxB = Math.max(3, Math.floor((bufferLength - 1) * GLYCO_LOG_BIN_MAX_FRAC));
+  const maxB = glycoMaxFftBin(bufferLength);
   const minB = Math.max(1, Math.min(GLYCO_LOG_MIN_BIN, maxB - 2));
   const lnLo = Math.log(minB);
   const lnHi = Math.log(maxB);
@@ -478,12 +483,14 @@ export function glycoBarBinBounds(
   barsLength: number,
   bufferLength: number
 ): { lo: number; hi: number } {
+  const maxB = glycoMaxFftBin(bufferLength);
   const lo = glycoBarToFftBin(i, barsLength, bufferLength);
   if (i >= barsLength - 1) {
-    return { lo, hi: Math.max(lo, bufferLength - 1) };
+    return { lo, hi: maxB };
   }
   const next = glycoBarToFftBin(i + 1, barsLength, bufferLength);
-  return { lo, hi: Math.max(lo, Math.min(bufferLength - 1, next - 1)) };
+  const hi = next > lo ? Math.min(maxB, next - 1) : lo;
+  return { lo, hi: Math.max(lo, hi) };
 }
 
 /** モード7（面）: 上縁サンプル点をキャンバス左右端まで均等配置 */
@@ -1926,7 +1933,7 @@ export const drawBars = (
     const colorSet = settings.glycoColorSet ?? "amber";
 
     const peakState = (drawBars as any)._glycoPeak ?? { peak: [] as number[], lastPeakTime: [] as number[], lastMode: -1 };
-    if (peakState.lastMode !== 6) {
+    if (peakState.lastMode !== 6 || peakState.peak.length !== barsLength) {
       peakState.peak = new Array(barsLength).fill(0);
       peakState.lastPeakTime = new Array(barsLength).fill(0);
     }

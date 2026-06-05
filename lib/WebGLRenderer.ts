@@ -2303,8 +2303,11 @@ function drawMode6Glyco(
   settings: SpectrumSettings
 ): void {
   const bufferLength = bufferData.length;
-  const barsLength = 128;
-  const { barPitch, barWidth, barGap } = glycoBarLayout(canvasWidth, barsLength);
+  const retro = settings.retroEqParams;
+  const barsLength = Math.max(24, Math.min(160, Math.round(retro?.bars ?? 64)));
+  const gapMul = Math.max(0.5, Math.min(2, retro?.barGap ?? 1));
+  const widthMul = Math.max(0.5, Math.min(2, retro?.barWidth ?? 1));
+  const { barPitch, barWidth, barGap } = glycoBarLayout(canvasWidth, barsLength, widthMul, gapMul);
   const scale = (canvasHeight / 255) * GLYCO_BAR_VERTICAL_SCALE;
   const holdMs = 350;
   const decayPerFrame = 2.5;
@@ -2324,7 +2327,7 @@ function drawMode6Glyco(
     effAdj
   );
 
-  if (lastGlycoMode !== 6) {
+  if (lastGlycoMode !== 6 || glycoPeak.length !== barsLength) {
     glycoPeak = new Array(barsLength).fill(0);
     glycoLastPeakTime = new Array(barsLength).fill(0);
   }
