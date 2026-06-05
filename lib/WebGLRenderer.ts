@@ -1310,6 +1310,15 @@ function renderFrame(): void {
     plainImageFadeAlpha
   );
 
+  // プレビュー/録画中のみアニメーション（エフェクトも同様。停止中は背景1枚のみで負荷なし）
+  const wantSpectrum = latestEffectActive;
+  const wantEffects = !!(latestEffect && latestEffect.type !== "none");
+
+  if (!wantSpectrum) {
+    isAnimating = false;
+    return;
+  }
+
   if (mode === 6) {
     const { gl } = glContext;
     gl.enable(gl.BLEND);
@@ -1323,15 +1332,6 @@ function renderFrame(): void {
       spectrumForBg?.glycoRotationDeg,
       spectrumForBg?.glycoColorSet
     );
-  }
-
-  // プレビュー/録画中のみアニメーション（エフェクトも同様。停止中は背景1枚のみで負荷なし）
-  const wantSpectrum = latestEffectActive;
-  const wantEffects = !!(latestEffect && latestEffect.type !== "none");
-
-  if (!wantSpectrum) {
-    isAnimating = false;
-    return;
   }
 
   gl.enable(gl.BLEND);

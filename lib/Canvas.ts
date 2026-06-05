@@ -1003,6 +1003,14 @@ export const drawBars = (
     ctx.fillRect(0, 0, canvasWidth, canvasHeight);
   }
 
+  ctx.save();
+
+  // プレビュー/録画中のみスペクトラム＆エフェクトを描画（停止中は背景のみ・負荷なし）
+  if (!isEffectActive) {
+    ctx.restore();
+    return;
+  }
+
   if (mode === 6) {
     ctx.save();
     if (imageTimelineFadeAlpha < 0.999) {
@@ -1014,14 +1022,6 @@ export const drawBars = (
       glycoColorSet: settings.glycoColorSet,
     });
     ctx.restore();
-  }
-
-  ctx.save();
-
-  // プレビュー/録画中のみスペクトラム＆エフェクトを描画（停止中は背景のみ・負荷なし）
-  if (!isEffectActive) {
-    ctx.restore();
-    return;
   }
 
   if (!analyser) {
