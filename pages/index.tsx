@@ -2601,9 +2601,9 @@ const Home: NextPage = () => {
     [applyRendererType]
   );
 
-  /** MP4 埋め込み用: 静止画背景があればギャラリー表示中の画像から JPEG を生成 */
+  /** MP4 埋め込み用: ギャラリー静止画のみから JPEG を生成（canvas 合成・glyco・字幕は含めない） */
   const buildMp4ThumbnailJpeg = useCallback(async (): Promise<Uint8Array | null> => {
-    if (backgroundMediaMode !== "stills" || !imageCtx) return null;
+    if (backgroundMediaMode === "video" || !imageCtx) return null;
     const dims = getCanvasDimensions(activeCanvasLayout);
     return imageElementToThumbnailJpeg(imageCtx, undefined, dims.width, dims.height);
   }, [backgroundMediaMode, imageCtx, activeCanvasLayout, getCanvasDimensions]);
