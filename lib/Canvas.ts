@@ -1,5 +1,6 @@
 import { drawEffectOverlayCanvas, type EffectParams, type AudioReactiveData } from "./Effects";
 import {
+  clearTextOverlayCaches,
   renderSubtitleOverlayCanvas,
   renderTitleOverlayCanvas,
   type SubtitleOverlaySettings,
@@ -659,6 +660,7 @@ function getImageHash(image: HTMLImageElement, canvasWidth: number, canvasHeight
 export function clearImageCache(): void {
   imageCache = null;
   backgroundVideoFrameCache = null;
+  clearTextOverlayCaches();
 }
 
 function drawBackgroundVideoFrame(

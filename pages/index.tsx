@@ -2553,23 +2553,13 @@ const Home: NextPage = () => {
   );
 
 
-  const webglBlockedBySubtitleOrTitle = useMemo(
-    () =>
-      (subtitleEnabled && subtitleCues.length > 0) ||
-      (titleEnabled && titleText.trim().length > 0),
-    [subtitleEnabled, subtitleCues.length, titleEnabled, titleText]
-  );
   const webglBlockedByVideoBackground = backgroundMediaMode === "video";
   const webglSwitchDisabled =
-    isQuickEncoding || isRecording || webglBlockedBySubtitleOrTitle || webglBlockedByVideoBackground;
+    isQuickEncoding || isRecording || webglBlockedByVideoBackground;
 
   const applyRendererType = useCallback(
     (next: "canvas2d" | "webgl", options?: { silent?: boolean }) => {
       if (next === "webgl") {
-        if (webglBlockedBySubtitleOrTitle) {
-          if (!options?.silent) openSnackBar(t("snackbar.subtitleCanvasFallback"));
-          return;
-        }
         if (webglBlockedByVideoBackground) {
           if (!options?.silent) openSnackBar(t("snackbar.videoBackgroundCanvasFallback"));
           return;
@@ -2586,7 +2576,6 @@ const Home: NextPage = () => {
       }
     },
     [
-      webglBlockedBySubtitleOrTitle,
       webglBlockedByVideoBackground,
       gpuInfo,
       rendererType,
@@ -3404,17 +3393,6 @@ const Home: NextPage = () => {
   }, []);
 
   useEffect(() => {
-    if (
-      rendererType === "webgl" &&
-      ((subtitleEnabled && subtitleCues.length > 0) || (titleEnabled && titleText.trim().length > 0))
-    ) {
-      setRendererType("canvas2d");
-      mwvSetItem("common_rendererType", "canvas2d");
-      openSnackBar(t("snackbar.subtitleCanvasFallback"));
-    }
-  }, [rendererType, subtitleEnabled, subtitleCues.length, titleEnabled, titleText, openSnackBar, t]);
-
-  useEffect(() => {
     if (backgroundMediaMode !== "video" || rendererType !== "webgl") {
       return;
     }
@@ -3845,11 +3823,6 @@ const Home: NextPage = () => {
         srtAuthorPhaseRef.current = "wait_start";
       }
       openSnackBar(t("snackbar.subtitleLoaded", { count: cues.length }));
-      if (rendererType === "webgl") {
-        setRendererType("canvas2d");
-        mwvSetItem("common_rendererType", "canvas2d");
-        openSnackBar(t("snackbar.subtitleCanvasFallback"));
-      }
     } catch (_e) {
       openSnackBar(t("snackbar.subtitleLoadFailed"));
     }
@@ -4388,12 +4361,7 @@ const Home: NextPage = () => {
     setSubtitleFileName("authored.srt");
     setSubtitleEnabled(true);
     openSnackBar(t("snackbar.subtitleAuthorApplied", { count: cues.length }));
-    if (rendererType === "webgl") {
-      setRendererType("canvas2d");
-      mwvSetItem("common_rendererType", "canvas2d");
-      openSnackBar(t("snackbar.subtitleCanvasFallback"));
-    }
-  }, [openSnackBar, rendererType, srtAuthorGlobalOffsetMs, t]);
+  }, [openSnackBar, srtAuthorGlobalOffsetMs, t]);
 
   const lyricsTxtLoad = useCallback(
     async (event: { target: HTMLInputElement }) => {
@@ -8986,11 +8954,6 @@ const Home: NextPage = () => {
                 {gpuInfo && !gpuInfo.isWebGLSupported && (
                   <Typography variant="caption" color="warning.main" display="block" sx={{ mb: 1 }}>
                     {t("gpu.webglUnsupportedHint")}
-                  </Typography>
-                )}
-                {webglBlockedBySubtitleOrTitle && (
-                  <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 1 }}>
-                    {t("gpu.webglBlockedSubtitle")}
                   </Typography>
                 )}
                 {webglBlockedByVideoBackground && (

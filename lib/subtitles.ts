@@ -94,12 +94,28 @@ export function parseSrt(srtText: string): SubtitleCue[] {
   return cues;
 }
 
+let lastCueSearchHint = 0;
+
 function getActiveCue(cues: SubtitleCue[], t: number, displayTimingOffsetSec = 0): SubtitleCue | null {
   const tLookup = t - displayTimingOffsetSec;
   if (!(tLookup >= 0) || cues.length === 0) return null;
+
+  const tryIndex = (i: number): SubtitleCue | null => {
+    if (i < 0 || i >= cues.length) return null;
+    const c = cues[i];
+    return tLookup >= c.startSec && tLookup <= c.endSec ? c : null;
+  };
+
+  const hinted = tryIndex(lastCueSearchHint);
+  if (hinted) return hinted;
+
   for (let i = 0; i < cues.length; i++) {
     const c = cues[i];
-    if (tLookup >= c.startSec && tLookup <= c.endSec) return c;
+    if (tLookup >= c.startSec && tLookup <= c.endSec) {
+      lastCueSearchHint = i;
+      return c;
+    }
+    if (tLookup < c.startSec) break;
   }
   return null;
 }
@@ -159,65 +175,281 @@ function getTitleAnimationFactor(
   return { alpha: 1, dy: 0, scale: 1 };
 }
 
+export type TextOverlayLayer = {
+  key: string;
+  canvas: HTMLCanvasElement;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  anchorX: number;
+  anchorY: number;
+};
+
+export type TextOverlayDrawState = {
+  layer: TextOverlayLayer;
+  alpha: number;
+  dy: number;
+  scale: number;
+};
+
+let subtitleLayerCache: TextOverlayLayer | null = null;
+let titleLayerCache: TextOverlayLayer | null = null;
+
+export function clearTextOverlayCaches(): void {
+  subtitleLayerCache = null;
+  titleLayerCache = null;
+  lastCueSearchHint = 0;
+}
+
+function styleToCacheKey(style: SubtitleStyle, letterSpacingPx = 0): string {
+  return [
+    style.positionYPercent,
+    style.align,
+    style.displayType,
+    style.color,
+    style.fontSize,
+    style.fontFamily,
+    style.bold ? 1 : 0,
+    style.italic ? 1 : 0,
+    style.strokeColor,
+    style.strokeWidth,
+    style.shadowBlur,
+    style.shadowColor,
+    style.boxColor,
+    style.boxPadding,
+    letterSpacingPx,
+  ].join("|");
+}
+
+function applyLetterSpacing(ctx: CanvasRenderingContext2D, letterSpacingPx: number): void {
+  if (letterSpacingPx <= 0) return;
+  try {
+    (ctx as CanvasRenderingContext2D & { letterSpacing?: string }).letterSpacing = `${letterSpacingPx}px`;
+  } catch {
+    /* ignore */
+  }
+}
+
+function buildTextOverlayLayer(
+  key: string,
+  lines: string[],
+  style: SubtitleStyle,
+  canvasWidth: number,
+  canvasHeight: number,
+  letterSpacingPx = 0
+): TextOverlayLayer | null {
+  if (lines.length === 0 || canvasWidth <= 0 || canvasHeight <= 0) return null;
+
+  const weight = style.bold ? "700" : "400";
+  const italic = style.italic ? "italic" : "normal";
+  const baseFontSize = Math.max(10, style.fontSize);
+  const lineHeight = baseFontSize * 1.25;
+  const font = `${italic} ${weight} ${baseFontSize}px ${style.fontFamily}`;
+
+  const measureCanvas = document.createElement("canvas");
+  const measureCtx = measureCanvas.getContext("2d");
+  if (!measureCtx) return null;
+  applyLetterSpacing(measureCtx, letterSpacingPx);
+  measureCtx.font = font;
+  const widths = lines.map((line) => measureCtx.measureText(line).width);
+  const maxLineWidth = Math.max(...widths);
+
+  const x =
+    style.align === "left" ? 0 :
+    style.align === "right" ? canvasWidth : canvasWidth * 0.5;
+  const yBase = canvasHeight * (style.positionYPercent / 100);
+  const totalHeight = lineHeight * lines.length;
+  const boxPad = style.displayType === "boxed" ? Math.max(0, style.boxPadding) : 0;
+  const edgePad = Math.ceil(Math.max(style.shadowBlur, style.strokeWidth) * 2 + 2);
+
+  let bx: number;
+  if (style.align === "left") {
+    bx = x - boxPad - edgePad;
+  } else if (style.align === "right") {
+    bx = x - maxLineWidth - boxPad - edgePad;
+  } else {
+    bx = x - maxLineWidth / 2 - boxPad - edgePad;
+  }
+  const by = yBase - totalHeight - boxPad - edgePad;
+  const bw = maxLineWidth + boxPad * 2 + edgePad * 2;
+  const bh = totalHeight + boxPad * 2 + edgePad * 2;
+
+  const layerCanvas = document.createElement("canvas");
+  layerCanvas.width = Math.max(1, Math.ceil(bw));
+  layerCanvas.height = Math.max(1, Math.ceil(bh));
+  const lctx = layerCanvas.getContext("2d", { alpha: true });
+  if (!lctx) return null;
+
+  lctx.textBaseline = "alphabetic";
+  applyLetterSpacing(lctx, letterSpacingPx);
+  lctx.font = font;
+  lctx.shadowBlur = style.shadowBlur;
+  lctx.shadowColor = style.shadowColor;
+
+  const localX =
+    style.align === "left" ? edgePad + boxPad :
+    style.align === "right" ? layerCanvas.width - edgePad - boxPad :
+    layerCanvas.width / 2;
+  const localYBase = layerCanvas.height - edgePad - boxPad;
+
+  if (style.displayType === "boxed") {
+    const pad = Math.max(0, style.boxPadding);
+    const boxX =
+      style.align === "left" ? edgePad :
+      style.align === "right" ? layerCanvas.width - edgePad - maxLineWidth - pad * 2 :
+      localX - maxLineWidth / 2 - pad;
+    const boxY = localYBase - totalHeight - pad;
+    lctx.fillStyle = style.boxColor;
+    lctx.fillRect(boxX, boxY, maxLineWidth + pad * 2, totalHeight + pad * 2);
+  }
+
+  lctx.fillStyle = style.color;
+  lctx.textAlign = style.align;
+  let y = localYBase - (lines.length - 1) * lineHeight;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (style.displayType !== "plain") {
+      lctx.strokeStyle = style.strokeColor;
+      lctx.lineWidth = Math.max(0.5, style.strokeWidth);
+      lctx.strokeText(line, localX, y);
+    }
+    lctx.fillText(line, localX, y);
+    y += lineHeight;
+  }
+
+  return {
+    key,
+    canvas: layerCanvas,
+    x: bx,
+    y: by,
+    w: layerCanvas.width,
+    h: layerCanvas.height,
+    anchorX: x,
+    anchorY: yBase,
+  };
+}
+
+function getOrBuildLayer(
+  cache: TextOverlayLayer | null,
+  key: string,
+  lines: string[],
+  style: SubtitleStyle,
+  canvasWidth: number,
+  canvasHeight: number,
+  letterSpacingPx = 0
+): TextOverlayLayer | null {
+  if (cache && cache.key === key) return cache;
+  return buildTextOverlayLayer(key, lines, style, canvasWidth, canvasHeight, letterSpacingPx);
+}
+
+export function compositeTextOverlayToCanvas2D(
+  ctx: CanvasRenderingContext2D,
+  state: TextOverlayDrawState
+): void {
+  const { layer, alpha, dy, scale } = state;
+  if (alpha <= 0.001) return;
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  if (scale !== 1 || dy !== 0) {
+    ctx.translate(layer.anchorX, layer.anchorY + dy);
+    ctx.scale(scale, scale);
+    ctx.translate(-layer.anchorX, -layer.anchorY);
+  }
+  ctx.drawImage(layer.canvas, layer.x, layer.y, layer.w, layer.h);
+  ctx.restore();
+}
+
+export function resolveSubtitleOverlayDraw(
+  canvasWidth: number,
+  canvasHeight: number,
+  overlay: SubtitleOverlaySettings | undefined
+): TextOverlayDrawState | null {
+  if (!overlay || !overlay.enabled || overlay.cues.length === 0) return null;
+
+  const t = overlay.getCurrentTimeSec();
+  const offsetSec = overlay.displayTimingOffsetSec ?? 0;
+  const tLookup = t - offsetSec;
+  const cue = getActiveCue(overlay.cues, t, offsetSec);
+  if (!cue) return null;
+
+  const style = overlay.style;
+  const anim = getAnimationFactor(style, cue, tLookup);
+  if (anim.alpha <= 0.001) return null;
+
+  const lines = cue.text.split("\n").filter(Boolean);
+  if (lines.length === 0) return null;
+
+  const key = [
+    canvasWidth,
+    canvasHeight,
+    cue.startSec,
+    cue.endSec,
+    cue.text,
+    styleToCacheKey(style),
+  ].join("\0");
+
+  const layer = getOrBuildLayer(
+    subtitleLayerCache,
+    key,
+    lines,
+    style,
+    canvasWidth,
+    canvasHeight
+  );
+  if (!layer) return null;
+  subtitleLayerCache = layer;
+  return { layer, ...anim };
+}
+
+export function resolveTitleOverlayDraw(
+  canvasWidth: number,
+  canvasHeight: number,
+  overlay: TitleOverlaySettings | undefined
+): TextOverlayDrawState | null {
+  if (!overlay || !overlay.enabled) return null;
+
+  const raw = overlay.text.trim();
+  if (!raw) return null;
+
+  const style = overlay.style;
+  const anim = getTitleAnimationFactor(style, overlay.isPlaying, overlay.playbackTimeSec);
+  if (anim.alpha <= 0.001) return null;
+
+  const lines = raw.split("\n").filter(Boolean);
+  if (lines.length === 0) return null;
+
+  const key = [
+    canvasWidth,
+    canvasHeight,
+    raw,
+    styleToCacheKey(style, style.letterSpacingPx),
+  ].join("\0");
+
+  const layer = getOrBuildLayer(
+    titleLayerCache,
+    key,
+    lines,
+    style,
+    canvasWidth,
+    canvasHeight,
+    style.letterSpacingPx
+  );
+  if (!layer) return null;
+  titleLayerCache = layer;
+  return { layer, ...anim };
+}
+
 export function renderTitleOverlayCanvas(
   ctx: CanvasRenderingContext2D,
   canvasWidth: number,
   canvasHeight: number,
   overlay: TitleOverlaySettings | undefined
 ): void {
-  if (!overlay || !overlay.enabled) return;
-  const raw = overlay.text.trim();
-  if (!raw) return;
-  const style = overlay.style;
-  const anim = getTitleAnimationFactor(style, overlay.isPlaying, overlay.playbackTimeSec);
-  if (anim.alpha <= 0.001) return;
-  const lines = raw.split("\n").filter(Boolean);
-  if (lines.length === 0) return;
-  const weight = style.bold ? "700" : "400";
-  const italic = style.italic ? "italic" : "normal";
-  const baseFontSize = Math.max(10, style.fontSize);
-  const fontSize = baseFontSize * anim.scale;
-  const lineHeight = fontSize * 1.25;
-  ctx.save();
-  ctx.globalAlpha = anim.alpha;
-  ctx.textBaseline = "alphabetic";
-  try {
-    (ctx as CanvasRenderingContext2D & { letterSpacing?: string }).letterSpacing = `${Math.max(0, style.letterSpacingPx)}px`;
-  } catch {
-    /* ignore */
-  }
-  ctx.font = `${italic} ${weight} ${fontSize}px ${style.fontFamily}`;
-  ctx.shadowBlur = style.shadowBlur;
-  ctx.shadowColor = style.shadowColor;
-  const widths = lines.map((line) => ctx.measureText(line).width);
-  const maxLineWidth = Math.max(...widths);
-  const x =
-    style.align === "left" ? 0 :
-    style.align === "right" ? canvasWidth : canvasWidth * 0.5;
-  const yBase = (canvasHeight * (style.positionYPercent / 100)) + anim.dy;
-  const totalHeight = lineHeight * lines.length;
-  if (style.displayType === "boxed") {
-    const pad = Math.max(0, style.boxPadding);
-    const bx = style.align === "left" ? x - pad :
-      style.align === "right" ? x - maxLineWidth - pad : x - maxLineWidth / 2 - pad;
-    const by = yBase - totalHeight - pad;
-    ctx.fillStyle = style.boxColor;
-    ctx.fillRect(bx, by, maxLineWidth + pad * 2, totalHeight + pad * 2);
-  }
-  ctx.fillStyle = style.color;
-  ctx.textAlign = style.align;
-  let y = yBase - (lines.length - 1) * lineHeight;
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    if (style.displayType !== "plain") {
-      ctx.strokeStyle = style.strokeColor;
-      ctx.lineWidth = Math.max(0.5, style.strokeWidth);
-      ctx.strokeText(line, x, y);
-    }
-    ctx.fillText(line, x, y);
-    y += lineHeight;
-  }
-  ctx.restore();
+  const state = resolveTitleOverlayDraw(canvasWidth, canvasHeight, overlay);
+  if (!state) return;
+  compositeTextOverlayToCanvas2D(ctx, state);
 }
 
 export function renderSubtitleOverlayCanvas(
@@ -226,56 +458,7 @@ export function renderSubtitleOverlayCanvas(
   canvasHeight: number,
   overlay: SubtitleOverlaySettings | undefined
 ): void {
-  if (!overlay || !overlay.enabled || overlay.cues.length === 0) return;
-  const t = overlay.getCurrentTimeSec();
-  const offsetSec = overlay.displayTimingOffsetSec ?? 0;
-  const tLookup = t - offsetSec;
-  const cue = getActiveCue(overlay.cues, t, offsetSec);
-  if (!cue) return;
-  const style = overlay.style;
-  const anim = getAnimationFactor(style, cue, tLookup);
-  if (anim.alpha <= 0.001) return;
-  const lines = cue.text.split("\n").filter(Boolean);
-  if (lines.length === 0) return;
-  const weight = style.bold ? "700" : "400";
-  const italic = style.italic ? "italic" : "normal";
-  const baseFontSize = Math.max(10, style.fontSize);
-  const fontSize = baseFontSize * anim.scale;
-  const lineHeight = fontSize * 1.25;
-  ctx.save();
-  ctx.globalAlpha = anim.alpha;
-  ctx.textBaseline = "alphabetic";
-  ctx.font = `${italic} ${weight} ${fontSize}px ${style.fontFamily}`;
-  ctx.shadowBlur = style.shadowBlur;
-  ctx.shadowColor = style.shadowColor;
-  const widths = lines.map((line) => ctx.measureText(line).width);
-  const maxLineWidth = Math.max(...widths);
-  const x =
-    style.align === "left" ? 0 :
-    style.align === "right" ? canvasWidth : canvasWidth * 0.5;
-  const yBase = (canvasHeight * (style.positionYPercent / 100)) + anim.dy;
-  const totalHeight = lineHeight * lines.length;
-  if (style.displayType === "boxed") {
-    const pad = Math.max(0, style.boxPadding);
-    const bx = style.align === "left" ? x - pad :
-      style.align === "right" ? x - maxLineWidth - pad : x - maxLineWidth / 2 - pad;
-    const by = yBase - totalHeight - pad;
-    ctx.fillStyle = style.boxColor;
-    ctx.fillRect(bx, by, maxLineWidth + pad * 2, totalHeight + pad * 2);
-  }
-  ctx.fillStyle = style.color;
-  ctx.textAlign = style.align;
-  let y = yBase - (lines.length - 1) * lineHeight;
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    if (style.displayType !== "plain") {
-      ctx.strokeStyle = style.strokeColor;
-      ctx.lineWidth = Math.max(0.5, style.strokeWidth);
-      ctx.strokeText(line, x, y);
-    }
-    ctx.fillText(line, x, y);
-    y += lineHeight;
-  }
-  ctx.restore();
+  const state = resolveSubtitleOverlayDraw(canvasWidth, canvasHeight, overlay);
+  if (!state) return;
+  compositeTextOverlayToCanvas2D(ctx, state);
 }
-
