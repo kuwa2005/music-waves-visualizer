@@ -100,23 +100,30 @@ function getActiveCue(cues: SubtitleCue[], t: number, displayTimingOffsetSec = 0
   const tLookup = t - displayTimingOffsetSec;
   if (!(tLookup >= 0) || cues.length === 0) return null;
 
-  const tryIndex = (i: number): SubtitleCue | null => {
-    if (i < 0 || i >= cues.length) return null;
-    const c = cues[i];
-    return tLookup >= c.startSec && tLookup <= c.endSec ? c : null;
-  };
+  const hintedIdx = lastCueSearchHint;
+  if (hintedIdx >= 0 && hintedIdx < cues.length) {
+    const hinted = cues[hintedIdx];
+    if (tLookup >= hinted.startSec && tLookup <= hinted.endSec) {
+      return hinted;
+    }
+  }
 
-  const hinted = tryIndex(lastCueSearchHint);
-  if (hinted) return hinted;
-
-  for (let i = 0; i < cues.length; i++) {
-    const c = cues[i];
-    if (tLookup >= c.startSec && tLookup <= c.endSec) {
-      lastCueSearchHint = i;
+  let lo = 0;
+  let hi = cues.length - 1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (cues[mid].startSec <= tLookup) lo = mid + 1;
+    else hi = mid - 1;
+  }
+  const idx = hi;
+  if (idx >= 0) {
+    const c = cues[idx];
+    if (tLookup <= c.endSec) {
+      lastCueSearchHint = idx;
       return c;
     }
-    if (tLookup < c.startSec) break;
   }
+  lastCueSearchHint = Math.min(lo, cues.length - 1);
   return null;
 }
 
@@ -195,10 +202,14 @@ export type TextOverlayDrawState = {
 
 let subtitleLayerCache: TextOverlayLayer | null = null;
 let titleLayerCache: TextOverlayLayer | null = null;
+let lastSubtitleStaticDraw: TextOverlayDrawState | null = null;
+let lastSubtitleStaticKey: string | null = null;
 
 export function clearTextOverlayCaches(): void {
   subtitleLayerCache = null;
   titleLayerCache = null;
+  lastSubtitleStaticDraw = null;
+  lastSubtitleStaticKey = null;
   lastCueSearchHint = 0;
 }
 
@@ -366,22 +377,24 @@ export function resolveSubtitleOverlayDraw(
   canvasHeight: number,
   overlay: SubtitleOverlaySettings | undefined
 ): TextOverlayDrawState | null {
-  if (!overlay || !overlay.enabled || overlay.cues.length === 0) return null;
+  if (!overlay || !overlay.enabled || overlay.cues.length === 0) {
+    lastSubtitleStaticDraw = null;
+    lastSubtitleStaticKey = null;
+    return null;
+  }
 
   const t = overlay.getCurrentTimeSec();
   const offsetSec = overlay.displayTimingOffsetSec ?? 0;
   const tLookup = t - offsetSec;
   const cue = getActiveCue(overlay.cues, t, offsetSec);
-  if (!cue) return null;
+  if (!cue) {
+    lastSubtitleStaticDraw = null;
+    lastSubtitleStaticKey = null;
+    return null;
+  }
 
   const style = overlay.style;
-  const anim = getAnimationFactor(style, cue, tLookup);
-  if (anim.alpha <= 0.001) return null;
-
-  const lines = cue.text.split("\n").filter(Boolean);
-  if (lines.length === 0) return null;
-
-  const key = [
+  const layerKey = [
     canvasWidth,
     canvasHeight,
     cue.startSec,
@@ -390,9 +403,35 @@ export function resolveSubtitleOverlayDraw(
     styleToCacheKey(style),
   ].join("\0");
 
+  if (style.animationType === "none") {
+    if (lastSubtitleStaticKey === layerKey && lastSubtitleStaticDraw) {
+      return lastSubtitleStaticDraw;
+    }
+    const layer = getOrBuildLayer(
+      subtitleLayerCache,
+      layerKey,
+      cue.text.split("\n").filter(Boolean),
+      style,
+      canvasWidth,
+      canvasHeight
+    );
+    if (!layer) return null;
+    subtitleLayerCache = layer;
+    const state: TextOverlayDrawState = { layer, alpha: 1, dy: 0, scale: 1 };
+    lastSubtitleStaticKey = layerKey;
+    lastSubtitleStaticDraw = state;
+    return state;
+  }
+
+  const anim = getAnimationFactor(style, cue, tLookup);
+  if (anim.alpha <= 0.001) return null;
+
+  const lines = cue.text.split("\n").filter(Boolean);
+  if (lines.length === 0) return null;
+
   const layer = getOrBuildLayer(
     subtitleLayerCache,
-    key,
+    layerKey,
     lines,
     style,
     canvasWidth,

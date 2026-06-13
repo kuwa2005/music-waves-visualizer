@@ -240,8 +240,10 @@ interface WebGLRendererContext {
   effectVolumeLocation: WebGLUniformLocation | null;
   effectHighFreqLocation: WebGLUniformLocation | null;
   imageTexture: WebGLTexture | null;
-  overlayTexture: WebGLTexture | null;
-  overlayTextureSource: HTMLCanvasElement | null;
+  subtitleOverlayTexture: WebGLTexture | null;
+  subtitleOverlayTextureSource: HTMLCanvasElement | null;
+  titleOverlayTexture: WebGLTexture | null;
+  titleOverlayTextureSource: HTMLCanvasElement | null;
   imageCache: {
     image: HTMLImageElement | null;
     width: number;
@@ -286,6 +288,9 @@ function fadeAlpha(a: number): number {
   return a * imageTimelineFadeMul;
 }
 
+const TEXT_OVERLAY_TEX_COORDS = new Float32Array([0, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 1]);
+const textOverlayPositionsScratch = new Float32Array(12);
+
 function setTextureDrawAlpha(ctx: WebGLRendererContext, alpha: number): void {
   if (ctx.texAlphaLocation) {
     ctx.gl.uniform1f(ctx.texAlphaLocation, alpha);
@@ -296,7 +301,8 @@ function drawTextOverlayLayerWebGL(
   ctx: WebGLRendererContext,
   state: TextOverlayDrawState,
   canvasWidth: number,
-  canvasHeight: number
+  canvasHeight: number,
+  slot: "subtitle" | "title"
 ): void {
   const { layer, alpha, dy, scale } = state;
   if (alpha <= 0.001) return;
@@ -315,19 +321,25 @@ function drawTextOverlayLayerWebGL(
     destH = layer.h * scale;
   }
 
-  if (!ctx.overlayTexture || ctx.overlayTextureSource !== layer.canvas) {
-    if (!ctx.overlayTexture) {
-      ctx.overlayTexture = gl.createTexture();
+  const textureKey = slot === "subtitle" ? "subtitleOverlayTexture" : "titleOverlayTexture";
+  const sourceKey = slot === "subtitle" ? "subtitleOverlayTextureSource" : "titleOverlayTextureSource";
+  let overlayTexture = ctx[textureKey];
+  const overlayTextureSource = ctx[sourceKey];
+
+  if (!overlayTexture || overlayTextureSource !== layer.canvas) {
+    if (!overlayTexture) {
+      overlayTexture = gl.createTexture();
+      ctx[textureKey] = overlayTexture;
     }
-    gl.bindTexture(gl.TEXTURE_2D, ctx.overlayTexture);
+    gl.bindTexture(gl.TEXTURE_2D, overlayTexture);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, layer.canvas);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    ctx.overlayTextureSource = layer.canvas;
+    ctx[sourceKey] = layer.canvas;
   } else {
-    gl.bindTexture(gl.TEXTURE_2D, ctx.overlayTexture);
+    gl.bindTexture(gl.TEXTURE_2D, overlayTexture);
   }
 
   gl.enable(gl.BLEND);
@@ -341,26 +353,29 @@ function drawTextOverlayLayerWebGL(
   const y1 = destY;
   const x2 = destX + destW;
   const y2 = destY + destH;
-  const positions = new Float32Array([
-    x1, y1,
-    x2, y1,
-    x1, y2,
-    x1, y2,
-    x2, y1,
-    x2, y2,
-  ]);
-  const texCoords = new Float32Array([0, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 1]);
+  textOverlayPositionsScratch[0] = x1;
+  textOverlayPositionsScratch[1] = y1;
+  textOverlayPositionsScratch[2] = x2;
+  textOverlayPositionsScratch[3] = y1;
+  textOverlayPositionsScratch[4] = x1;
+  textOverlayPositionsScratch[5] = y2;
+  textOverlayPositionsScratch[6] = x1;
+  textOverlayPositionsScratch[7] = y2;
+  textOverlayPositionsScratch[8] = x2;
+  textOverlayPositionsScratch[9] = y1;
+  textOverlayPositionsScratch[10] = x2;
+  textOverlayPositionsScratch[11] = y2;
 
   gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
-  gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
+  gl.bufferData(gl.ARRAY_BUFFER, textOverlayPositionsScratch, gl.DYNAMIC_DRAW);
   gl.enableVertexAttribArray(texPositionLocation);
   gl.vertexAttribPointer(texPositionLocation, 2, gl.FLOAT, false, 0, 0);
   gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
-  gl.bufferData(gl.ARRAY_BUFFER, texCoords, gl.STATIC_DRAW);
+  gl.bufferData(gl.ARRAY_BUFFER, TEXT_OVERLAY_TEX_COORDS, gl.STATIC_DRAW);
   gl.enableVertexAttribArray(texCoordLocation);
   gl.vertexAttribPointer(texCoordLocation, 2, gl.FLOAT, false, 0, 0);
   gl.activeTexture(gl.TEXTURE0);
-  gl.bindTexture(gl.TEXTURE_2D, ctx.overlayTexture);
+  gl.bindTexture(gl.TEXTURE_2D, overlayTexture);
   if (textureLocation) {
     gl.uniform1i(textureLocation, 0);
   }
@@ -374,11 +389,9 @@ function drawTextOverlaysWebGL(
   canvasHeight: number,
   settings?: SpectrumSettings
 ): void {
-  const subtitleState = resolveSubtitleOverlayDraw(
-    canvasWidth,
-    canvasHeight,
-    settings?.subtitleOverlay
-  );
+  const subtitleState = settings?.subtitleOverlay?.enabled
+    ? resolveSubtitleOverlayDraw(canvasWidth, canvasHeight, settings.subtitleOverlay)
+    : null;
   const titleState = resolveTitleOverlayDraw(
     canvasWidth,
     canvasHeight,
@@ -387,11 +400,10 @@ function drawTextOverlaysWebGL(
   if (!subtitleState && !titleState) return;
 
   if (subtitleState) {
-    drawTextOverlayLayerWebGL(ctx, subtitleState, canvasWidth, canvasHeight);
+    drawTextOverlayLayerWebGL(ctx, subtitleState, canvasWidth, canvasHeight, "subtitle");
   }
   if (titleState) {
-    ctx.overlayTextureSource = null;
-    drawTextOverlayLayerWebGL(ctx, titleState, canvasWidth, canvasHeight);
+    drawTextOverlayLayerWebGL(ctx, titleState, canvasWidth, canvasHeight, "title");
   }
 }
 
@@ -519,8 +531,10 @@ function initWebGL(canvas: HTMLCanvasElement): WebGLRendererContext | null {
     effectVolumeLocation,
     effectHighFreqLocation,
     imageTexture: null,
-    overlayTexture: null,
-    overlayTextureSource: null,
+    subtitleOverlayTexture: null,
+    subtitleOverlayTextureSource: null,
+    titleOverlayTexture: null,
+    titleOverlayTextureSource: null,
     imageCache: {
       image: null,
       width: 0,
@@ -3101,17 +3115,27 @@ export function stopWebGLAnimation(): void {
 /**
  * WebGLの画像キャッシュをクリア
  */
+function deleteOverlayTextures(ctx: WebGLRendererContext): void {
+  const { gl } = ctx;
+  if (ctx.subtitleOverlayTexture) {
+    gl.deleteTexture(ctx.subtitleOverlayTexture);
+    ctx.subtitleOverlayTexture = null;
+  }
+  ctx.subtitleOverlayTextureSource = null;
+  if (ctx.titleOverlayTexture) {
+    gl.deleteTexture(ctx.titleOverlayTexture);
+    ctx.titleOverlayTexture = null;
+  }
+  ctx.titleOverlayTextureSource = null;
+}
+
 export function clearWebGLImageCache(): void {
   if (glContext) {
     if (glContext.imageTexture) {
       glContext.gl.deleteTexture(glContext.imageTexture);
       glContext.imageTexture = null;
     }
-    if (glContext.overlayTexture) {
-      glContext.gl.deleteTexture(glContext.overlayTexture);
-      glContext.overlayTexture = null;
-    }
-    glContext.overlayTextureSource = null;
+    deleteOverlayTextures(glContext);
     glContext.imageCache = {
       image: null,
       width: 0,
@@ -3134,7 +3158,7 @@ export function cleanupWebGL(): void {
   renderFrameLastFrameTime = 0;
 
   if (glContext) {
-    const { gl, program, textureProgram, positionBuffer, colorBuffer, texCoordBuffer, imageTexture, overlayTexture } = glContext;
+    const { gl, program, textureProgram, positionBuffer, colorBuffer, texCoordBuffer, imageTexture } = glContext;
     gl.deleteProgram(program);
     gl.deleteProgram(textureProgram);
     gl.deleteProgram(glContext.effectProgram);
@@ -3144,9 +3168,7 @@ export function cleanupWebGL(): void {
     if (imageTexture) {
       gl.deleteTexture(imageTexture);
     }
-    if (overlayTexture) {
-      gl.deleteTexture(overlayTexture);
-    }
+    deleteOverlayTextures(glContext);
     glContext = null;
   }
   clearTextOverlayCaches();

@@ -2111,8 +2111,10 @@ export const drawBars = (
     ctx.restore();
   }
 
-  // 字幕オーバーレイ
-  renderSubtitleOverlayCanvas(ctx, canvasWidth, canvasHeight, settings.subtitleOverlay);
+  // 字幕オーバーレイ（OFF 時は resolve も描画もスキップ）
+  if (settings.subtitleOverlay?.enabled) {
+    renderSubtitleOverlayCanvas(ctx, canvasWidth, canvasHeight, settings.subtitleOverlay);
+  }
   // タイトル（字幕より手前）
   renderTitleOverlayCanvas(ctx, canvasWidth, canvasHeight, settings.titleOverlay);
 
