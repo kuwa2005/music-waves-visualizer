@@ -1920,7 +1920,7 @@ export const drawBars = (
     ctx.stroke();
   } else if (mode === 6) {
     // モード6: グライコ風（1980年代コンポ風ピークホールド）
-    analyser.getByteFrequencyData(bufferData);
+    // freqForEffect は直前に取得済み（二重 getByteFrequencyData を避ける）
     const retro = settings.retroEqParams;
     const barsLength = Math.max(24, Math.min(160, Math.round(retro?.bars ?? 64)));
     const gapMul = Math.max(0.5, Math.min(2, retro?.barGap ?? 1));
@@ -1982,7 +1982,7 @@ export const drawBars = (
     }
 
     for (let i = 0; i < barsLength; i++) {
-      const rawValue = glycoBarRawEnergy(i, barsLength, bufferLength, bufferData);
+      const rawValue = glycoBarRawEnergy(i, barsLength, bufferLength, freqForEffect);
       const value = glycoAdjustedLevel(rawValue);
       const barHeight = Math.min(value * scale, canvasHeight);
       const x = i * barPitch + barGap * 0.5;

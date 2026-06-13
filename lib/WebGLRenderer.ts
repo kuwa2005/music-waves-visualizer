@@ -1447,7 +1447,11 @@ function renderFrame(): void {
         drawMode5(glContext, bufferData, canvasWidth, canvasHeight, effAdj, settings);
         break;
       case 6:
-        analyser.getByteFrequencyData(bufferData);
+        if (!needsFreqForEffect) {
+          analyser.getByteFrequencyData(bufferData);
+        } else {
+          bufferData.set(freqForEffect);
+        }
         drawMode6Glyco(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
         break;
       case 7:
