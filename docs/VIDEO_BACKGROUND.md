@@ -21,7 +21,7 @@ For drag & drop rules in the UI, see [locales](../locales/) copy under `dropZone
 
 **Clip length:** Preview/recording length follows the **audio** timeline. If the background video is shorter, the last decoded frame typically remains visible (browser `drawImage` behaviour); fine-tuning is tracked in GitHub issues below.
 
-**Renderer:** While **video background** is active, the app **switches to Canvas 2D** (WebGL path does not sample `HTMLVideoElement` into the GL background yet). See [issue #36](https://github.com/kuwa2005/music-waves-visualizer/issues/36).
+**Renderer:** While **video background** is active, the app **switches to Canvas 2D** (WebGL path does not sample `HTMLVideoElement` into the GL background yet). See [issue #36](https://github.com/kuwa2005/music-waves-visualizer/issues/36). Recent perf work on this branch (PR [#41](https://github.com/kuwa2005/music-waves-visualizer/pull/41)) improved **preview** pacing (30 fps throttle) and removed redundant FFT reads in mode 6; it does **not** implement WebGL video backgrounds.
 
 **Audio-only MP4** (no decodable video size): Background can be **cleared transparent** for compositing in another NLE (`clearBackgroundTransparent` in `lib/Canvas.ts`).
 
@@ -70,6 +70,6 @@ For drag & drop rules in the UI, see [locales](../locales/) copy under `dropZone
 - **背景動画用 MP4**: 「画像を選ぶ」で **1 本だけ**（同一選択に静止画を混在させない）。ギャラリーが複数枚のときは **確認ダイアログ**の後に静止画を捨てて動画背景へ。
 - **画像を追加**: **静止画のみ**。動画背景モード中は追加不可。
 - **FPS 方針**: 動画背景プレビューのみ 30fps に間引き、録画・生成は最大 60fps まで維持。
-- **同期・ドリフト**: 別ファイルの音声と映像の同期改善は **#34**。録画コーデック・透過・FFmpeg は **#35**。WebGL での動画背景は **#36**。
+- **同期・ドリフト**: 別ファイルの音声と映像の同期改善は **#34**（ベストエフォートの現状維持、長時間ドリフトは未解決）。録画コーデック・透過・FFmpeg は **#35**（クローズ）。WebGL での動画背景は **#36**（未実装、プレビュー 30fps 等の周辺 perf のみ PR #41）。
 
 詳細な文言は UI の `locales/ja.json` / `en.json` を参照してください。

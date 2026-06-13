@@ -2,6 +2,29 @@
 
 ## [Unreleased]
 
+### Fixed (2026-06 — rendering & subtitle performance, PR [#41](https://github.com/kuwa2005/music-waves-visualizer/pull/41))
+
+- **WebGL background scratch**: Reuse `bgTempCanvas` / `texSubImage2D` for gallery transitions and `screenMotion` instead of allocating a canvas every frame (`lib/WebGLRenderer.ts`).
+- **FFT scratch buffers**: Canvas 2D and WebGL share per-frame `Uint8Array` reuse for `getByteFrequencyData` (`canvasFft*Scratch` / `fft*Scratch`).
+- **Water droplet WebGL**: `waterRipple` droplet lines batched into a single draw call via `LineBatch` (`lib/WebGLRenderer.ts`).
+- **Video background preview**: 30 fps throttle; mode 6 retro EQ no longer fetches FFT twice per frame when effects are off.
+- **Subtitle architecture** (`lib/subtitles.ts`, `lib/WebGLRenderer.ts`, `pages/index.tsx`):
+  - Layer cache + idle **prefetch** of the next cue; WebGL **dual-slot** texture upload with idle prefetch.
+  - **Binary search** + hint for active-cue lookup; `parseSrtAsync` with streaming yield for large SRT.
+  - **`loadSubtitleSeqRef`** sequence guard on async parse / author-panel apply.
+  - SRT load no longer restarts preview animation unnecessarily.
+- **Developer mode metrics**: Settings tab shows subtitle layer build, prefetch, and WebGL subtitle/title texture upload ms (1 s refresh). See [DEVELOPER_MODE.md](./DEVELOPER_MODE.md).
+
+### Documentation
+
+- [SESSION_20260601.md](./SESSION_20260601.md) §2026-06-13, [DEVELOPER_MODE.md](./DEVELOPER_MODE.md) (subtitle/title perf HUD).
+
+### Known / deferred (open issues)
+
+- [#34](https://github.com/kuwa2005/music-waves-visualizer/issues/34) — separate audio/video MP4 sync drift (unchanged scope).
+- [#36](https://github.com/kuwa2005/music-waves-visualizer/issues/36) — WebGL video background (still Canvas 2D fallback).
+- Remaining perf backlog: `filmGrain` per-frame `createImageData`, `mirrorBall` WebGL draw-call count — [#42](https://github.com/kuwa2005/music-waves-visualizer/issues/42).
+
 ## [1.0.6] - 2026-06-05
 
 ### Added

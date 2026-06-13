@@ -34,6 +34,8 @@
 | Tier B: 無劣化 WAV を FFmpeg で mux | 未実装 | ブラウザ録画は WebM 前提。WAV 直結は容量・処理時間・UX が重い |
 | 録画 512 kbps の自動切替 | 未実装 | YouTube 再エンコード後の実効品質に対し 384→512 の体感差が小さい |
 | ミラーボール UI の公開 | 未実装 | 実装・Cookie 保存はあるが `EFFECT_TYPES_UI_HIDDEN` で選択肢から除外 |
+| WebGL `mirrorBall` draw call 集約 | 未実装 | 水滴は LineBatch 化済み — [#42](https://github.com/kuwa2005/music-waves-visualizer/issues/42) |
+| `filmGrain` の毎フレーム ImageData | 未最適化 | オフスクリーン canvas は再利用するがノイズ生成は毎フレーム — [#42](https://github.com/kuwa2005/music-waves-visualizer/issues/42) |
 
 ## YouTube / TikTok 調査と 384 / 320 kbps 維持の根拠
 
