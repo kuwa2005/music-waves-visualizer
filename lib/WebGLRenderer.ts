@@ -399,7 +399,9 @@ function drawTextOverlaysWebGL(
   canvasHeight: number,
   settings?: SpectrumSettings
 ): void {
-  const subtitleState = settings?.subtitleOverlay?.enabled
+  const subtitleOverlayEnabled =
+    settings?.subtitleOverlay?.getEnabled?.() ?? settings?.subtitleOverlay?.enabled;
+  const subtitleState = subtitleOverlayEnabled
     ? resolveSubtitleOverlayDraw(canvasWidth, canvasHeight, settings.subtitleOverlay)
     : null;
   const titleState = settings?.titleOverlay?.enabled

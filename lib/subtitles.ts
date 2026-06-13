@@ -48,6 +48,8 @@ export const DEFAULT_SUBTITLE_STYLE: SubtitleStyle = {
 
 export type SubtitleOverlaySettings = {
   enabled: boolean;
+  /** 指定時は enabled の代わりに毎フレーム呼ぶ（React effect deps から enabled を外す用） */
+  getEnabled?: () => boolean;
   cues: SubtitleCue[];
   /** 指定時は cues の代わりに毎フレーム呼ぶ（React effect deps から cues を外す用） */
   getCues?: () => SubtitleCue[];
@@ -381,7 +383,13 @@ export function resolveSubtitleOverlayDraw(
   canvasHeight: number,
   overlay: SubtitleOverlaySettings | undefined
 ): TextOverlayDrawState | null {
-  if (!overlay || !overlay.enabled) {
+  if (!overlay) {
+    lastSubtitleStaticDraw = null;
+    lastSubtitleStaticKey = null;
+    return null;
+  }
+  const enabled = overlay.getEnabled?.() ?? overlay.enabled;
+  if (!enabled) {
     lastSubtitleStaticDraw = null;
     lastSubtitleStaticKey = null;
     return null;

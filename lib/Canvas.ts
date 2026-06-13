@@ -2134,7 +2134,9 @@ export const drawBars = (
   }
 
   // 字幕オーバーレイ（OFF 時は resolve も描画もスキップ）
-  if (settings.subtitleOverlay?.enabled) {
+  const subtitleEnabled =
+    settings.subtitleOverlay?.getEnabled?.() ?? settings.subtitleOverlay?.enabled;
+  if (subtitleEnabled) {
     renderSubtitleOverlayCanvas(ctx, canvasWidth, canvasHeight, settings.subtitleOverlay);
   }
   // タイトル（字幕より手前・OFF 時は resolve も描画もスキップ）
