@@ -144,6 +144,7 @@ import {
   parseSrt,
   DEFAULT_SUBTITLE_STYLE,
   DEFAULT_TITLE_STYLE,
+  EMPTY_SUBTITLE_CUES,
   type SubtitleCue,
   type SubtitleStyle,
   type TitleStyle,
@@ -425,6 +426,8 @@ const Home: NextPage = () => {
   const [subtitleFileName, setSubtitleFileName] = useState<string>("");
   const [subtitleEnabled, setSubtitleEnabled] = useState<boolean>(true);
   const [subtitleCues, setSubtitleCues] = useState<SubtitleCue[]>([]);
+  const subtitleCuesRef = useRef<SubtitleCue[]>([]);
+  const subtitleEnabledRef = useRef(subtitleEnabled);
   const [subtitleStyle, setSubtitleStyle] = useState<SubtitleStyle>(DEFAULT_SUBTITLE_STYLE);
   /** 字幕表示タイミング補正（秒）。プレビュー/録画の描画のみ。永続化しない */
   const [subtitleDisplayTimingOffsetSec, setSubtitleDisplayTimingOffsetSec] = useState<number>(0);
@@ -738,6 +741,12 @@ const Home: NextPage = () => {
   useEffect(() => {
     srtAuthorCuesRef.current = srtAuthorCues;
   }, [srtAuthorCues]);
+  useEffect(() => {
+    subtitleCuesRef.current = subtitleCues;
+  }, [subtitleCues]);
+  useEffect(() => {
+    subtitleEnabledRef.current = subtitleEnabled;
+  }, [subtitleEnabled]);
 
   // 開発者モードフラグ（環境変数で制御）
   const isDeveloperMode =
@@ -3520,7 +3529,8 @@ const Home: NextPage = () => {
       retroEqParams,
       subtitleOverlay: {
         enabled: subtitleEnabled,
-        cues: subtitleCues,
+        cues: EMPTY_SUBTITLE_CUES,
+        getCues: () => (subtitleEnabledRef.current ? subtitleCuesRef.current : EMPTY_SUBTITLE_CUES),
         getCurrentTimeSec: getCurrentPlaybackTimeSec,
         style: subtitleStyle,
         displayTimingOffsetSec: subtitleDisplayTimingOffsetSec,
@@ -3604,7 +3614,6 @@ const Home: NextPage = () => {
     radialSpectrumParams,
     retroEqParams,
     subtitleEnabled,
-    subtitleCues,
     subtitleStyle,
     subtitleDisplayTimingOffsetSec,
     titleEnabled,
@@ -3806,6 +3815,7 @@ const Home: NextPage = () => {
         openSnackBar(t("snackbar.subtitleParseFailed"));
         return;
       }
+      subtitleCuesRef.current = cues;
       setSubtitleCues(cues);
       setSubtitleFileName(file.name);
       setSubtitleEnabled(true);

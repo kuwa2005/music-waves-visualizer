@@ -49,11 +49,15 @@ export const DEFAULT_SUBTITLE_STYLE: SubtitleStyle = {
 export type SubtitleOverlaySettings = {
   enabled: boolean;
   cues: SubtitleCue[];
+  /** 指定時は cues の代わりに毎フレーム呼ぶ（React effect deps から cues を外す用） */
+  getCues?: () => SubtitleCue[];
   getCurrentTimeSec: () => number;
   style: SubtitleStyle;
   /** 表示のみのタイミング補正（秒）。負で早く、正で遅く。SRT データは変更しない */
   displayTimingOffsetSec?: number;
 };
+
+export const EMPTY_SUBTITLE_CUES: SubtitleCue[] = [];
 
 function parseSrtTime(time: string): number {
   const m = time.trim().match(/^(\d{2}):(\d{2}):(\d{2})[,.](\d{3})$/);
@@ -377,7 +381,14 @@ export function resolveSubtitleOverlayDraw(
   canvasHeight: number,
   overlay: SubtitleOverlaySettings | undefined
 ): TextOverlayDrawState | null {
-  if (!overlay || !overlay.enabled || overlay.cues.length === 0) {
+  if (!overlay || !overlay.enabled) {
+    lastSubtitleStaticDraw = null;
+    lastSubtitleStaticKey = null;
+    return null;
+  }
+
+  const cues = overlay.getCues?.() ?? overlay.cues;
+  if (cues.length === 0) {
     lastSubtitleStaticDraw = null;
     lastSubtitleStaticKey = null;
     return null;
@@ -386,7 +397,7 @@ export function resolveSubtitleOverlayDraw(
   const t = overlay.getCurrentTimeSec();
   const offsetSec = overlay.displayTimingOffsetSec ?? 0;
   const tLookup = t - offsetSec;
-  const cue = getActiveCue(overlay.cues, t, offsetSec);
+  const cue = getActiveCue(cues, t, offsetSec);
   if (!cue) {
     lastSubtitleStaticDraw = null;
     lastSubtitleStaticKey = null;
