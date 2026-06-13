@@ -291,6 +291,54 @@ function ensureFftScratch(existing: Uint8Array | null, length: number): Uint8Arr
   return existing;
 }
 
+// 背景2D→テクスチャ用スクラッチ（ギャラリー遷移・screenMotion の毎フレーム描画）
+let bgTempCanvas: HTMLCanvasElement | null = null;
+let bgTempCtx: CanvasRenderingContext2D | null = null;
+let bgTempSize = { width: 0, height: 0 };
+let bgTexUploadSize = { width: 0, height: 0 };
+
+function ensureBgTempCanvas(width: number, height: number): CanvasRenderingContext2D | null {
+  if (!bgTempCanvas || bgTempSize.width !== width || bgTempSize.height !== height) {
+    bgTempCanvas = document.createElement('canvas');
+    bgTempCanvas.width = width;
+    bgTempCanvas.height = height;
+    bgTempSize.width = width;
+    bgTempSize.height = height;
+    bgTempCtx = bgTempCanvas.getContext('2d', {
+      alpha: false,
+      desynchronized: true,
+      willReadFrequently: false,
+    });
+  }
+  return bgTempCtx;
+}
+
+function uploadBgTempCanvasToTexture(
+  ctx: WebGLRendererContext,
+  canvasWidth: number,
+  canvasHeight: number
+): void {
+  if (!bgTempCanvas) return;
+  const { gl } = ctx;
+  if (!ctx.imageTexture) {
+    ctx.imageTexture = gl.createTexture();
+  }
+  gl.bindTexture(gl.TEXTURE_2D, ctx.imageTexture);
+  const sizeUnchanged =
+    bgTexUploadSize.width === canvasWidth && bgTexUploadSize.height === canvasHeight;
+  if (sizeUnchanged) {
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, bgTempCanvas);
+  } else {
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, bgTempCanvas);
+    bgTexUploadSize.width = canvasWidth;
+    bgTexUploadSize.height = canvasHeight;
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  }
+}
+
 /** 再生タイムライン上の画像フェード（スペアナ・エフェクト描画用乗数） */
 let imageTimelineFadeMul = 1;
 
@@ -630,25 +678,10 @@ function drawBackgroundWebGL(
 
   const galleryTransition = peekGalleryImageTransitionFrame();
   if (galleryTransition) {
-    const tempCanvas = document.createElement('canvas');
-    tempCanvas.width = canvasWidth;
-    tempCanvas.height = canvasHeight;
-    const tctx = tempCanvas.getContext('2d', {
-      alpha: false,
-      desynchronized: true,
-      willReadFrequently: false,
-    });
+    const tctx = ensureBgTempCanvas(canvasWidth, canvasHeight);
     if (tctx) {
       drawGalleryBackground(tctx, canvasWidth, canvasHeight, null, galleryTransition);
-      if (!ctx.imageTexture) {
-        ctx.imageTexture = gl.createTexture();
-      }
-      gl.bindTexture(gl.TEXTURE_2D, ctx.imageTexture);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, tempCanvas);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      uploadBgTempCanvasToTexture(ctx, canvasWidth, canvasHeight);
       ctx.imageCache = { image: null, width: -1, height: -1 };
       gl.useProgram(textureProgram);
       if (texResolutionLocation) {
@@ -699,10 +732,7 @@ function drawBackgroundWebGL(
   if (
     shouldUseStillScreenBackgroundPipeline(image, spectrumSettings?.screenMotion, !!bgVideo, !!galleryTransition)
   ) {
-    const tempCanvas = document.createElement('canvas');
-    tempCanvas.width = canvasWidth;
-    tempCanvas.height = canvasHeight;
-    const tctx = tempCanvas.getContext('2d', { alpha: false });
+    const tctx = ensureBgTempCanvas(canvasWidth, canvasHeight);
     if (tctx) {
       drawStillScreenBackground(
         tctx,
@@ -714,15 +744,7 @@ function drawBackgroundWebGL(
         bgAudioReactive,
         spectrumSettings?.getStopGracefulImageFade?.() ?? null
       );
-      if (!ctx.imageTexture) {
-        ctx.imageTexture = gl.createTexture();
-      }
-      gl.bindTexture(gl.TEXTURE_2D, ctx.imageTexture);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, tempCanvas);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      uploadBgTempCanvasToTexture(ctx, canvasWidth, canvasHeight);
       ctx.imageCache = { image, width: canvasWidth, height: canvasHeight };
       gl.useProgram(textureProgram);
       if (texResolutionLocation) {

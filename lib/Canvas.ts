@@ -603,6 +603,16 @@ let fpsLastTime = performance.now();
 let currentFPS = 0;
 let drawBarsLastFrameTime = 0;
 
+// FFT 読み取り用スクラッチ（毎フレームの Uint8Array 確保を避ける）
+let canvasFftBufferScratch: Uint8Array | null = null;
+let canvasFftEffectScratch: Uint8Array | null = null;
+let canvasFftEarlyScratch: Uint8Array | null = null;
+
+function ensureCanvasFftScratch(existing: Uint8Array | null, length: number): Uint8Array {
+  if (!existing || existing.length !== length) return new Uint8Array(length);
+  return existing;
+}
+
 // アニメーションフレームID
 let animationFrameId: number | null = null;
 
@@ -946,8 +956,9 @@ export const drawBars = (
       settings.screenMotion.chorusZoomOnPeak ||
       settings.screenMotion.flashOnDrop)
   ) {
-    const earlyFreq = new Uint8Array(analyser.frequencyBinCount);
-    analyser.getByteFrequencyData(earlyFreq);
+    canvasFftEarlyScratch = ensureCanvasFftScratch(canvasFftEarlyScratch, analyser.frequencyBinCount);
+    analyser.getByteFrequencyData(canvasFftEarlyScratch);
+    const earlyFreq = canvasFftEarlyScratch;
     let bass = 0;
     let volume = 0;
     let highFreq = 0;
@@ -1060,8 +1071,10 @@ export const drawBars = (
   }
 
   const bufferLength = analyser.frequencyBinCount; // analyser.fftSizeの半分になる(1024)
-  const bufferData = new Uint8Array(bufferLength);
-  const freqForEffect = new Uint8Array(bufferLength);
+  canvasFftBufferScratch = ensureCanvasFftScratch(canvasFftBufferScratch, bufferLength);
+  canvasFftEffectScratch = ensureCanvasFftScratch(canvasFftEffectScratch, bufferLength);
+  const bufferData = canvasFftBufferScratch;
+  const freqForEffect = canvasFftEffectScratch;
   const needsSharedFreq =
     (effect &&
       effect.type !== "none" &&
