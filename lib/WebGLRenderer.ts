@@ -281,6 +281,16 @@ let glycoPeak: number[] = [];
 let glycoLastPeakTime: number[] = [];
 let lastGlycoMode = -1;
 
+// FFT 読み取り用スクラッチ（毎フレームの Uint8Array 確保を避ける）
+let fftBufferScratch: Uint8Array | null = null;
+let fftEffectScratch: Uint8Array | null = null;
+let fftEarlyScratch: Uint8Array | null = null;
+
+function ensureFftScratch(existing: Uint8Array | null, length: number): Uint8Array {
+  if (!existing || existing.length !== length) return new Uint8Array(length);
+  return existing;
+}
+
 /** 再生タイムライン上の画像フェード（スペアナ・エフェクト描画用乗数） */
 let imageTimelineFadeMul = 1;
 
@@ -392,11 +402,9 @@ function drawTextOverlaysWebGL(
   const subtitleState = settings?.subtitleOverlay?.enabled
     ? resolveSubtitleOverlayDraw(canvasWidth, canvasHeight, settings.subtitleOverlay)
     : null;
-  const titleState = resolveTitleOverlayDraw(
-    canvasWidth,
-    canvasHeight,
-    settings?.titleOverlay
-  );
+  const titleState = settings?.titleOverlay?.enabled
+    ? resolveTitleOverlayDraw(canvasWidth, canvasHeight, settings.titleOverlay)
+    : null;
   if (!subtitleState && !titleState) return;
 
   if (subtitleState) {
@@ -1411,7 +1419,8 @@ function renderFrame(): void {
     sm &&
     (sm.brightnessOnPeak || sm.shakeOnChorus || sm.chorusZoomOnPeak || sm.flashOnDrop)
   ) {
-    const earlyFreq = new Uint8Array(latestAnalyser.frequencyBinCount);
+    fftEarlyScratch = ensureFftScratch(fftEarlyScratch, latestAnalyser.frequencyBinCount);
+    const earlyFreq = fftEarlyScratch;
     latestAnalyser.getByteFrequencyData(earlyFreq);
     let bass = 0;
     let volume = 0;
@@ -1482,8 +1491,10 @@ function renderFrame(): void {
     };
 
     const bufferLength = analyser.frequencyBinCount;
-    const bufferData = new Uint8Array(bufferLength);
-    const freqForEffect = new Uint8Array(bufferLength);
+    fftBufferScratch = ensureFftScratch(fftBufferScratch, bufferLength);
+    const bufferData = fftBufferScratch;
+    fftEffectScratch = ensureFftScratch(fftEffectScratch, bufferLength);
+    const freqForEffect = fftEffectScratch;
     const needsFreqForEffect =
       latestEffect &&
       [

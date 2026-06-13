@@ -4844,11 +4844,16 @@ const Home: NextPage = () => {
     };
   }, [playSoundDisabled, isPlaySound, isPlaybackFadingOut, audioFileName]);
 
+  // 動画再生時のフェードアウト用（音声のみは上の rAF で十分。二重 tick で毎フレーム再描画しない）
   useEffect(() => {
     if (!isPlaybackFadingOut) return;
+    const video = videoElementRef.current;
+    if (!video) return;
     let raf = 0;
     const loop = () => {
-      setPreviewPlaybackTick((n) => n + 1);
+      if (isPlaybackFadingOutRef.current) {
+        setPreviewPlaybackTick((n) => n + 1);
+      }
       raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);

@@ -1062,9 +1062,31 @@ export const drawBars = (
   const bufferLength = analyser.frequencyBinCount; // analyser.fftSizeの半分になる(1024)
   const bufferData = new Uint8Array(bufferLength);
   const freqForEffect = new Uint8Array(bufferLength);
-  analyser.getByteFrequencyData(freqForEffect);
+  const needsSharedFreq =
+    (effect &&
+      effect.type !== "none" &&
+      [
+        "spaceAudio",
+        "filmGrain",
+        "vignette",
+        "rainbow",
+        "curtain",
+        "glitch",
+        "sparkle",
+        "dust",
+        "rain",
+        "snow",
+        "waterRipple",
+        "mirrorBall",
+        "laser",
+      ].includes(effect.type)) ||
+    mode === 15 ||
+    mode === 16;
+  if (needsSharedFreq) {
+    analyser.getByteFrequencyData(freqForEffect);
+  }
 
-  // 音声メトリクス（エフェクト連動用）: 0〜1正規化（常に周波数データを使用）
+  // 音声メトリクス（エフェクト連動用）: 0〜1正規化
   const getAudioReactive = (): AudioReactiveData => {
     let bass = 0, volume = 0, highFreq = 0;
     for (let i = 0; i < 16; i++) bass += freqForEffect[i];
@@ -2115,8 +2137,10 @@ export const drawBars = (
   if (settings.subtitleOverlay?.enabled) {
     renderSubtitleOverlayCanvas(ctx, canvasWidth, canvasHeight, settings.subtitleOverlay);
   }
-  // タイトル（字幕より手前）
-  renderTitleOverlayCanvas(ctx, canvasWidth, canvasHeight, settings.titleOverlay);
+  // タイトル（字幕より手前・OFF 時は resolve も描画もスキップ）
+  if (settings.titleOverlay?.enabled) {
+    renderTitleOverlayCanvas(ctx, canvasWidth, canvasHeight, settings.titleOverlay);
+  }
 
   // FPS測定
   fpsCounter++;
