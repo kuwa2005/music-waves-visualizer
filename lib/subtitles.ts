@@ -2,6 +2,10 @@ export type SubtitleCue = {
   startSec: number;
   endSec: number;
   text: string;
+  /** parse 時に付与（レイヤーキー用・内部） */
+  layerKeyStem?: string;
+  /** parse 時に付与（行分割済み・内部） */
+  lines?: string[];
 };
 
 export type SubtitleDisplayType = "plain" | "outline" | "boxed";
@@ -72,6 +76,20 @@ function parseSrtTime(time: string): number {
 }
 
 const PARSE_SRT_YIELD_EVERY = 32;
+const PARSE_SRT_STREAMING_MIN_CHARS = 8000;
+
+function yieldToMain(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+function enrichParsedCue(cue: SubtitleCue): SubtitleCue {
+  const lines = cue.text.split("\n").filter(Boolean);
+  return {
+    ...cue,
+    lines,
+    layerKeyStem: `${cue.startSec}\0${cue.endSec}\0${cue.text}`,
+  };
+}
 
 function parseSrtBlock(block: string): SubtitleCue | null {
   const lines = block.split("\n").map((l) => l.trimEnd());
@@ -92,7 +110,79 @@ function parseSrtBlock(block: string): SubtitleCue | null {
     .replace(/<[^>]*>/g, "")
     .trim();
   if (!body) return null;
-  return { startSec, endSec, text: body };
+  return enrichParsedCue({ startSec, endSec, text: body });
+}
+
+function flushSrtBlockLines(blockLines: string[], cues: SubtitleCue[]): boolean {
+  if (blockLines.length === 0) return false;
+  const block = blockLines.join("\n").trim();
+  blockLines.length = 0;
+  if (!block) return false;
+  const cue = parseSrtBlock(block);
+  if (cue) cues.push(cue);
+  return true;
+}
+
+async function parseSrtStreaming(srtText: string): Promise<SubtitleCue[]> {
+  const cues: SubtitleCue[] = [];
+  const len = srtText.length;
+  let lineStart = 0;
+  const blockLines: string[] = [];
+  let blocksParsed = 0;
+
+  const finishLine = (lineEnd: number): void => {
+    let line = srtText.slice(lineStart, lineEnd);
+    if (line.endsWith("\r")) line = line.slice(0, -1);
+    if (line.trim() === "") {
+      if (flushSrtBlockLines(blockLines, cues)) {
+        blocksParsed++;
+      }
+    } else {
+      blockLines.push(line);
+    }
+  };
+
+  for (let i = 0; i < len; i++) {
+    const ch = srtText[i];
+    if (ch === "\n") {
+      finishLine(i);
+      lineStart = i + 1;
+      if (blocksParsed > 0 && blocksParsed % PARSE_SRT_YIELD_EVERY === 0) {
+        await yieldToMain();
+      }
+    } else if (ch === "\r") {
+      if (i + 1 < len && srtText[i + 1] === "\n") {
+        finishLine(i);
+        i++;
+        lineStart = i + 1;
+        if (blocksParsed > 0 && blocksParsed % PARSE_SRT_YIELD_EVERY === 0) {
+          await yieldToMain();
+        }
+      } else {
+        finishLine(i);
+        lineStart = i + 1;
+      }
+    }
+  }
+
+  if (lineStart < len) {
+    let tail = srtText.slice(lineStart);
+    if (tail.endsWith("\r")) tail = tail.slice(0, -1);
+    if (tail.trim() === "") {
+      flushSrtBlockLines(blockLines, cues);
+    } else {
+      blockLines.push(tail);
+      flushSrtBlockLines(blockLines, cues);
+    }
+  } else {
+    flushSrtBlockLines(blockLines, cues);
+  }
+
+  if (cues.length > 1) {
+    await yieldToMain();
+    cues.sort((a, b) => a.startSec - b.startSec);
+  }
+  return cues;
 }
 
 export function parseSrt(srtText: string): SubtitleCue[] {
@@ -107,23 +197,13 @@ export function parseSrt(srtText: string): SubtitleCue[] {
   return cues;
 }
 
-/** 大きな SRT はメインスレッドをブロックしないようチャンク単位で yield する */
+/** 大きな SRT はメインスレッドをブロックしないよう行走査＋定期 yield で解析する */
 export async function parseSrtAsync(srtText: string): Promise<SubtitleCue[]> {
-  const text = srtText.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-  const blocks = text.split(/\n{2,}/g).map((b) => b.trim()).filter(Boolean);
-  if (blocks.length <= PARSE_SRT_YIELD_EVERY * 2) {
+  await yieldToMain();
+  if (srtText.length < PARSE_SRT_STREAMING_MIN_CHARS) {
     return parseSrt(srtText);
   }
-  const cues: SubtitleCue[] = [];
-  for (let i = 0; i < blocks.length; i++) {
-    const cue = parseSrtBlock(blocks[i]);
-    if (cue) cues.push(cue);
-    if (i > 0 && i % PARSE_SRT_YIELD_EVERY === 0) {
-      await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    }
-  }
-  cues.sort((a, b) => a.startSec - b.startSec);
-  return cues;
+  return parseSrtStreaming(srtText);
 }
 
 let lastCueSearchHint = 0;
@@ -234,6 +314,17 @@ export type TextOverlayDrawState = {
 
 const DEBUG_SUBTITLES = false;
 
+export type SubtitlePerfMetrics = {
+  layerBuildMs: number;
+  prefetchBuildMs: number;
+};
+
+let subtitlePerfMetrics: SubtitlePerfMetrics = { layerBuildMs: 0, prefetchBuildMs: 0 };
+
+export function getSubtitlePerfMetrics(): SubtitlePerfMetrics {
+  return { ...subtitlePerfMetrics };
+}
+
 let subtitleLayerCache: TextOverlayLayer | null = null;
 let titleLayerCache: TextOverlayLayer | null = null;
 let subtitlePrefetchLayer: TextOverlayLayer | null = null;
@@ -241,9 +332,43 @@ let subtitlePrefetchKey: string | null = null;
 let lastSubtitleStaticDraw: TextOverlayDrawState | null = null;
 let lastSubtitleStaticKey: string | null = null;
 
+let lastScheduledPrefetchCueIdx = -1;
+let subtitlePrefetchIdleHandle: ReturnType<typeof setTimeout> | number | null = null;
+type SubtitlePrefetchJob = {
+  cues: SubtitleCue[];
+  cueIdx: number;
+  style: SubtitleStyle;
+  canvasWidth: number;
+  canvasHeight: number;
+};
+let pendingSubtitlePrefetchJob: SubtitlePrefetchJob | null = null;
+
+function scheduleIdleWork(fn: () => void): ReturnType<typeof setTimeout> | number {
+  if (typeof requestIdleCallback !== "undefined") {
+    return requestIdleCallback(fn, { timeout: 120 });
+  }
+  return setTimeout(fn, 0);
+}
+
+function cancelIdleWork(handle: ReturnType<typeof setTimeout> | number | null): void {
+  if (handle == null) return;
+  if (typeof cancelIdleCallback !== "undefined" && typeof handle === "number") {
+    cancelIdleCallback(handle);
+  } else {
+    clearTimeout(handle as ReturnType<typeof setTimeout>);
+  }
+}
+
+function cancelSubtitlePrefetchSchedule(): void {
+  cancelIdleWork(subtitlePrefetchIdleHandle);
+  subtitlePrefetchIdleHandle = null;
+  pendingSubtitlePrefetchJob = null;
+}
+
 const cueLinesCache = new WeakMap<SubtitleCue, string[]>();
 
 function getCueLines(cue: SubtitleCue): string[] {
+  if (cue.lines && cue.lines.length > 0) return cue.lines;
   let lines = cueLinesCache.get(cue);
   if (!lines) {
     lines = cue.text.split("\n").filter(Boolean);
@@ -271,6 +396,8 @@ export function clearTextOverlayCaches(): void {
   lastSubtitleStaticDraw = null;
   lastSubtitleStaticKey = null;
   lastCueSearchHint = 0;
+  lastScheduledPrefetchCueIdx = -1;
+  cancelSubtitlePrefetchSchedule();
 }
 
 function buildSubtitleLayerKey(
@@ -279,12 +406,11 @@ function buildSubtitleLayerKey(
   cue: SubtitleCue,
   style: SubtitleStyle
 ): string {
+  const stem = cue.layerKeyStem ?? `${cue.startSec}\0${cue.endSec}\0${cue.text}`;
   return [
     canvasWidth,
     canvasHeight,
-    cue.startSec,
-    cue.endSec,
-    cue.text,
+    stem,
     styleToCacheKey(style),
   ].join("\0");
 }
@@ -308,15 +434,48 @@ function resolveSubtitleLayer(
   }
   const t0 = DEBUG_SUBTITLES ? performance.now() : 0;
   const layer = buildTextOverlayLayer(layerKey, lines, style, canvasWidth, canvasHeight);
-  if (DEBUG_SUBTITLES && layer) {
-    console.log("[Subtitles] layer build ms", (performance.now() - t0).toFixed(2));
+  if (layer) {
+    const ms = performance.now() - t0;
+    subtitlePerfMetrics.layerBuildMs = ms;
+    if (DEBUG_SUBTITLES) {
+      console.log("[Subtitles] layer build ms", ms.toFixed(2));
+    }
   }
   if (!layer) return null;
   subtitleLayerCache = layer;
   return layer;
 }
 
-function prefetchNextSubtitleLayer(
+function runSubtitlePrefetchBuild(job: SubtitlePrefetchJob): void {
+  const nextIdx = job.cueIdx + 1;
+  if (nextIdx >= job.cues.length) return;
+  const nextCue = job.cues[nextIdx];
+  const prefetchKey = buildSubtitleLayerKey(
+    job.canvasWidth,
+    job.canvasHeight,
+    nextCue,
+    job.style
+  );
+  if (subtitlePrefetchKey === prefetchKey && subtitlePrefetchLayer) return;
+  const lines = getCueLines(nextCue);
+  if (lines.length === 0) return;
+  const t0 = DEBUG_SUBTITLES ? performance.now() : 0;
+  subtitlePrefetchLayer = buildTextOverlayLayer(
+    prefetchKey,
+    lines,
+    job.style,
+    job.canvasWidth,
+    job.canvasHeight
+  );
+  subtitlePrefetchKey = prefetchKey;
+  const ms = performance.now() - t0;
+  subtitlePerfMetrics.prefetchBuildMs = ms;
+  if (DEBUG_SUBTITLES && subtitlePrefetchLayer) {
+    console.log("[Subtitles] prefetch layer build ms", ms.toFixed(2));
+  }
+}
+
+function scheduleSubtitlePrefetch(
   cues: SubtitleCue[],
   currentCueIdx: number,
   style: SubtitleStyle,
@@ -325,23 +484,53 @@ function prefetchNextSubtitleLayer(
 ): void {
   const nextIdx = currentCueIdx + 1;
   if (nextIdx >= cues.length) return;
+  if (lastScheduledPrefetchCueIdx === nextIdx) return;
+
   const nextCue = cues[nextIdx];
   const prefetchKey = buildSubtitleLayerKey(canvasWidth, canvasHeight, nextCue, style);
-  if (subtitlePrefetchKey === prefetchKey && subtitlePrefetchLayer) return;
-  const lines = getCueLines(nextCue);
-  if (lines.length === 0) return;
-  const t0 = DEBUG_SUBTITLES ? performance.now() : 0;
-  subtitlePrefetchLayer = buildTextOverlayLayer(
-    prefetchKey,
-    lines,
+  if (subtitlePrefetchKey === prefetchKey && subtitlePrefetchLayer) {
+    lastScheduledPrefetchCueIdx = nextIdx;
+    return;
+  }
+
+  lastScheduledPrefetchCueIdx = nextIdx;
+  pendingSubtitlePrefetchJob = {
+    cues,
+    cueIdx: currentCueIdx,
     style,
     canvasWidth,
-    canvasHeight
-  );
-  subtitlePrefetchKey = prefetchKey;
-  if (DEBUG_SUBTITLES && subtitlePrefetchLayer) {
-    console.log("[Subtitles] prefetch layer build ms", (performance.now() - t0).toFixed(2));
-  }
+    canvasHeight,
+  };
+
+  if (subtitlePrefetchIdleHandle != null) return;
+
+  subtitlePrefetchIdleHandle = scheduleIdleWork(() => {
+    subtitlePrefetchIdleHandle = null;
+    const job = pendingSubtitlePrefetchJob;
+    pendingSubtitlePrefetchJob = null;
+    if (!job) return;
+    runSubtitlePrefetchBuild(job);
+  });
+}
+
+/** 再生開始時に先頭付近の次キューを先行プリフェッチする */
+export function primeSubtitlePrefetch(
+  canvasWidth: number,
+  canvasHeight: number,
+  overlay: SubtitleOverlaySettings | undefined
+): void {
+  if (!overlay || canvasWidth <= 0 || canvasHeight <= 0) return;
+  const enabled = overlay.getEnabled?.() ?? overlay.enabled;
+  if (!enabled) return;
+  const cues = overlay.getCues?.() ?? overlay.cues;
+  if (cues.length === 0) return;
+
+  const t = overlay.getCurrentTimeSec();
+  const offsetSec = overlay.displayTimingOffsetSec ?? 0;
+  const cue = getActiveCue(cues, t, offsetSec);
+  const idx = cue ? lastCueSearchHint : 0;
+  lastScheduledPrefetchCueIdx = -1;
+  scheduleSubtitlePrefetch(cues, idx, overlay.style, canvasWidth, canvasHeight);
 }
 
 /** WebGL 側が次キューのテクスチャを先行アップロードする用 */
@@ -548,7 +737,7 @@ export function resolveSubtitleOverlayDraw(
 
   if (style.animationType === "none") {
     if (lastSubtitleStaticKey === layerKey && lastSubtitleStaticDraw) {
-      prefetchNextSubtitleLayer(cues, lastCueSearchHint, style, canvasWidth, canvasHeight);
+      scheduleSubtitlePrefetch(cues, lastCueSearchHint, style, canvasWidth, canvasHeight);
       return lastSubtitleStaticDraw;
     }
     const layer = resolveSubtitleLayer(layerKey, lines, style, canvasWidth, canvasHeight);
@@ -556,7 +745,7 @@ export function resolveSubtitleOverlayDraw(
     const state: TextOverlayDrawState = { layer, alpha: 1, dy: 0, scale: 1 };
     lastSubtitleStaticKey = layerKey;
     lastSubtitleStaticDraw = state;
-    prefetchNextSubtitleLayer(cues, lastCueSearchHint, style, canvasWidth, canvasHeight);
+    scheduleSubtitlePrefetch(cues, lastCueSearchHint, style, canvasWidth, canvasHeight);
     return state;
   }
 
@@ -565,7 +754,7 @@ export function resolveSubtitleOverlayDraw(
 
   const layer = resolveSubtitleLayer(layerKey, lines, style, canvasWidth, canvasHeight);
   if (!layer) return null;
-  prefetchNextSubtitleLayer(cues, lastCueSearchHint, style, canvasWidth, canvasHeight);
+  scheduleSubtitlePrefetch(cues, lastCueSearchHint, style, canvasWidth, canvasHeight);
   return { layer, ...anim };
 }
 

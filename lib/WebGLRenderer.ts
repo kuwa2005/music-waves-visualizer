@@ -352,6 +352,32 @@ function fadeAlpha(a: number): number {
 // デバッグログ用フラグ
 const DEBUG_WEBGL = false;
 
+let lastSubtitleTextureUploadMs = 0;
+
+export function getSubtitleTextureUploadMs(): number {
+  return lastSubtitleTextureUploadMs;
+}
+
+function scheduleIdleWork(fn: () => void): ReturnType<typeof setTimeout> | number {
+  if (typeof requestIdleCallback !== "undefined") {
+    return requestIdleCallback(fn, { timeout: 120 });
+  }
+  return setTimeout(fn, 0);
+}
+
+function cancelIdleWork(handle: ReturnType<typeof setTimeout> | number | null): void {
+  if (handle == null) return;
+  if (typeof cancelIdleCallback !== "undefined" && typeof handle === "number") {
+    cancelIdleCallback(handle);
+  } else {
+    clearTimeout(handle as ReturnType<typeof setTimeout>);
+  }
+}
+
+let pendingSubtitlePrefetchUpload: TextOverlayLayer | null = null;
+let subtitleUploadIdleHandle: ReturnType<typeof setTimeout> | number | null = null;
+let lastScheduledPrefetchUploadCanvas: HTMLCanvasElement | null = null;
+
 function debugLog(message: string, data?: any) {
   if (DEBUG_WEBGL) {
     if (data !== undefined) {
@@ -414,7 +440,7 @@ function uploadTextOverlayCanvasToSlot(
   const w = canvas.width;
   const h = canvas.height;
   const sizeUnchanged = sizeState.width === w && sizeState.height === h;
-  const t0 = DEBUG_WEBGL ? performance.now() : 0;
+  const t0 = performance.now();
   if (sizeUnchanged) {
     gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, canvas);
   } else {
@@ -426,10 +452,12 @@ function uploadTextOverlayCanvasToSlot(
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
   }
+  const uploadMs = performance.now() - t0;
+  lastSubtitleTextureUploadMs = uploadMs;
   if (DEBUG_WEBGL) {
     debugLog('text overlay texture upload ms', {
       slotIdx,
-      ms: (performance.now() - t0).toFixed(2),
+      ms: uploadMs.toFixed(2),
       subImage: sizeUnchanged,
     });
   }
@@ -462,6 +490,38 @@ function prefetchTextOverlayTextureUpload(
   const inactiveIdx = (1 - texState.activeSlot) as TextOverlayTexSlotIdx;
   if (texState.sources[inactiveIdx] === layer.canvas) return;
   uploadTextOverlayCanvasToSlot(gl, texState, inactiveIdx, layer.canvas);
+}
+
+function schedulePrefetchTextOverlayTextureUpload(
+  gl: WebGLRenderingContext,
+  texState: TextOverlayTexSlotState,
+  layer: TextOverlayLayer
+): void {
+  const inactiveIdx = (1 - texState.activeSlot) as TextOverlayTexSlotIdx;
+  if (texState.sources[inactiveIdx] === layer.canvas) return;
+  if (
+    lastScheduledPrefetchUploadCanvas === layer.canvas &&
+    (subtitleUploadIdleHandle != null || pendingSubtitlePrefetchUpload?.canvas === layer.canvas)
+  ) {
+    return;
+  }
+  lastScheduledPrefetchUploadCanvas = layer.canvas;
+  pendingSubtitlePrefetchUpload = layer;
+  if (subtitleUploadIdleHandle != null) return;
+  subtitleUploadIdleHandle = scheduleIdleWork(() => {
+    subtitleUploadIdleHandle = null;
+    const pending = pendingSubtitlePrefetchUpload;
+    pendingSubtitlePrefetchUpload = null;
+    if (!pending) return;
+    prefetchTextOverlayTextureUpload(gl, texState, pending);
+  });
+}
+
+function cancelSubtitlePrefetchTextureUpload(): void {
+  cancelIdleWork(subtitleUploadIdleHandle);
+  subtitleUploadIdleHandle = null;
+  pendingSubtitlePrefetchUpload = null;
+  lastScheduledPrefetchUploadCanvas = null;
 }
 
 function resetTextOverlayTexState(gl: WebGLRenderingContext, texState: TextOverlayTexSlotState): void {
@@ -568,7 +628,7 @@ function drawTextOverlaysWebGL(
 
   const prefetchLayer = getSubtitlePrefetchLayer();
   if (prefetchLayer) {
-    prefetchTextOverlayTextureUpload(ctx.gl, subtitleOverlayTexState, prefetchLayer);
+    schedulePrefetchTextOverlayTextureUpload(ctx.gl, subtitleOverlayTexState, prefetchLayer);
   }
 
   if (!subtitleState && !titleState) return;
@@ -3337,6 +3397,7 @@ function deleteOverlayTextures(ctx: WebGLRendererContext): void {
 }
 
 export function clearWebGLImageCache(): void {
+  cancelSubtitlePrefetchTextureUpload();
   if (glContext) {
     if (glContext.imageTexture) {
       glContext.gl.deleteTexture(glContext.imageTexture);
