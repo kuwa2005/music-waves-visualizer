@@ -81,7 +81,7 @@ import {
   isValidGalleryTransitionUserMode,
   type GalleryTransitionUserMode,
 } from "../lib/galleryImageTransition";
-import { drawBarsWebGL, getFPSWebGL, getSubtitleTextureUploadMs, cleanupWebGL, stopWebGLAnimation, clearWebGLImageCache, clearWebGLSubtitleOverlayCache } from "../lib/WebGLRenderer";
+import { drawBarsWebGL, getFPSWebGL, getSubtitleTextureUploadMs, getTitleTextureUploadMs, cleanupWebGL, stopWebGLAnimation, clearWebGLImageCache, clearWebGLSubtitleOverlayCache } from "../lib/WebGLRenderer";
 import {
   getSpectrumPivotOverlayPercent,
   getSpaceCenterOverlayPercent,
@@ -447,6 +447,7 @@ const Home: NextPage = () => {
     layerBuildMs: 0,
     prefetchBuildMs: 0,
     textureUploadMs: 0,
+    titleTextureUploadMs: 0,
   });
   const [isRecording, setIsRecording] = useState<boolean>(false);
   const isRecordingRef = useRef(false);
@@ -3626,11 +3627,13 @@ const Home: NextPage = () => {
       setFps((prev) => (prev === nextFps ? prev : nextFps));
       const subtitleMetrics = getSubtitlePerfMetrics();
       const textureUploadMs = rendererType === "webgl" ? getSubtitleTextureUploadMs() : 0;
+      const titleTextureUploadMs = rendererType === "webgl" ? getTitleTextureUploadMs() : 0;
       setSubtitlePerfMetrics((prev) => {
         if (
           prev.layerBuildMs === subtitleMetrics.layerBuildMs &&
           prev.prefetchBuildMs === subtitleMetrics.prefetchBuildMs &&
-          prev.textureUploadMs === textureUploadMs
+          prev.textureUploadMs === textureUploadMs &&
+          prev.titleTextureUploadMs === titleTextureUploadMs
         ) {
           return prev;
         }
@@ -3638,6 +3641,7 @@ const Home: NextPage = () => {
           layerBuildMs: subtitleMetrics.layerBuildMs,
           prefetchBuildMs: subtitleMetrics.prefetchBuildMs,
           textureUploadMs,
+          titleTextureUploadMs,
         };
       });
     }, 1000);
@@ -4420,13 +4424,13 @@ const Home: NextPage = () => {
   }, [audioFileName, openSnackBar, srtAuthorGlobalOffsetMs, t]);
 
   const srtAuthorApplyToPreview = useCallback(async () => {
-    const seq = ++loadSubtitleSeqRef.current;
     const shifted = shiftCuesBySeconds(srtAuthorCuesRef.current, srtAuthorGlobalOffsetMs / 1000);
     const body = formatSrtFromCues(shifted);
     if (!body.trim()) {
       openSnackBar(t("snackbar.subtitleAuthorExportEmpty"));
       return;
     }
+    const seq = ++loadSubtitleSeqRef.current;
     const cues = await parseSrtAsync(body);
     if (seq !== loadSubtitleSeqRef.current) return;
     if (cues.length === 0) {
@@ -5328,6 +5332,7 @@ const Home: NextPage = () => {
 
   // クリア（ページロード時の状態に戻す）
   const onClear = () => {
+    ++loadSubtitleSeqRef.current;
     clearPlaybackWindowTimer();
     clearPlaybackStopFinalizeTimer();
     playbackStopGracefulRef.current = null;
@@ -5379,7 +5384,6 @@ const Home: NextPage = () => {
     }
     clearImageCache();
     clearWebGLImageCache();
-    invalidateSubtitleCaches();
     setImageGallery((prev) => {
       prev.forEach((p) => URL.revokeObjectURL(p.objectUrl));
       return [];
@@ -8879,9 +8883,14 @@ const Home: NextPage = () => {
                       字幕プリフェッチ: <strong>{subtitlePerfMetrics.prefetchBuildMs.toFixed(2)} ms</strong>
                     </Typography>
                     {rendererType === "webgl" && (
-                      <Typography variant="body2" color="textSecondary">
-                        字幕テクスチャUP: <strong>{subtitlePerfMetrics.textureUploadMs.toFixed(2)} ms</strong>
-                      </Typography>
+                      <>
+                        <Typography variant="body2" color="textSecondary">
+                          字幕テクスチャUP: <strong>{subtitlePerfMetrics.textureUploadMs.toFixed(2)} ms</strong>
+                        </Typography>
+                        <Typography variant="body2" color="textSecondary">
+                          タイトルテクスチャUP: <strong>{subtitlePerfMetrics.titleTextureUploadMs.toFixed(2)} ms</strong>
+                        </Typography>
+                      </>
                     )}
                   </Box>
                 )}

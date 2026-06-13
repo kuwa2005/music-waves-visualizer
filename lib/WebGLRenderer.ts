@@ -3380,6 +3380,7 @@ export function getFPSWebGL(): number {
  */
 export function stopWebGLAnimation(): void {
   debugLog('stopWebGLAnimation called', { wasAnimating: isAnimating });
+  cancelSubtitlePrefetchTextureUpload();
   if (animationFrameId !== null) {
     cancelAnimationFrame(animationFrameId);
     animationFrameId = null;
