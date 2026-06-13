@@ -42,6 +42,7 @@ import {
   getWaterRippleArcSegments,
   getWaterRippleHeartSteps,
   densityToWaterRippleIntensity,
+  type WaterRippleDrawGl,
   updateAndGetSnowParticles,
   buildMirrorBallFrame,
   type EffectParams,
@@ -1225,6 +1226,146 @@ function drawLine(
   gl.drawArrays(gl.TRIANGLES, 0, 6);
 }
 
+const lineBatchPositionsScratch: number[] = [];
+const lineBatchColorsScratch: number[] = [];
+
+function resetLineBatch(): void {
+  lineBatchPositionsScratch.length = 0;
+  lineBatchColorsScratch.length = 0;
+}
+
+function addLineToBatch(
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  r: number,
+  g: number,
+  b: number,
+  a: number,
+  lineWidth: number = 2
+): void {
+  const aFade = fadeAlpha(a);
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const len = Math.sqrt(dx * dx + dy * dy);
+  if (len === 0) return;
+
+  const nx = -dy / len;
+  const ny = dx / len;
+  const hw = lineWidth / 2;
+
+  lineBatchPositionsScratch.push(
+    x1 + nx * hw,
+    y1 + ny * hw,
+    x2 + nx * hw,
+    y2 + ny * hw,
+    x1 - nx * hw,
+    y1 - ny * hw,
+    x1 - nx * hw,
+    y1 - ny * hw,
+    x2 + nx * hw,
+    y2 + ny * hw,
+    x2 - nx * hw,
+    y2 - ny * hw
+  );
+  for (let i = 0; i < 6; i++) {
+    lineBatchColorsScratch.push(r, g, b, aFade);
+  }
+}
+
+function flushLineBatch(ctx: WebGLRendererContext): void {
+  const vertexCount = lineBatchPositionsScratch.length / 2;
+  if (vertexCount === 0) return;
+
+  const { gl, positionBuffer, colorBuffer, positionLocation, colorLocation } = ctx;
+  gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(lineBatchPositionsScratch), gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(positionLocation);
+  gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
+
+  gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(lineBatchColorsScratch), gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(colorLocation);
+  gl.vertexAttribPointer(colorLocation, 4, gl.FLOAT, false, 0, 0);
+
+  gl.drawArrays(gl.TRIANGLES, 0, vertexCount);
+}
+
+function drawWaterRippleWebGL(
+  ctx: WebGLRendererContext,
+  draws: WaterRippleDrawGl[],
+  wrLightMode: boolean,
+  effectDucking: number
+): void {
+  resetLineBatch();
+  for (const d of draws) {
+    const rr = d.r / 255;
+    const gg = d.g / 255;
+    const bb = d.b / 255;
+    const aa = d.a * effectDucking;
+    if (aa < 0.012) continue;
+    const lw = d.lw;
+    if (d.kind === "firework") {
+      addLineToBatch(d.x1, d.y1, d.x2, d.y2, rr, gg, bb, aa, lw);
+      continue;
+    }
+    if (d.kind === "heart") {
+      const s = Math.max(3, d.scale);
+      const steps = getWaterRippleHeartSteps(wrLightMode);
+      const cosR = Math.cos(d.rotation);
+      const sinR = Math.sin(d.rotation);
+      let prevPx = 0;
+      let prevPy = 0;
+      for (let i = 0; i <= steps; i++) {
+        const t = (Math.PI * 2 * i) / steps;
+        const hx = 16 * Math.pow(Math.sin(t), 3);
+        const hy =
+          13 * Math.cos(t) -
+          5 * Math.cos(2 * t) -
+          2 * Math.cos(3 * t) -
+          Math.cos(4 * t);
+        const px = (hx / 18) * s;
+        const py = (-hy / 18) * s;
+        const rx = px * cosR - py * sinR;
+        const ry = px * sinR + py * cosR;
+        const x = d.x + rx;
+        const y = d.y + ry;
+        if (i > 0) {
+          addLineToBatch(prevPx, prevPy, x, y, rr, gg, bb, aa, lw);
+        }
+        prevPx = x;
+        prevPy = y;
+      }
+      continue;
+    }
+    if (d.radius < 0.45) continue;
+    const segments = getWaterRippleArcSegments(d.radius, wrLightMode);
+    const step = (Math.PI * 2) / segments;
+    let prevCos = 1;
+    let prevSin = 0;
+    for (let i = 0; i < segments; i++) {
+      const a2 = (i + 1) * step;
+      const nextCos = Math.cos(a2);
+      const nextSin = Math.sin(a2);
+      addLineToBatch(
+        d.x + prevCos * d.radius,
+        d.y + prevSin * d.radius,
+        d.x + nextCos * d.radius,
+        d.y + nextSin * d.radius,
+        rr,
+        gg,
+        bb,
+        aa,
+        lw
+      );
+      prevCos = nextCos;
+      prevSin = nextSin;
+    }
+  }
+  flushLineBatch(ctx);
+}
+
 /**
  * きらきら: ＋ / X / ＊（8方向）を線で描画。
  * lineWidthMul / alphaMul で外側の淡いストローク用に再利用。
@@ -1861,80 +2002,7 @@ function renderFrame(): void {
         latestEffect.waterRippleAudioSensitivity ?? 0
       );
       gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
-      for (const d of draws) {
-        const rr = d.r / 255;
-        const gg = d.g / 255;
-        const bb = d.b / 255;
-        const aa = d.a * effectDucking;
-        if (aa < 0.012) continue;
-        const lw = d.lw;
-        if (d.kind === "firework") {
-          drawLine(
-            glContext,
-            d.x1,
-            d.y1,
-            d.x2,
-            d.y2,
-            rr,
-            gg,
-            bb,
-            aa,
-            lw
-          );
-          continue;
-        }
-        if (d.kind === "heart") {
-          const s = Math.max(3, d.scale);
-          const heartPts: Array<[number, number]> = [];
-          const steps = getWaterRippleHeartSteps(wrLightMode);
-          const cosR = Math.cos(d.rotation);
-          const sinR = Math.sin(d.rotation);
-          for (let i = 0; i <= steps; i++) {
-            const t = (Math.PI * 2 * i) / steps;
-            const hx = 16 * Math.pow(Math.sin(t), 3);
-            const hy =
-              13 * Math.cos(t) -
-              5 * Math.cos(2 * t) -
-              2 * Math.cos(3 * t) -
-              Math.cos(4 * t);
-            const px = (hx / 18) * s;
-            const py = (-hy / 18) * s;
-            const rx = px * cosR - py * sinR;
-            const ry = px * sinR + py * cosR;
-            heartPts.push([d.x + rx, d.y + ry]);
-          }
-          for (let i = 0; i < heartPts.length - 1; i++) {
-            const p1 = heartPts[i];
-            const p2 = heartPts[i + 1];
-            drawLine(glContext, p1[0], p1[1], p2[0], p2[1], rr, gg, bb, aa, lw);
-          }
-          continue;
-        }
-        if (d.radius < 0.45) continue;
-        const segments = getWaterRippleArcSegments(d.radius, wrLightMode);
-        const step = (Math.PI * 2) / segments;
-        let prevCos = 1;
-        let prevSin = 0;
-        for (let i = 0; i < segments; i++) {
-          const a2 = (i + 1) * step;
-          const nextCos = Math.cos(a2);
-          const nextSin = Math.sin(a2);
-          drawLine(
-            glContext,
-            d.x + prevCos * d.radius,
-            d.y + prevSin * d.radius,
-            d.x + nextCos * d.radius,
-            d.y + nextSin * d.radius,
-            rr,
-            gg,
-            bb,
-            aa,
-            lw
-          );
-          prevCos = nextCos;
-          prevSin = nextSin;
-        }
-      }
+      drawWaterRippleWebGL(glContext, draws, wrLightMode, effectDucking);
       gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     } else if (latestEffect.type === "scanlines") {
       const strength = DENSITY_STRENGTH[latestEffect.density];
