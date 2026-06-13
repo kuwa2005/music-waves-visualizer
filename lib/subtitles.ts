@@ -130,34 +130,30 @@ async function parseSrtStreaming(srtText: string): Promise<SubtitleCue[]> {
   const blockLines: string[] = [];
   let blocksParsed = 0;
 
-  const finishLine = (lineEnd: number): void => {
+  const finishLine = (lineEnd: number): boolean => {
     let line = srtText.slice(lineStart, lineEnd);
     if (line.endsWith("\r")) line = line.slice(0, -1);
     if (line.trim() === "") {
       if (flushSrtBlockLines(blockLines, cues)) {
         blocksParsed++;
+        return blocksParsed % PARSE_SRT_YIELD_EVERY === 0;
       }
     } else {
       blockLines.push(line);
     }
+    return false;
   };
 
   for (let i = 0; i < len; i++) {
     const ch = srtText[i];
     if (ch === "\n") {
-      finishLine(i);
+      if (finishLine(i)) await yieldToMain();
       lineStart = i + 1;
-      if (blocksParsed > 0 && blocksParsed % PARSE_SRT_YIELD_EVERY === 0) {
-        await yieldToMain();
-      }
     } else if (ch === "\r") {
       if (i + 1 < len && srtText[i + 1] === "\n") {
-        finishLine(i);
+        if (finishLine(i)) await yieldToMain();
         i++;
         lineStart = i + 1;
-        if (blocksParsed > 0 && blocksParsed % PARSE_SRT_YIELD_EVERY === 0) {
-          await yieldToMain();
-        }
       } else {
         finishLine(i);
         lineStart = i + 1;
@@ -332,7 +328,7 @@ let subtitlePrefetchKey: string | null = null;
 let lastSubtitleStaticDraw: TextOverlayDrawState | null = null;
 let lastSubtitleStaticKey: string | null = null;
 
-let lastScheduledPrefetchCueIdx = -1;
+let lastScheduledPrefetchKey: string | null = null;
 let subtitlePrefetchIdleHandle: ReturnType<typeof setTimeout> | number | null = null;
 type SubtitlePrefetchJob = {
   cues: SubtitleCue[];
@@ -396,7 +392,7 @@ export function clearTextOverlayCaches(): void {
   lastSubtitleStaticDraw = null;
   lastSubtitleStaticKey = null;
   lastCueSearchHint = 0;
-  lastScheduledPrefetchCueIdx = -1;
+  lastScheduledPrefetchKey = null;
   cancelSubtitlePrefetchSchedule();
 }
 
@@ -484,16 +480,16 @@ function scheduleSubtitlePrefetch(
 ): void {
   const nextIdx = currentCueIdx + 1;
   if (nextIdx >= cues.length) return;
-  if (lastScheduledPrefetchCueIdx === nextIdx) return;
 
   const nextCue = cues[nextIdx];
   const prefetchKey = buildSubtitleLayerKey(canvasWidth, canvasHeight, nextCue, style);
   if (subtitlePrefetchKey === prefetchKey && subtitlePrefetchLayer) {
-    lastScheduledPrefetchCueIdx = nextIdx;
+    lastScheduledPrefetchKey = prefetchKey;
     return;
   }
+  if (lastScheduledPrefetchKey === prefetchKey) return;
 
-  lastScheduledPrefetchCueIdx = nextIdx;
+  lastScheduledPrefetchKey = prefetchKey;
   pendingSubtitlePrefetchJob = {
     cues,
     cueIdx: currentCueIdx,
@@ -529,7 +525,7 @@ export function primeSubtitlePrefetch(
   const offsetSec = overlay.displayTimingOffsetSec ?? 0;
   const cue = getActiveCue(cues, t, offsetSec);
   const idx = cue ? lastCueSearchHint : 0;
-  lastScheduledPrefetchCueIdx = -1;
+  lastScheduledPrefetchKey = null;
   scheduleSubtitlePrefetch(cues, idx, overlay.style, canvasWidth, canvasHeight);
 }
 

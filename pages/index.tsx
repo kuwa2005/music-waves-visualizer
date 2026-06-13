@@ -81,7 +81,7 @@ import {
   isValidGalleryTransitionUserMode,
   type GalleryTransitionUserMode,
 } from "../lib/galleryImageTransition";
-import { drawBarsWebGL, getFPSWebGL, getSubtitleTextureUploadMs, cleanupWebGL, stopWebGLAnimation, clearWebGLImageCache } from "../lib/WebGLRenderer";
+import { drawBarsWebGL, getFPSWebGL, getSubtitleTextureUploadMs, cleanupWebGL, stopWebGLAnimation, clearWebGLImageCache, clearWebGLSubtitleOverlayCache } from "../lib/WebGLRenderer";
 import {
   getSpectrumPivotOverlayPercent,
   getSpaceCenterOverlayPercent,
@@ -141,6 +141,7 @@ import {
 } from "../lib/srtAuthoring";
 import {
   parseSrtAsync,
+  clearTextOverlayCaches,
   DEFAULT_SUBTITLE_STYLE,
   DEFAULT_TITLE_STYLE,
   EMPTY_SUBTITLE_CUES,
@@ -407,6 +408,8 @@ const Home: NextPage = () => {
   const [subtitleEnabled, setSubtitleEnabled] = useState<boolean>(true);
   const [subtitleCueCount, setSubtitleCueCount] = useState(0);
   const subtitleCuesRef = useRef<SubtitleCue[]>([]);
+  const loadSubtitleSeqRef = useRef(0);
+  const subtitleLoadGenerationRef = useRef(0);
   const subtitleEnabledRef = useRef(subtitleEnabled);
   const [subtitleStyle, setSubtitleStyle] = useState<SubtitleStyle>(DEFAULT_SUBTITLE_STYLE);
   /** 字幕表示タイミング補正（秒）。プレビュー/録画の描画のみ。永続化しない */
@@ -430,7 +433,7 @@ const Home: NextPage = () => {
   const srtAuthorNextCueRowRef = useRef<HTMLDivElement | null>(null);
   const srtAuthorCuesRef = useRef<SubtitleCue[]>([]);
   const srtAuthorInitializedRef = useRef(false);
-  const srtAuthorSourceCueCountRef = useRef(0);
+  const srtAuthorSourceGenerationRef = useRef(0);
   const srtAuthorInitIdleHandleRef = useRef<ReturnType<typeof setTimeout> | number | null>(null);
   const srtAuthorTimeRepeatRef = useRef<{
     timeoutId: ReturnType<typeof setTimeout> | null;
@@ -3808,14 +3811,23 @@ const Home: NextPage = () => {
     }
   };
 
+  const invalidateSubtitleCaches = useCallback(() => {
+    clearTextOverlayCaches();
+    clearWebGLSubtitleOverlayCache();
+  }, []);
+
   const loadSubtitleFile = async (file: File) => {
+    const seq = ++loadSubtitleSeqRef.current;
     try {
       const text = await file.text();
       const cues = await parseSrtAsync(text);
+      if (seq !== loadSubtitleSeqRef.current) return;
       if (cues.length === 0) {
         openSnackBar(t("snackbar.subtitleParseFailed"));
         return;
       }
+      invalidateSubtitleCaches();
+      subtitleLoadGenerationRef.current += 1;
       subtitleCuesRef.current = cues;
       setSubtitleCueCount(cues.length);
       setSubtitleFileName(file.name);
@@ -3823,6 +3835,7 @@ const Home: NextPage = () => {
       srtAuthorInitializedRef.current = false;
       openSnackBar(t("snackbar.subtitleLoaded", { count: cues.length }));
     } catch (_e) {
+      if (seq !== loadSubtitleSeqRef.current) return;
       openSnackBar(t("snackbar.subtitleLoadFailed"));
     }
   };
@@ -4084,7 +4097,10 @@ const Home: NextPage = () => {
   const ensureSrtAuthorFromLoadedCues = useCallback(() => {
     const cues = subtitleCuesRef.current;
     if (cues.length === 0) return;
-    if (srtAuthorInitializedRef.current && srtAuthorSourceCueCountRef.current === cues.length) {
+    if (
+      srtAuthorInitializedRef.current &&
+      srtAuthorSourceGenerationRef.current === subtitleLoadGenerationRef.current
+    ) {
       return;
     }
     const authorCues = cues.map((cue) => ({ ...cue }));
@@ -4101,14 +4117,17 @@ const Home: NextPage = () => {
     srtAuthorLineIndexRef.current = 0;
     srtAuthorPhaseRef.current = "wait_start";
     srtAuthorInitializedRef.current = true;
-    srtAuthorSourceCueCountRef.current = cues.length;
+    srtAuthorSourceGenerationRef.current = subtitleLoadGenerationRef.current;
   }, []);
 
   const scheduleSrtAuthorInit = useCallback(() => {
     if (!srtAuthorPanelEnabled) return;
     const cues = subtitleCuesRef.current;
     if (cues.length === 0) return;
-    if (srtAuthorInitializedRef.current && srtAuthorSourceCueCountRef.current === cues.length) {
+    if (
+      srtAuthorInitializedRef.current &&
+      srtAuthorSourceGenerationRef.current === subtitleLoadGenerationRef.current
+    ) {
       return;
     }
     if (srtAuthorInitIdleHandleRef.current != null) return;
@@ -4401,6 +4420,7 @@ const Home: NextPage = () => {
   }, [audioFileName, openSnackBar, srtAuthorGlobalOffsetMs, t]);
 
   const srtAuthorApplyToPreview = useCallback(async () => {
+    const seq = ++loadSubtitleSeqRef.current;
     const shifted = shiftCuesBySeconds(srtAuthorCuesRef.current, srtAuthorGlobalOffsetMs / 1000);
     const body = formatSrtFromCues(shifted);
     if (!body.trim()) {
@@ -4408,16 +4428,19 @@ const Home: NextPage = () => {
       return;
     }
     const cues = await parseSrtAsync(body);
+    if (seq !== loadSubtitleSeqRef.current) return;
     if (cues.length === 0) {
       openSnackBar(t("snackbar.subtitleParseFailed"));
       return;
     }
+    invalidateSubtitleCaches();
+    subtitleLoadGenerationRef.current += 1;
     subtitleCuesRef.current = cues;
     setSubtitleCueCount(cues.length);
     setSubtitleFileName("authored.srt");
     setSubtitleEnabled(true);
     openSnackBar(t("snackbar.subtitleAuthorApplied", { count: cues.length }));
-  }, [openSnackBar, srtAuthorGlobalOffsetMs, t]);
+  }, [invalidateSubtitleCaches, openSnackBar, srtAuthorGlobalOffsetMs, t]);
 
   const lyricsTxtLoad = useCallback(
     async (event: { target: HTMLInputElement }) => {
@@ -5356,6 +5379,7 @@ const Home: NextPage = () => {
     }
     clearImageCache();
     clearWebGLImageCache();
+    invalidateSubtitleCaches();
     setImageGallery((prev) => {
       prev.forEach((p) => URL.revokeObjectURL(p.objectUrl));
       return [];
@@ -5364,6 +5388,8 @@ const Home: NextPage = () => {
     setAudioFileName("");
     setSubtitleFileName("");
     subtitleCuesRef.current = [];
+    subtitleLoadGenerationRef.current += 1;
+    srtAuthorInitializedRef.current = false;
     setSubtitleCueCount(0);
     setSubtitleEnabled(true);
     setSubtitleStyle(DEFAULT_SUBTITLE_STYLE);

@@ -353,9 +353,14 @@ function fadeAlpha(a: number): number {
 const DEBUG_WEBGL = false;
 
 let lastSubtitleTextureUploadMs = 0;
+let lastTitleTextureUploadMs = 0;
 
 export function getSubtitleTextureUploadMs(): number {
   return lastSubtitleTextureUploadMs;
+}
+
+export function getTitleTextureUploadMs(): number {
+  return lastTitleTextureUploadMs;
 }
 
 function scheduleIdleWork(fn: () => void): ReturnType<typeof setTimeout> | number {
@@ -432,7 +437,8 @@ function uploadTextOverlayCanvasToSlot(
   gl: WebGLRenderingContext,
   texState: TextOverlayTexSlotState,
   slotIdx: TextOverlayTexSlotIdx,
-  canvas: HTMLCanvasElement
+  canvas: HTMLCanvasElement,
+  slot: "subtitle" | "title"
 ): WebGLTexture {
   const texture = ensureTextOverlayTexture(gl, texState, slotIdx);
   const sizeState = texState.sizes[slotIdx];
@@ -453,7 +459,11 @@ function uploadTextOverlayCanvasToSlot(
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
   }
   const uploadMs = performance.now() - t0;
-  lastSubtitleTextureUploadMs = uploadMs;
+  if (slot === "subtitle") {
+    lastSubtitleTextureUploadMs = uploadMs;
+  } else {
+    lastTitleTextureUploadMs = uploadMs;
+  }
   if (DEBUG_WEBGL) {
     debugLog('text overlay texture upload ms', {
       slotIdx,
@@ -468,7 +478,8 @@ function uploadTextOverlayCanvasToSlot(
 function resolveTextOverlayTexture(
   gl: WebGLRenderingContext,
   texState: TextOverlayTexSlotState,
-  canvas: HTMLCanvasElement
+  canvas: HTMLCanvasElement,
+  slot: "subtitle" | "title"
 ): WebGLTexture {
   const inactiveIdx = (1 - texState.activeSlot) as TextOverlayTexSlotIdx;
   if (texState.sources[inactiveIdx] === canvas) {
@@ -479,7 +490,7 @@ function resolveTextOverlayTexture(
   if (texState.sources[activeIdx] === canvas) {
     return ensureTextOverlayTexture(gl, texState, activeIdx);
   }
-  return uploadTextOverlayCanvasToSlot(gl, texState, activeIdx, canvas);
+  return uploadTextOverlayCanvasToSlot(gl, texState, activeIdx, canvas, slot);
 }
 
 function prefetchTextOverlayTextureUpload(
@@ -489,7 +500,7 @@ function prefetchTextOverlayTextureUpload(
 ): void {
   const inactiveIdx = (1 - texState.activeSlot) as TextOverlayTexSlotIdx;
   if (texState.sources[inactiveIdx] === layer.canvas) return;
-  uploadTextOverlayCanvasToSlot(gl, texState, inactiveIdx, layer.canvas);
+  uploadTextOverlayCanvasToSlot(gl, texState, inactiveIdx, layer.canvas, "subtitle");
 }
 
 function schedulePrefetchTextOverlayTextureUpload(
@@ -568,7 +579,7 @@ function drawTextOverlayLayerWebGL(
   }
 
   const texState = getTextOverlayTexState(slot);
-  const overlayTexture = resolveTextOverlayTexture(gl, texState, layer.canvas);
+  const overlayTexture = resolveTextOverlayTexture(gl, texState, layer.canvas, slot);
 
   gl.enable(gl.BLEND);
   gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
@@ -3396,6 +3407,23 @@ function deleteOverlayTextures(ctx: WebGLRendererContext): void {
   ctx.titleOverlayTextureSource = null;
 }
 
+function resetSubtitleOverlayTextures(ctx: WebGLRendererContext): void {
+  const { gl } = ctx;
+  resetTextOverlayTexState(gl, subtitleOverlayTexState);
+  if (ctx.subtitleOverlayTexture) {
+    gl.deleteTexture(ctx.subtitleOverlayTexture);
+    ctx.subtitleOverlayTexture = null;
+  }
+  ctx.subtitleOverlayTextureSource = null;
+}
+
+export function clearWebGLSubtitleOverlayCache(): void {
+  cancelSubtitlePrefetchTextureUpload();
+  if (glContext) {
+    resetSubtitleOverlayTextures(glContext);
+  }
+}
+
 export function clearWebGLImageCache(): void {
   cancelSubtitlePrefetchTextureUpload();
   if (glContext) {
@@ -3417,6 +3445,7 @@ export function clearWebGLImageCache(): void {
  * WebGLコンテキストをクリーンアップ
  */
 export function cleanupWebGL(): void {
+  cancelSubtitlePrefetchTextureUpload();
   // アニメーションフレームをキャンセル
   if (animationFrameId !== null) {
     cancelAnimationFrame(animationFrameId);
