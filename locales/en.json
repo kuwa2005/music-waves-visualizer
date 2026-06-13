@@ -214,6 +214,7 @@
     "selectSrt": "Select SRT",
     "dropSrt": "Drop SRT file here",
     "enabled": "Show subtitles",
+    "showOnScreen": "Show subtitles",
     "positionY": "Position (Y): {{value}}%",
     "align": "Align",
     "alignLeft": "Left",

@@ -214,6 +214,7 @@
     "selectSrt": "SRTを選択",
     "dropSrt": "ここにSRTファイルをドロップ",
     "enabled": "字幕を表示",
+    "showOnScreen": "字幕を表示",
     "positionY": "位置（Y）: {{value}}%",
     "align": "揃え",
     "alignLeft": "左寄せ",

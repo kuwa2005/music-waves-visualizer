@@ -8099,6 +8099,11 @@ const Home: NextPage = () => {
                 <Typography variant="body2" sx={{ mb: 2, textAlign: "center", fontWeight: 500 }}>
                   {t("subtitle.title")}
                 </Typography>
+                <FormControlLabel
+                  control={<Switch checked={subtitleEnabled} onChange={(_, c) => setSubtitleEnabled(c)} size="small" />}
+                  label={t("subtitle.showOnScreen")}
+                  sx={{ mb: 1.5, display: "flex", alignItems: "center" }}
+                />
                 <Box sx={{ display: "flex", gap: 1, alignItems: "center", flexWrap: "wrap", mb: 1.5 }}>
                   <Button variant="outlined" component="label" size="small">
                     {t("subtitle.selectSrt")}
@@ -8361,11 +8366,6 @@ const Home: NextPage = () => {
                 </Accordion>
                 )}
 
-                <FormControlLabel
-                  control={<Switch checked={subtitleEnabled} onChange={(_, c) => setSubtitleEnabled(c)} size="small" />}
-                  label={t("subtitle.enabled")}
-                  sx={{ mb: 1.5, display: "flex", alignItems: "center" }}
-                />
                 <Typography gutterBottom>{t("subtitle.positionY", { value: subtitleStyle.positionYPercent.toFixed(0) })}</Typography>
                 <Slider
                   value={subtitleStyle.positionYPercent}
