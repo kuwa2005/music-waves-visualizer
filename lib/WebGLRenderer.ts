@@ -53,9 +53,11 @@ import { updateAndGetLaserSegments } from './laserEffect';
 import { drawGalleryBackground, peekGalleryImageTransitionFrame } from './galleryImageTransition';
 import {
   clearTextOverlayCaches,
+  getSubtitlePrefetchLayer,
   resolveSubtitleOverlayDraw,
   resolveTitleOverlayDraw,
   type TextOverlayDrawState,
+  type TextOverlayLayer,
 } from './subtitles';
 
 const BASE_LINE_WIDTH_WAVEFORM = 2.0;
@@ -347,8 +349,133 @@ function fadeAlpha(a: number): number {
   return a * imageTimelineFadeMul;
 }
 
+// デバッグログ用フラグ
+const DEBUG_WEBGL = false;
+
+function debugLog(message: string, data?: any) {
+  if (DEBUG_WEBGL) {
+    if (data !== undefined) {
+      console.log(`[WebGL] ${message}`, data);
+    } else {
+      console.log(`[WebGL] ${message}`);
+    }
+  }
+}
+
 const TEXT_OVERLAY_TEX_COORDS = new Float32Array([0, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 1]);
 const textOverlayPositionsScratch = new Float32Array(12);
+
+type TextOverlayTexSlotIdx = 0 | 1;
+type TextOverlayTexSlotState = {
+  activeSlot: TextOverlayTexSlotIdx;
+  textures: [WebGLTexture | null, WebGLTexture | null];
+  sources: [HTMLCanvasElement | null, HTMLCanvasElement | null];
+  sizes: [{ width: number; height: number }, { width: number; height: number }];
+};
+
+function createTextOverlayTexSlotState(): TextOverlayTexSlotState {
+  return {
+    activeSlot: 0,
+    textures: [null, null],
+    sources: [null, null],
+    sizes: [{ width: 0, height: 0 }, { width: 0, height: 0 }],
+  };
+}
+
+let subtitleOverlayTexState = createTextOverlayTexSlotState();
+let titleOverlayTexState = createTextOverlayTexSlotState();
+
+function getTextOverlayTexState(slot: 'subtitle' | 'title'): TextOverlayTexSlotState {
+  return slot === 'subtitle' ? subtitleOverlayTexState : titleOverlayTexState;
+}
+
+function ensureTextOverlayTexture(
+  gl: WebGLRenderingContext,
+  texState: TextOverlayTexSlotState,
+  slotIdx: TextOverlayTexSlotIdx
+): WebGLTexture {
+  let texture = texState.textures[slotIdx];
+  if (!texture) {
+    texture = gl.createTexture();
+    texState.textures[slotIdx] = texture;
+  }
+  return texture;
+}
+
+function uploadTextOverlayCanvasToSlot(
+  gl: WebGLRenderingContext,
+  texState: TextOverlayTexSlotState,
+  slotIdx: TextOverlayTexSlotIdx,
+  canvas: HTMLCanvasElement
+): WebGLTexture {
+  const texture = ensureTextOverlayTexture(gl, texState, slotIdx);
+  const sizeState = texState.sizes[slotIdx];
+  gl.bindTexture(gl.TEXTURE_2D, texture);
+  const w = canvas.width;
+  const h = canvas.height;
+  const sizeUnchanged = sizeState.width === w && sizeState.height === h;
+  const t0 = DEBUG_WEBGL ? performance.now() : 0;
+  if (sizeUnchanged) {
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, canvas);
+  } else {
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, canvas);
+    sizeState.width = w;
+    sizeState.height = h;
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  }
+  if (DEBUG_WEBGL) {
+    debugLog('text overlay texture upload ms', {
+      slotIdx,
+      ms: (performance.now() - t0).toFixed(2),
+      subImage: sizeUnchanged,
+    });
+  }
+  texState.sources[slotIdx] = canvas;
+  return texture;
+}
+
+function resolveTextOverlayTexture(
+  gl: WebGLRenderingContext,
+  texState: TextOverlayTexSlotState,
+  canvas: HTMLCanvasElement
+): WebGLTexture {
+  const inactiveIdx = (1 - texState.activeSlot) as TextOverlayTexSlotIdx;
+  if (texState.sources[inactiveIdx] === canvas) {
+    texState.activeSlot = inactiveIdx;
+    return ensureTextOverlayTexture(gl, texState, inactiveIdx);
+  }
+  const activeIdx = texState.activeSlot;
+  if (texState.sources[activeIdx] === canvas) {
+    return ensureTextOverlayTexture(gl, texState, activeIdx);
+  }
+  return uploadTextOverlayCanvasToSlot(gl, texState, activeIdx, canvas);
+}
+
+function prefetchTextOverlayTextureUpload(
+  gl: WebGLRenderingContext,
+  texState: TextOverlayTexSlotState,
+  layer: TextOverlayLayer
+): void {
+  const inactiveIdx = (1 - texState.activeSlot) as TextOverlayTexSlotIdx;
+  if (texState.sources[inactiveIdx] === layer.canvas) return;
+  uploadTextOverlayCanvasToSlot(gl, texState, inactiveIdx, layer.canvas);
+}
+
+function resetTextOverlayTexState(gl: WebGLRenderingContext, texState: TextOverlayTexSlotState): void {
+  for (let i = 0; i < 2; i++) {
+    const idx = i as TextOverlayTexSlotIdx;
+    if (texState.textures[idx]) {
+      gl.deleteTexture(texState.textures[idx]);
+    }
+  }
+  texState.activeSlot = 0;
+  texState.textures = [null, null];
+  texState.sources = [null, null];
+  texState.sizes = [{ width: 0, height: 0 }, { width: 0, height: 0 }];
+}
 
 function setTextureDrawAlpha(ctx: WebGLRendererContext, alpha: number): void {
   if (ctx.texAlphaLocation) {
@@ -380,26 +507,8 @@ function drawTextOverlayLayerWebGL(
     destH = layer.h * scale;
   }
 
-  const textureKey = slot === "subtitle" ? "subtitleOverlayTexture" : "titleOverlayTexture";
-  const sourceKey = slot === "subtitle" ? "subtitleOverlayTextureSource" : "titleOverlayTextureSource";
-  let overlayTexture = ctx[textureKey];
-  const overlayTextureSource = ctx[sourceKey];
-
-  if (!overlayTexture || overlayTextureSource !== layer.canvas) {
-    if (!overlayTexture) {
-      overlayTexture = gl.createTexture();
-      ctx[textureKey] = overlayTexture;
-    }
-    gl.bindTexture(gl.TEXTURE_2D, overlayTexture);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, layer.canvas);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    ctx[sourceKey] = layer.canvas;
-  } else {
-    gl.bindTexture(gl.TEXTURE_2D, overlayTexture);
-  }
+  const texState = getTextOverlayTexState(slot);
+  const overlayTexture = resolveTextOverlayTexture(gl, texState, layer.canvas);
 
   gl.enable(gl.BLEND);
   gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
@@ -456,6 +565,12 @@ function drawTextOverlaysWebGL(
   const titleState = settings?.titleOverlay?.enabled
     ? resolveTitleOverlayDraw(canvasWidth, canvasHeight, settings.titleOverlay)
     : null;
+
+  const prefetchLayer = getSubtitlePrefetchLayer();
+  if (prefetchLayer) {
+    prefetchTextOverlayTextureUpload(ctx.gl, subtitleOverlayTexState, prefetchLayer);
+  }
+
   if (!subtitleState && !titleState) return;
 
   if (subtitleState) {
@@ -463,19 +578,6 @@ function drawTextOverlaysWebGL(
   }
   if (titleState) {
     drawTextOverlayLayerWebGL(ctx, titleState, canvasWidth, canvasHeight, "title");
-  }
-}
-
-// デバッグログ用フラグ
-const DEBUG_WEBGL = false;
-
-function debugLog(message: string, data?: any) {
-  if (DEBUG_WEBGL) {
-    if (data !== undefined) {
-      console.log(`[WebGL] ${message}`, data);
-    } else {
-      console.log(`[WebGL] ${message}`);
-    }
   }
 }
 
@@ -3220,6 +3322,8 @@ export function stopWebGLAnimation(): void {
  */
 function deleteOverlayTextures(ctx: WebGLRendererContext): void {
   const { gl } = ctx;
+  resetTextOverlayTexState(gl, subtitleOverlayTexState);
+  resetTextOverlayTexState(gl, titleOverlayTexState);
   if (ctx.subtitleOverlayTexture) {
     gl.deleteTexture(ctx.subtitleOverlayTexture);
     ctx.subtitleOverlayTexture = null;

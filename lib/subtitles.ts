@@ -71,30 +71,56 @@ function parseSrtTime(time: string): number {
   return hh * 3600 + mm * 60 + ss + ms / 1000;
 }
 
+const PARSE_SRT_YIELD_EVERY = 32;
+
+function parseSrtBlock(block: string): SubtitleCue | null {
+  const lines = block.split("\n").map((l) => l.trimEnd());
+  if (lines.length < 2) return null;
+  const timeLineIdx = /^\d+$/.test(lines[0].trim()) ? 1 : 0;
+  if (timeLineIdx >= lines.length) return null;
+  const tm = lines[timeLineIdx].match(
+    /(\d{2}:\d{2}:\d{2}[,.]\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2}[,.]\d{3})/
+  );
+  if (!tm) return null;
+  const startSec = parseSrtTime(tm[1]);
+  const endSec = parseSrtTime(tm[2]);
+  if (!Number.isFinite(startSec) || !Number.isFinite(endSec) || endSec <= startSec) return null;
+  const body = lines
+    .slice(timeLineIdx + 1)
+    .join("\n")
+    .replace(/\{\\.*?\}/g, "")
+    .replace(/<[^>]*>/g, "")
+    .trim();
+  if (!body) return null;
+  return { startSec, endSec, text: body };
+}
+
 export function parseSrt(srtText: string): SubtitleCue[] {
   const text = srtText.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   const blocks = text.split(/\n{2,}/g).map((b) => b.trim()).filter(Boolean);
   const cues: SubtitleCue[] = [];
   for (const block of blocks) {
-    const lines = block.split("\n").map((l) => l.trimEnd());
-    if (lines.length < 2) continue;
-    const timeLineIdx = /^\d+$/.test(lines[0].trim()) ? 1 : 0;
-    if (timeLineIdx >= lines.length) continue;
-    const tm = lines[timeLineIdx].match(
-      /(\d{2}:\d{2}:\d{2}[,.]\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2}[,.]\d{3})/
-    );
-    if (!tm) continue;
-    const startSec = parseSrtTime(tm[1]);
-    const endSec = parseSrtTime(tm[2]);
-    if (!Number.isFinite(startSec) || !Number.isFinite(endSec) || endSec <= startSec) continue;
-    const body = lines
-      .slice(timeLineIdx + 1)
-      .join("\n")
-      .replace(/\{\\.*?\}/g, "")
-      .replace(/<[^>]*>/g, "")
-      .trim();
-    if (!body) continue;
-    cues.push({ startSec, endSec, text: body });
+    const cue = parseSrtBlock(block);
+    if (cue) cues.push(cue);
+  }
+  cues.sort((a, b) => a.startSec - b.startSec);
+  return cues;
+}
+
+/** 大きな SRT はメインスレッドをブロックしないようチャンク単位で yield する */
+export async function parseSrtAsync(srtText: string): Promise<SubtitleCue[]> {
+  const text = srtText.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const blocks = text.split(/\n{2,}/g).map((b) => b.trim()).filter(Boolean);
+  if (blocks.length <= PARSE_SRT_YIELD_EVERY * 2) {
+    return parseSrt(srtText);
+  }
+  const cues: SubtitleCue[] = [];
+  for (let i = 0; i < blocks.length; i++) {
+    const cue = parseSrtBlock(blocks[i]);
+    if (cue) cues.push(cue);
+    if (i > 0 && i % PARSE_SRT_YIELD_EVERY === 0) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    }
   }
   cues.sort((a, b) => a.startSec - b.startSec);
   return cues;
@@ -206,17 +232,121 @@ export type TextOverlayDrawState = {
   scale: number;
 };
 
+const DEBUG_SUBTITLES = false;
+
 let subtitleLayerCache: TextOverlayLayer | null = null;
 let titleLayerCache: TextOverlayLayer | null = null;
+let subtitlePrefetchLayer: TextOverlayLayer | null = null;
+let subtitlePrefetchKey: string | null = null;
 let lastSubtitleStaticDraw: TextOverlayDrawState | null = null;
 let lastSubtitleStaticKey: string | null = null;
+
+const cueLinesCache = new WeakMap<SubtitleCue, string[]>();
+
+function getCueLines(cue: SubtitleCue): string[] {
+  let lines = cueLinesCache.get(cue);
+  if (!lines) {
+    lines = cue.text.split("\n").filter(Boolean);
+    cueLinesCache.set(cue, lines);
+  }
+  return lines;
+}
+
+let measureCanvas: HTMLCanvasElement | null = null;
+let measureCtx: CanvasRenderingContext2D | null = null;
+
+function ensureMeasureCtx(): CanvasRenderingContext2D | null {
+  if (!measureCanvas) {
+    measureCanvas = document.createElement("canvas");
+    measureCtx = measureCanvas.getContext("2d");
+  }
+  return measureCtx;
+}
 
 export function clearTextOverlayCaches(): void {
   subtitleLayerCache = null;
   titleLayerCache = null;
+  subtitlePrefetchLayer = null;
+  subtitlePrefetchKey = null;
   lastSubtitleStaticDraw = null;
   lastSubtitleStaticKey = null;
   lastCueSearchHint = 0;
+}
+
+function buildSubtitleLayerKey(
+  canvasWidth: number,
+  canvasHeight: number,
+  cue: SubtitleCue,
+  style: SubtitleStyle
+): string {
+  return [
+    canvasWidth,
+    canvasHeight,
+    cue.startSec,
+    cue.endSec,
+    cue.text,
+    styleToCacheKey(style),
+  ].join("\0");
+}
+
+function resolveSubtitleLayer(
+  layerKey: string,
+  lines: string[],
+  style: SubtitleStyle,
+  canvasWidth: number,
+  canvasHeight: number
+): TextOverlayLayer | null {
+  if (subtitleLayerCache && subtitleLayerCache.key === layerKey) {
+    return subtitleLayerCache;
+  }
+  if (subtitlePrefetchKey === layerKey && subtitlePrefetchLayer) {
+    const layer = subtitlePrefetchLayer;
+    subtitlePrefetchLayer = null;
+    subtitlePrefetchKey = null;
+    subtitleLayerCache = layer;
+    return layer;
+  }
+  const t0 = DEBUG_SUBTITLES ? performance.now() : 0;
+  const layer = buildTextOverlayLayer(layerKey, lines, style, canvasWidth, canvasHeight);
+  if (DEBUG_SUBTITLES && layer) {
+    console.log("[Subtitles] layer build ms", (performance.now() - t0).toFixed(2));
+  }
+  if (!layer) return null;
+  subtitleLayerCache = layer;
+  return layer;
+}
+
+function prefetchNextSubtitleLayer(
+  cues: SubtitleCue[],
+  currentCueIdx: number,
+  style: SubtitleStyle,
+  canvasWidth: number,
+  canvasHeight: number
+): void {
+  const nextIdx = currentCueIdx + 1;
+  if (nextIdx >= cues.length) return;
+  const nextCue = cues[nextIdx];
+  const prefetchKey = buildSubtitleLayerKey(canvasWidth, canvasHeight, nextCue, style);
+  if (subtitlePrefetchKey === prefetchKey && subtitlePrefetchLayer) return;
+  const lines = getCueLines(nextCue);
+  if (lines.length === 0) return;
+  const t0 = DEBUG_SUBTITLES ? performance.now() : 0;
+  subtitlePrefetchLayer = buildTextOverlayLayer(
+    prefetchKey,
+    lines,
+    style,
+    canvasWidth,
+    canvasHeight
+  );
+  subtitlePrefetchKey = prefetchKey;
+  if (DEBUG_SUBTITLES && subtitlePrefetchLayer) {
+    console.log("[Subtitles] prefetch layer build ms", (performance.now() - t0).toFixed(2));
+  }
+}
+
+/** WebGL 側が次キューのテクスチャを先行アップロードする用 */
+export function getSubtitlePrefetchLayer(): TextOverlayLayer | null {
+  return subtitlePrefetchLayer;
 }
 
 function styleToCacheKey(style: SubtitleStyle, letterSpacingPx = 0): string {
@@ -264,8 +394,7 @@ function buildTextOverlayLayer(
   const lineHeight = baseFontSize * 1.25;
   const font = `${italic} ${weight} ${baseFontSize}px ${style.fontFamily}`;
 
-  const measureCanvas = document.createElement("canvas");
-  const measureCtx = measureCanvas.getContext("2d");
+  const measureCtx = ensureMeasureCtx();
   if (!measureCtx) return null;
   applyLetterSpacing(measureCtx, letterSpacingPx);
   measureCtx.font = font;
@@ -413,51 +542,30 @@ export function resolveSubtitleOverlayDraw(
   }
 
   const style = overlay.style;
-  const layerKey = [
-    canvasWidth,
-    canvasHeight,
-    cue.startSec,
-    cue.endSec,
-    cue.text,
-    styleToCacheKey(style),
-  ].join("\0");
+  const layerKey = buildSubtitleLayerKey(canvasWidth, canvasHeight, cue, style);
+  const lines = getCueLines(cue);
+  if (lines.length === 0) return null;
 
   if (style.animationType === "none") {
     if (lastSubtitleStaticKey === layerKey && lastSubtitleStaticDraw) {
+      prefetchNextSubtitleLayer(cues, lastCueSearchHint, style, canvasWidth, canvasHeight);
       return lastSubtitleStaticDraw;
     }
-    const layer = getOrBuildLayer(
-      subtitleLayerCache,
-      layerKey,
-      cue.text.split("\n").filter(Boolean),
-      style,
-      canvasWidth,
-      canvasHeight
-    );
+    const layer = resolveSubtitleLayer(layerKey, lines, style, canvasWidth, canvasHeight);
     if (!layer) return null;
-    subtitleLayerCache = layer;
     const state: TextOverlayDrawState = { layer, alpha: 1, dy: 0, scale: 1 };
     lastSubtitleStaticKey = layerKey;
     lastSubtitleStaticDraw = state;
+    prefetchNextSubtitleLayer(cues, lastCueSearchHint, style, canvasWidth, canvasHeight);
     return state;
   }
 
   const anim = getAnimationFactor(style, cue, tLookup);
   if (anim.alpha <= 0.001) return null;
 
-  const lines = cue.text.split("\n").filter(Boolean);
-  if (lines.length === 0) return null;
-
-  const layer = getOrBuildLayer(
-    subtitleLayerCache,
-    layerKey,
-    lines,
-    style,
-    canvasWidth,
-    canvasHeight
-  );
+  const layer = resolveSubtitleLayer(layerKey, lines, style, canvasWidth, canvasHeight);
   if (!layer) return null;
-  subtitleLayerCache = layer;
+  prefetchNextSubtitleLayer(cues, lastCueSearchHint, style, canvasWidth, canvasHeight);
   return { layer, ...anim };
 }
 

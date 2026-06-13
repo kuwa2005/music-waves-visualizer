@@ -140,7 +140,7 @@ import {
   shiftCuesBySeconds,
 } from "../lib/srtAuthoring";
 import {
-  parseSrt,
+  parseSrtAsync,
   DEFAULT_SUBTITLE_STYLE,
   DEFAULT_TITLE_STYLE,
   EMPTY_SUBTITLE_CUES,
@@ -3785,7 +3785,7 @@ const Home: NextPage = () => {
   const loadSubtitleFile = async (file: File) => {
     try {
       const text = await file.text();
-      const cues = parseSrt(text);
+      const cues = await parseSrtAsync(text);
       if (cues.length === 0) {
         openSnackBar(t("snackbar.subtitleParseFailed"));
         return;
@@ -4330,14 +4330,14 @@ const Home: NextPage = () => {
     openSnackBar(t("snackbar.subtitleAuthorExported"));
   }, [audioFileName, openSnackBar, srtAuthorGlobalOffsetMs, t]);
 
-  const srtAuthorApplyToPreview = useCallback(() => {
+  const srtAuthorApplyToPreview = useCallback(async () => {
     const shifted = shiftCuesBySeconds(srtAuthorCuesRef.current, srtAuthorGlobalOffsetMs / 1000);
     const body = formatSrtFromCues(shifted);
     if (!body.trim()) {
       openSnackBar(t("snackbar.subtitleAuthorExportEmpty"));
       return;
     }
-    const cues = parseSrt(body);
+    const cues = await parseSrtAsync(body);
     if (cues.length === 0) {
       openSnackBar(t("snackbar.subtitleParseFailed"));
       return;
