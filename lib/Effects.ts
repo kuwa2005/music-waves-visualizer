@@ -2203,32 +2203,30 @@ export function buildMirrorBallFrame(
   // 光源を等間隔で配置（各光源が独立して動く）
   const spots: MirrorBallLightDraw[] = [];
 
-  // ミラーボール表面の鏡面パターン（各鏡面が独立した角度を持つ）
-  // 実際のディスコボールは多数の小さな鏡が球面に貼り付けられている
+  // ミラーボール表面の鏡面パターン（球面に貼り付けられた小さな鏡）
   const mirrorAngles: Array<{ lon: number; lat: number }> = [];
-  const mirrorRows = 8;
-  const mirrorCols = 12;
+  const mirrorRows = 10;
+  const mirrorCols = 16;
   for (let row = 0; row < mirrorRows; row++) {
-    const lat = -Math.PI * 0.35 + (row / (mirrorRows - 1)) * Math.PI * 0.7;
-    const colsAtLat = Math.max(4, Math.round(mirrorCols * Math.cos(lat)));
+    const lat = -Math.PI * 0.4 + (row / (mirrorRows - 1)) * Math.PI * 0.8;
+    const colsAtLat = Math.max(6, Math.round(mirrorCols * Math.cos(lat)));
     for (let col = 0; col < colsAtLat; col++) {
       const lon = (col / colsAtLat) * Math.PI * 2;
       mirrorAngles.push({ lon, lat });
     }
   }
 
+  // ボールは水平回転（Y軸回転）
+  // 光源はボールと同じ高さ、水平に照射
   for (let li = 0; li < lightCount; li++) {
     const light = lights[li];
     if (light.intensity <= 0.01) continue;
 
-    // 各光源の方向（回転に連動）
-    const lightAngle = (Math.PI * 2 * li) / lightCount + mirrorBallRotationRad * 0.4;
-
-    // 光源の3D方向ベクトル
+    // 光源の方向（水平面内、ボールに向かって照射）
+    const lightAngle = (Math.PI * 2 * li) / lightCount;
     const ldx = Math.cos(lightAngle);
-    const ldy = -0.8;
     const ldz = Math.sin(lightAngle);
-    const lLen = Math.hypot(ldx, ldy, ldz);
+    const ldy = 0; // 水平
 
     // 各鏡面から反射スポットを生成
     for (const mirror of mirrorAngles) {
@@ -2237,32 +2235,33 @@ export function buildMirrorBallFrame(
       const mny = Math.sin(mirror.lat);
       const mnz = Math.sin(mirror.lon) * Math.cos(mirror.lat);
 
-      // 鏡面を回転
+      // ボールがY軸で回転 → 鏡面の法線もY軸回転
       const rot = mirrorBallRotationRad;
       const rnx = mnx * Math.cos(rot) + mnz * Math.sin(rot);
       const rny = mny;
       const rnz = -mnx * Math.sin(rot) + mnz * Math.cos(rot);
 
-      // 反射ベクトル: R = I - 2(N·I)N
-      const ndotl = (ldx * rnx + ldy * rny + ldz * rnz) / lLen;
+      // 反射ベクトル計算: R = I - 2(N·I)N
+      const ndotl = ldx * rnx + ldy * rny + ldz * rnz;
       if (ndotl <= 0) continue; // 光が鏡面の裏側に当たっている
 
-      const rdx = ldx - 2 * ndotl * rnx * lLen;
-      const rdy = ldy - 2 * ndotl * rny * lLen;
-      const rdz = ldz - 2 * ndotl * rnz * lLen;
+      const rdx = ldx - 2 * ndotl * rnx;
+      const rdy = ldy - 2 * ndotl * rny;
+      const rdz = ldz - 2 * ndotl * rnz;
 
-      // 反射方向をスクリーン座標に投影
-      const projScale = 3.0;
-      const sx = cx + (rdx / Math.max(0.1, Math.abs(rdz) + 0.3)) * r * projScale;
-      const sy = cy + (rdy / Math.max(0.1, Math.abs(rdz) + 0.3)) * r * projScale * 0.8;
+      // 反射方向を壁面座標に投影
+      // 壁は奥行き方向に広がり、反射光が壁に当たる位置を計算
+      const wallDist = 2.5; // 壁までの距離（画面奥）
+      const sx = cx + (rdx / Math.max(0.15, Math.abs(rdz))) * r * wallDist;
+      const sy = cy + rdy * r * wallDist * 0.8; // 高さ方向の減衰
 
       // 画面外のスポットはスキップ
       if (sx < -r * 2 || sx > width + r * 2 || sy < -r * 2 || sy > height + r * 2) continue;
 
       // 反射強度（入射角に依存）
-      const reflectStrength = Math.pow(ndotl, 1.2);
-      const spotR = r * (0.06 + mirrorBallHash(li * 100 + mirror.lon * 10 + mirror.lat * 10) * 0.08);
-      const spotA = 0.5 * strength * light.intensity * reflectStrength * (0.7 + audioBoost * 0.3);
+      const reflectStrength = Math.pow(ndotl, 1.0);
+      const spotR = r * (0.05 + mirrorBallHash(li * 100 + Math.floor(mirror.lon * 10) + Math.floor(mirror.lat * 10)) * 0.07);
+      const spotA = 0.55 * strength * light.intensity * reflectStrength * (0.7 + audioBoost * 0.3);
       if (spotA < 0.03) continue;
 
       spots.push({
