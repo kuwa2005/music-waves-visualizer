@@ -2634,24 +2634,24 @@ export function buildMirrorBallFrame(
     wallSpotsRaw.push({ x: sx, y: sy, radius: spotR, r: sr, g: sg, b: sb, a: spotA });
   }
 
-  // 副光源からの反射スポット
+  // 副光源からの反射スポット（主光源とは異なる方向に散らす）
   if (p.secondaryEnabled) {
     const scx = p.secondaryX * width;
     const scy = p.secondaryY * height;
-    const sspotCount = Math.round(spotCount * 0.5);
+    const sspotCount = Math.round(spotCount * 0.6);
     for (let i = 0; i < sspotCount; i++) {
       const seed = i * 11.31 + 5.17;
-      const angle = (i / sspotCount) * Math.PI * 2 + mirrorBallRotationRad * 0.4;
-      const dist = 0.3 + mirrorBallHash(seed) * 1.5;
-      const sx = scx + Math.cos(angle) * r * dist * 2.2;
-      const sy = scy + Math.sin(angle) * r * dist * 1.8 + r * 1.2;
+      const angle = (i / sspotCount) * Math.PI * 2 + mirrorBallRotationRad * 0.5 + Math.PI;
+      const dist = 0.3 + mirrorBallHash(seed) * 1.6;
+      const sx = cx + Math.cos(angle) * r * dist * 2.8;
+      const sy = cy + Math.sin(angle) * r * dist * 2.2 + r * 1.8;
       if (sx < -r * 2 || sx > width + r * 2 || sy < -r * 2 || sy > height + r * 2) continue;
-      const spotR = r * (0.1 + mirrorBallHash(seed + 1) * 0.2) * (1 + audioBoost * 0.3);
-      const spotA = (0.08 + mirrorBallHash(seed + 2) * 0.15) * p.strength * p.secondaryIntensity * (0.5 + audioBoost * 0.3);
+      const spotR = r * (0.14 + mirrorBallHash(seed + 1) * 0.22) * (1 + audioBoost * 0.35);
+      const spotA = (0.12 + mirrorBallHash(seed + 2) * 0.18) * p.strength * (0.6 + audioBoost * 0.4);
       const tintMix = mirrorBallHash(seed + 3);
-      const sr = Math.round(p.secondaryRgb[0] * (1 - tintMix * 0.3) + 255 * tintMix * 0.3);
+      const sr = Math.round(p.secondaryRgb[0] * (1 - tintMix * 0.25) + 255 * tintMix * 0.25);
       const sg = Math.round(p.secondaryRgb[1] * (1 - tintMix * 0.2) + 240 * tintMix * 0.2);
-      const sb = Math.round(p.secondaryRgb[2] * (1 - tintMix * 0.1) + 200 * tintMix * 0.1);
+      const sb = Math.round(p.secondaryRgb[2] * (1 - tintMix * 0.15) + 200 * tintMix * 0.15);
       wallSpotsRaw.push({ x: sx, y: sy, radius: spotR, r: sr, g: sg, b: sb, a: spotA });
     }
   }
