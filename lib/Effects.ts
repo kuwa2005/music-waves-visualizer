@@ -2265,28 +2265,29 @@ export function buildMirrorBallFrame(
       const rdy = ldy - 2 * ndotl * rny;
       const rdz = ldz - 2 * ndotl * rnz;
 
-      // 反射方向を壁面座標に投影
-      // 壁は奥行き方向に広がり、反射光が壁に当たる位置を計算
-      const wallDist = 2.5; // 壁までの距離（画面奥）
-      const sx = cx + (rdx / Math.max(0.15, Math.abs(rdz))) * r * wallDist;
-      const sy = cy + rdy * r * wallDist * 0.8; // 高さ方向の減衰
+      // 反射方向を壁面座標に投影（画面全体に広がるように）
+      const wallDist = 2.0;
+      const sx = cx + (rdx / Math.max(0.1, Math.abs(rdz) + 0.05)) * r * wallDist;
+      const sy = height * 0.5 + (rdy * r * wallDist * 1.5); // 画面中央を基準に上下に広がる
 
       // 画面外のスポットはスキップ
       if (sx < -r * 2 || sx > width + r * 2 || sy < -r * 2 || sy > height + r * 2) continue;
 
       // 反射強度（入射角に依存）
-      const reflectStrength = Math.pow(ndotl, 1.0);
-      const spotR = r * (0.05 + mirrorBallHash(li * 100 + Math.floor(mirror.lon * 10) + Math.floor(mirror.lat * 10)) * 0.07);
-      const spotA = 0.55 * strength * light.intensity * reflectStrength * (0.7 + audioBoost * 0.3);
+      const reflectStrength = Math.pow(ndotl, 0.8);
+      const spotR = r * (0.06 + mirrorBallHash(li * 100 + Math.floor(mirror.lon * 10) + Math.floor(mirror.lat * 10)) * 0.07);
+      const spotA = 0.7 * strength * light.intensity * reflectStrength * (0.7 + audioBoost * 0.3);
       if (spotA < 0.03) continue;
 
+      // 100%のとき完全に白色にする
+      const whiteMix = light.intensity;
       spots.push({
         x: sx,
         y: sy,
         radius: spotR,
-        r: light.color[0],
-        g: light.color[1],
-        b: light.color[2],
+        r: Math.round(light.color[0] * (1 - whiteMix) + 255 * whiteMix),
+        g: Math.round(light.color[1] * (1 - whiteMix) + 255 * whiteMix),
+        b: Math.round(light.color[2] * (1 - whiteMix) + 255 * whiteMix),
         a: spotA,
       });
     }
