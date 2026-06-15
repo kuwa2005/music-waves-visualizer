@@ -2185,9 +2185,9 @@ export function buildMirrorBallFrame(
   // 各光源の色と強さを読み取り
   const lights: Array<{ color: [number, number, number]; intensity: number }> = [];
   const defaultColors: [number, number, number][] = [
-    [255, 248, 220], [180, 210, 255], [255, 200, 180], [200, 255, 200],
-    [255, 255, 180], [200, 180, 255], [255, 180, 220], [180, 255, 240],
-    [240, 220, 255], [255, 220, 200],
+    [255, 0, 0], [0, 255, 0], [0, 0, 255], [255, 255, 0],
+    [255, 0, 255], [0, 255, 255], [255, 128, 0], [128, 0, 255],
+    [0, 128, 255], [255, 0, 128],
   ];
   for (let i = 0; i < lightCount; i++) {
     const color = parseMirrorBallColor(
@@ -2200,49 +2200,90 @@ export function buildMirrorBallFrame(
     lights.push({ color, intensity });
   }
 
-  // 光源を等間隔で配置（回転で角度がずれる）
+  // 光源を等間隔で配置（各光源が独立して動く）
   const spots: MirrorBallLightDraw[] = [];
-  const angleStep = (Math.PI * 2) / lightCount;
+
+  // ミラーボール表面の鏡面パターン（各鏡面が独立した角度を持つ）
+  // 実際のディスコボールは多数の小さな鏡が球面に貼り付けられている
+  const mirrorAngles: Array<{ lon: number; lat: number }> = [];
+  const mirrorRows = 8;
+  const mirrorCols = 12;
+  for (let row = 0; row < mirrorRows; row++) {
+    const lat = -Math.PI * 0.35 + (row / (mirrorRows - 1)) * Math.PI * 0.7;
+    const colsAtLat = Math.max(4, Math.round(mirrorCols * Math.cos(lat)));
+    for (let col = 0; col < colsAtLat; col++) {
+      const lon = (col / colsAtLat) * Math.PI * 2;
+      mirrorAngles.push({ lon, lat });
+    }
+  }
 
   for (let li = 0; li < lightCount; li++) {
     const light = lights[li];
     if (light.intensity <= 0.01) continue;
 
-    // 光源の角度（回転に連動）
-    const baseAngle = angleStep * li + mirrorBallRotationRad * 0.3;
+    // 各光源の方向（回転に連動）
+    const lightAngle = (Math.PI * 2 * li) / lightCount + mirrorBallRotationRad * 0.4;
 
-    // 反射スポットを生成（光源の逆方向に散らす）
-    const spotCount = Math.round(25 * strength * light.intensity);
-    for (let i = 0; i < spotCount; i++) {
-      const seed = i * 7.31 + li * 97 + 2.17;
-      const spread = (mirrorBallHash(seed) - 0.5) * 0.6;
-      const angle = baseAngle + Math.PI + spread;
-      const dist = 0.3 + mirrorBallHash(seed + 4) * 2.5;
-      const sx = cx + Math.cos(angle) * dist * r * 2.0;
-      const sy = cy + Math.sin(angle) * dist * r * 1.8 + r * 0.5;
+    // 光源の3D方向ベクトル
+    const ldx = Math.cos(lightAngle);
+    const ldy = -0.8;
+    const ldz = Math.sin(lightAngle);
+    const lLen = Math.hypot(ldx, ldy, ldz);
+
+    // 各鏡面から反射スポットを生成
+    for (const mirror of mirrorAngles) {
+      // 鏡面の法線ベクトル（球面上の点）
+      const mnx = Math.cos(mirror.lon) * Math.cos(mirror.lat);
+      const mny = Math.sin(mirror.lat);
+      const mnz = Math.sin(mirror.lon) * Math.cos(mirror.lat);
+
+      // 鏡面を回転
+      const rot = mirrorBallRotationRad;
+      const rnx = mnx * Math.cos(rot) + mnz * Math.sin(rot);
+      const rny = mny;
+      const rnz = -mnx * Math.sin(rot) + mnz * Math.cos(rot);
+
+      // 反射ベクトル: R = I - 2(N·I)N
+      const ndotl = (ldx * rnx + ldy * rny + ldz * rnz) / lLen;
+      if (ndotl <= 0) continue; // 光が鏡面の裏側に当たっている
+
+      const rdx = ldx - 2 * ndotl * rnx * lLen;
+      const rdy = ldy - 2 * ndotl * rny * lLen;
+      const rdz = ldz - 2 * ndotl * rnz * lLen;
+
+      // 反射方向をスクリーン座標に投影
+      const projScale = 3.0;
+      const sx = cx + (rdx / Math.max(0.1, Math.abs(rdz) + 0.3)) * r * projScale;
+      const sy = cy + (rdy / Math.max(0.1, Math.abs(rdz) + 0.3)) * r * projScale * 0.8;
+
+      // 画面外のスポットはスキップ
       if (sx < -r * 2 || sx > width + r * 2 || sy < -r * 2 || sy > height + r * 2) continue;
-      const spotR = r * (0.04 + mirrorBallHash(seed + 1) * 0.08) * (1 + audioBoost * 0.3);
-      const spotA = (0.25 + mirrorBallHash(seed + 2) * 0.35) * strength * light.intensity * (0.7 + audioBoost * 0.3);
-      const tintMix = mirrorBallHash(seed + 3) * 0.15;
+
+      // 反射強度（入射角に依存）
+      const reflectStrength = Math.pow(ndotl, 1.2);
+      const spotR = r * (0.06 + mirrorBallHash(li * 100 + mirror.lon * 10 + mirror.lat * 10) * 0.08);
+      const spotA = 0.5 * strength * light.intensity * reflectStrength * (0.7 + audioBoost * 0.3);
+      if (spotA < 0.03) continue;
+
       spots.push({
         x: sx,
         y: sy,
         radius: spotR,
-        r: Math.round(light.color[0] * (1 - tintMix) + 255 * tintMix),
-        g: Math.round(light.color[1] * (1 - tintMix) + 250 * tintMix),
-        b: Math.round(light.color[2] * (1 - tintMix) + 240 * tintMix),
+        r: light.color[0],
+        g: light.color[1],
+        b: light.color[2],
         a: spotA,
       });
     }
   }
 
   // 輝度順にソートして上限を設定
-  if (spots.length > 200) {
+  if (spots.length > 250) {
     spots.sort((a, b) => b.a - a.a);
-    spots.length = 200;
+    spots.length = 250;
   }
 
-  return { spots, ambientAlpha: 0.3 * strength };
+  return { spots, ambientAlpha: 0.25 * strength };
 }
 
 function drawMirrorBallSoftSpot(

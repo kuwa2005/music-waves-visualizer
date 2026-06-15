@@ -7178,7 +7178,7 @@ const Home: NextPage = () => {
                                 onChange={(_, v) => setMirrorBall((p) => ({ ...p, [intensityKey]: v as number }))}
                               />
                               <Box sx={{ display: "flex", gap: 0.5, mt: 0.5, flexWrap: "wrap" }}>
-                                {["#FFE8DC", "#B4D2FF", "#FFB4B4", "#B4FFB4", "#FFFFB4", "#FFB4FF", "#B4FFFF", "#FFFFFF"].map((c) => (
+                                {["#FF0000", "#00FF00", "#0000FF", "#FFFF00", "#FF00FF", "#00FFFF", "#FF8800", "#8800FF"].map((c) => (
                                   <Box
                                     key={c}
                                     onClick={() => setMirrorBall((p) => ({ ...p, [colorKey]: c }))}
