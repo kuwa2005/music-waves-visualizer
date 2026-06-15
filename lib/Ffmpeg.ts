@@ -1,5 +1,4 @@
 import { FFmpeg } from "@ffmpeg/ffmpeg";
-import getConfig from "next/config";
 import { buildFfmpegAfadeFilter } from "./clipAudioFade";
 import {
   parseFfmpegDurationFromLogs,
@@ -73,8 +72,7 @@ function normalizeBasePath(base: string): string {
 }
 
 function getFfmpegAssetBaseCandidates(): string[] {
-  const { publicRuntimeConfig } = getConfig();
-  const base = normalizeBasePath(publicRuntimeConfig?.assetBasePath ?? "");
+  const base = normalizeBasePath(process.env.NEXT_PUBLIC_ASSET_BASE_PATH ?? "");
   const candidates = [
     `${base}/ffmpeg`,
     `${base}/ffmpeg-core`,

@@ -76,7 +76,7 @@ export async function checkHardwareEncoderSupport(): Promise<{
  */
 export class WebCodecsVideoEncoder {
   private encoder: VideoEncoder | null = null;
-  private chunks: Uint8Array[] = [];
+  private chunks: Uint8Array<ArrayBuffer>[] = [];
   private frameCount = 0;
   private config: EncoderConfig;
   private onProgress?: (progress: EncoderProgress) => void;

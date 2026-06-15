@@ -604,13 +604,13 @@ let currentFPS = 0;
 let drawBarsLastFrameTime = 0;
 
 // FFT 読み取り用スクラッチ（毎フレームの Uint8Array 確保を避ける）
-let canvasFftBufferScratch: Uint8Array | null = null;
-let canvasFftEffectScratch: Uint8Array | null = null;
-let canvasFftEarlyScratch: Uint8Array | null = null;
+let canvasFftBufferScratch: Uint8Array<ArrayBuffer> | null = null;
+let canvasFftEffectScratch: Uint8Array<ArrayBuffer> | null = null;
+let canvasFftEarlyScratch: Uint8Array<ArrayBuffer> | null = null;
 
-function ensureCanvasFftScratch(existing: Uint8Array | null, length: number): Uint8Array {
+function ensureCanvasFftScratch(existing: Uint8Array | null, length: number): Uint8Array<ArrayBuffer> {
   if (!existing || existing.length !== length) return new Uint8Array(length);
-  return existing;
+  return existing as Uint8Array<ArrayBuffer>;
 }
 
 // アニメーションフレームID

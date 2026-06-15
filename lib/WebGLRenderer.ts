@@ -285,13 +285,13 @@ let glycoLastPeakTime: number[] = [];
 let lastGlycoMode = -1;
 
 // FFT 読み取り用スクラッチ（毎フレームの Uint8Array 確保を避ける）
-let fftBufferScratch: Uint8Array | null = null;
-let fftEffectScratch: Uint8Array | null = null;
-let fftEarlyScratch: Uint8Array | null = null;
+let fftBufferScratch: Uint8Array<ArrayBuffer> | null = null;
+let fftEffectScratch: Uint8Array<ArrayBuffer> | null = null;
+let fftEarlyScratch: Uint8Array<ArrayBuffer> | null = null;
 
-function ensureFftScratch(existing: Uint8Array | null, length: number): Uint8Array {
+function ensureFftScratch(existing: Uint8Array | null, length: number): Uint8Array<ArrayBuffer> {
   if (!existing || existing.length !== length) return new Uint8Array(length);
-  return existing;
+  return existing as Uint8Array<ArrayBuffer>;
 }
 
 // 背景2D→テクスチャ用スクラッチ（ギャラリー遷移・screenMotion の毎フレーム描画）

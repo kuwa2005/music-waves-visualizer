@@ -13,16 +13,16 @@ const securityHeaders = [
 
 const nextConfig = isHtmlExport
   ? {
+      output: "export",
+      distDir: "out",
       basePath: '/visualizer',
       assetPrefix: '/visualizer',
       reactStrictMode: true,
       trailingSlash: true,
       images: { unoptimized: true },
-      publicRuntimeConfig: { assetBasePath: '/visualizer' },
     }
   : {
       reactStrictMode: true,
-      publicRuntimeConfig: { assetBasePath: '' },
       async headers() {
         return [
           {

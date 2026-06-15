@@ -1,4 +1,4 @@
-import "./@types/window.d";
+import "../types/window.d";
 import type { NextPage } from "next";
 import styles from "../styles/Home.module.scss";
 
@@ -5090,7 +5090,7 @@ const Home: NextPage = () => {
           }
 
           setEncodeStatus("idle");
-          const mp4Blob = new Blob([video], { type: "video/mp4" });
+          const mp4Blob = new Blob([video as BlobPart], { type: "video/mp4" });
           const objectURL = URL.createObjectURL(mp4Blob);
 
           const a = document.createElement("a");
@@ -5301,7 +5301,7 @@ const Home: NextPage = () => {
         throw new Error("empty_mp4");
       }
 
-      const mp4Blob = new Blob([video], { type: "video/mp4" });
+      const mp4Blob = new Blob([video as BlobPart], { type: "video/mp4" });
       const objectURL = URL.createObjectURL(mp4Blob);
       const a = document.createElement("a");
       a.href = objectURL;

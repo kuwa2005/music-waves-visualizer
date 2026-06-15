@@ -10,36 +10,36 @@
     "prebuild": "node scripts/copy-ffmpeg-core.cjs",
     "dev": "next dev",
     "build": "next build",
-    "build:html": "node scripts/copy-ffmpeg-core.cjs && mv pages/api .api.bak 2>/dev/null; BUILD_HTML=1 npx next build && npx next export -o out && mv .api.bak pages/api 2>/dev/null; rm -rf visualizer && mkdir -p visualizer && cp -r out/* visualizer && cp htaccess-for-export visualizer/.htaccess && cp html-deploy-README.txt visualizer/README.txt",
+    "build:html": "node scripts/copy-ffmpeg-core.cjs && mv pages/api .api.bak 2>/dev/null; BUILD_HTML=1 npx next build && mv .api.bak pages/api 2>/dev/null; rm -rf visualizer && mkdir -p visualizer && cp -r out/* visualizer && cp htaccess-for-export visualizer/.htaccess && cp html-deploy-README.txt visualizer/README.txt",
     "build:html:lil-la": "NEXT_PUBLIC_SITE_URL=https://lil.la npm run build:html",
     "release:zip": "bash scripts/make-release-zip.sh",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "eslint ."
   },
   "dependencies": {
-    "@emotion/react": "^11.10.5",
-    "@emotion/styled": "^11.10.5",
+    "@emotion/react": "^11.14.0",
+    "@emotion/styled": "^11.14.1",
     "@ffmpeg/core": "0.12.10",
     "@ffmpeg/ffmpeg": "^0.12.15",
     "@mui/icons-material": "^5.11.0",
     "@mui/material": "^5.11.4",
-    "i18next": "^22.5.1",
-    "next": "^13.5.11",
+    "i18next": "^26.3.1",
+    "next": "^16.2.9",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "react-i18next": "^13.5.0"
+    "react-i18next": "^17.0.8"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.2.4",
-    "@types/node": "17.0.21",
-    "@types/react": "^17.0.40",
-    "@types/react-dom": "^17.0.13",
+    "@types/node": "^20.19.43",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
     "autoprefixer": "^10.5.0",
-    "eslint": "8.11.0",
-    "eslint-config-next": "^13.5.11",
+    "eslint": "^9.39.4",
+    "eslint-config-next": "^16.2.9",
     "postcss": "^8.5.10",
-    "sass": "^1.57.1",
+    "sass": "^1.101.0",
     "tailwindcss": "^4.2.4",
-    "typescript": "4.6.2"
+    "typescript": "^5.9.3"
   }
 }
