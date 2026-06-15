@@ -1,0 +1,32 @@
+---
+description: 作業単位ごとのローカル git コミット（komame）
+alwaysApply: true
+---
+
+# ローカルコミット頻度（komame）
+
+## いつコミットするか
+
+- 論理的な作業単位が完了したら、すぐにローカルへコミットする
+- 作業ブランチは `work/layout-overhaul-20260526`（またはユーザー指定の feature ブランチ）
+- 機能追加・修正・リファクタなどは、可能ならコミットを分ける
+
+## コミット手順
+
+```bash
+git status
+git add <対象>
+git -c user.name='kuwa2005' -c user.email='kuwa2005@users.noreply.github.com' commit -m "$(cat <<'EOF'
+<日本語で変更の意図を1〜2文>
+
+EOF
+)"
+```
+
+- メッセージは日本語。HEREDOC で渡す
+- 作者が必要なときだけ `-c user.name` / `-c user.email` を付ける
+
+## push
+
+- **ユーザーが明示的に依頼したときだけ** `git push` する
+- 依頼がなければローカルコミットのみ

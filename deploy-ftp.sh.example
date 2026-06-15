@@ -1,0 +1,323 @@
+#!/usr/bin/env bash
+# テンプレート: cp deploy-ftp.sh.example deploy-ftp.sh して先頭の接続設定を編集（deploy-ftp.sh は .gitignore）
+# =============================================================================
+# music-waves-visualizer — visualizer/ を FTP でレンタルサーバーへアップロード
+# =============================================================================
+#
+# 【使い方】
+#   1. 下記「接続設定」の 4 行（FTP_SERVER / FTP_USER / FTP_PASS / FTP_REMOTE_PATH）
+#      を自分のサーバー情報に書き換えてから実行してください。
+#   2. ビルド済みなら:  ./deploy-ftp.sh
+#      ビルドから一括:  ./deploy-ftp.sh --build   （x.sh と同様に npm run build:html）
+#      差分確認のみ:    ./deploy-ftp.sh --dry-run
+#
+# 【フロー】
+#   npm run build:html → visualizer/ 生成
+#   → リモートに visualizer/ があれば visualizer.NNN へリネーム（バックアップ）
+#   → ローカル visualizer/ をリモート visualizer/ へミラー転送
+#
+# 【バックアップ番号】
+#   リモート親ディレクトリ上の visualizer.000, visualizer.001, … の最大番号 + 1。
+#   例: visualizer.000 と visualizer.001 があるとき次は visualizer.002。
+#   バックアップが無く visualizer のみあるときは visualizer.000。999 まで（満杯時はエラー）。
+#
+# 【依存】
+#   lftp（バックアップ退避の mv と mirror 再帰） … sudo apt install lftp
+#
+# 【セキュリティ】
+#   本スクリプトに本番の FTP パスワードを書く場合、公開リポジトリへ
+#   コミットしないでください（プライベート運用・ローカルのみ推奨）。
+#   誤コミット防止のため、実パスワード入りの deploy-ftp.sh は .gitignore 推奨
+#   （下記 .gitignore コメント参照）。公開 fork では環境変数上書きか別ファイル運用を検討。
+#
+# 任意: deploy.env または -e FILE で上書き可能（埋め込みが既定）。
+# =============================================================================
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+# --- 接続設定（初回前に必ず編集） -------------------------------------------
+FTP_SERVER="ftp.example.com"
+FTP_USER="your_account"
+FTP_PASS="your_password"
+FTP_REMOTE_PATH="/public_html/visualizer"
+LOCAL_DIR="visualizer"
+
+# --- 転送オプション（通常はそのままで可） -----------------------------------
+FTP_PASSIVE_MODE="${FTP_PASSIVE_MODE:-1}"
+FTP_USE_SSL="${FTP_USE_SSL:-0}"
+FTP_MIRROR_DELETE="${FTP_MIRROR_DELETE:-0}"
+
+# --- 内部状態 ----------------------------------------------------------------
+ENV_FILE="${DEPLOY_ENV_FILE:-${SCRIPT_DIR}/deploy.env}"
+DO_BUILD=0
+DRY_RUN=0
+USE_ENV_FILE=0
+
+usage() {
+  cat <<'EOF'
+使い方: ./deploy-ftp.sh [オプション]
+
+  visualizer/（静的 HTML）を FTP でリモートへアップロードします。
+  既存のリモート visualizer/ は visualizer.NNN（3 桁連番）へ退避してから新規配置します。
+  接続情報はスクリプト先頭の FTP_SERVER / FTP_USER / FTP_PASS / FTP_REMOTE_PATH
+  に埋め込むのが基本です（deploy.env は任意の上書き用）。
+  バックアップ退避は lftp 必須です（sudo apt install lftp）。
+
+オプション:
+  -h, --help        このヘルプ
+  -b, --build       アップロード前に npm run build:html（BUILD_HTML_TARGET=lil-la 時は lil-la 版）
+  -n, --dry-run     バックアップ予定の表示と mirror --dry-run（転送しない）
+  -e, --env-file F  deploy.env 等で埋め込みを上書き
+
+環境変数で上書き（任意）:
+  FTP_SERVER, FTP_USER, FTP_PASS, FTP_REMOTE_PATH, LOCAL_DIR
+  （互換: FTP_HOST → FTP_SERVER, FTP_PASSWORD → FTP_PASS）
+
+例:
+  ./deploy-ftp.sh --build
+  ./deploy-ftp.sh --dry-run
+  FTP_SERVER=ftp.example.com ./deploy-ftp.sh
+
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    -b|--build)
+      DO_BUILD=1
+      shift
+      ;;
+    -n|--dry-run)
+      DRY_RUN=1
+      shift
+      ;;
+    -e|--env-file)
+      if [[ $# -lt 2 ]]; then
+        echo "エラー: --env-file にはファイルパスが必要です。" >&2
+        exit 1
+      fi
+      ENV_FILE="$2"
+      USE_ENV_FILE=1
+      shift 2
+      ;;
+    *)
+      echo "エラー: 不明なオプション: $1（--help で一覧）" >&2
+      exit 1
+      ;;
+  esac
+done
+
+# 任意の deploy.env（明示 -e またはファイルが存在するときのみ読み込み）
+if [[ "$USE_ENV_FILE" -eq 1 ]]; then
+  if [[ ! -f "$ENV_FILE" ]]; then
+    echo "エラー: 指定した設定ファイルが見つかりません: $ENV_FILE" >&2
+    exit 1
+  fi
+  # shellcheck source=/dev/null
+  set -a
+  source "$ENV_FILE"
+  set +a
+elif [[ -f "$ENV_FILE" ]]; then
+  # shellcheck source=/dev/null
+  set -a
+  source "$ENV_FILE"
+  set +a
+fi
+
+# 環境変数・deploy.env による上書き（互換エイリアス）
+FTP_SERVER="${FTP_SERVER:-${FTP_HOST:-}}"
+FTP_USER="${FTP_USER:-}"
+FTP_PASS="${FTP_PASS:-${FTP_PASSWORD:-}}"
+FTP_REMOTE_PATH="${FTP_REMOTE_PATH:-}"
+LOCAL_DIR="${LOCAL_DIR:-visualizer}"
+
+is_placeholder_config() {
+  [[ -z "$FTP_SERVER" || "$FTP_SERVER" == "ftp.example.com" ]] && return 0
+  [[ -z "$FTP_USER" || "$FTP_USER" == "your_account" ]] && return 0
+  [[ -z "$FTP_PASS" || "$FTP_PASS" == "your_password" ]] && return 0
+  [[ -z "$FTP_REMOTE_PATH" ]] && return 0
+  return 1
+}
+
+if is_placeholder_config; then
+  echo "エラー: FTP 接続設定が未編集です。" >&2
+  echo "  deploy-ftp.sh 先頭の次の 4 行を自分のサーバー情報に書き換えてください:" >&2
+  echo "    FTP_SERVER, FTP_USER, FTP_PASS, FTP_REMOTE_PATH" >&2
+  exit 1
+fi
+
+if [[ "$DO_BUILD" -eq 1 ]]; then
+  if [[ "${BUILD_HTML_TARGET:-}" == "lil-la" ]]; then
+    echo "ビルド: npm run build:html:lil-la ..."
+    npm run build:html:lil-la
+  else
+    echo "ビルド: npm run build:html ..."
+    npm run build:html
+  fi
+fi
+
+LOCAL_PATH="${SCRIPT_DIR}/${LOCAL_DIR}"
+if [[ ! -d "$LOCAL_PATH" ]]; then
+  echo "エラー: ローカルディレクトリがありません: $LOCAL_PATH" >&2
+  echo "  npm run build:html または ./deploy-ftp.sh --build を実行してください。" >&2
+  exit 1
+fi
+if [[ ! -f "${LOCAL_PATH}/index.html" ]]; then
+  echo "エラー: ${LOCAL_PATH}/index.html がありません。ビルドが完了しているか確認してください。" >&2
+  exit 1
+fi
+
+REMOTE_PATH="${FTP_REMOTE_PATH}"
+REMOTE_PATH="${REMOTE_PATH#/}"
+REMOTE_PATH="${REMOTE_PATH%/}"
+REMOTE_TARGET_NAME="${REMOTE_PATH##*/}"
+REMOTE_PARENT="${REMOTE_PATH%/*}"
+if [[ "$REMOTE_PARENT" == "$REMOTE_PATH" ]]; then
+  REMOTE_PARENT="."
+fi
+
+BACKUP_MAX=999
+
+write_lftp_connection() {
+  echo "set cmd:fail-exit yes"
+  echo "set ftp:passive-mode ${FTP_PASSIVE_MODE}"
+  if [[ "$FTP_USE_SSL" == "1" ]]; then
+    echo "set ftp:ssl-force true"
+    echo "set ssl:verify-certificate no"
+  else
+    echo "set ftp:ssl-allow no"
+  fi
+  echo "open -u ${FTP_USER},${FTP_PASS} ${FTP_SERVER}"
+}
+
+lftp_remote_parent_listing() {
+  local lftp_script
+  lftp_script="$(mktemp)"
+  chmod 600 "$lftp_script"
+  {
+    write_lftp_connection
+    if [[ "$REMOTE_PARENT" != "." ]]; then
+      printf 'cd %q\n' "/${REMOTE_PARENT}"
+    fi
+    echo "cls -1"
+    echo "bye"
+  } >"$lftp_script"
+  lftp -f "$lftp_script" 2>/dev/null || true
+  rm -f "$lftp_script"
+}
+
+compute_next_backup_suffix() {
+  local listing="$1" line name num max=-1
+  while IFS= read -r line; do
+    name="${line%% *}"
+    name="${name%/}"
+    [[ -z "$name" ]] && continue
+    if [[ "$name" =~ ^${REMOTE_TARGET_NAME}\.([0-9]{3})$ ]]; then
+      num=$((10#${BASH_REMATCH[1]}))
+      if (( num > max )); then
+        max=$num
+      fi
+    fi
+  done <<<"$listing"
+  printf '%03d' $((max + 1))
+}
+
+remote_target_exists() {
+  local listing="$1" line name
+  while IFS= read -r line; do
+    name="${line%% *}"
+    name="${name%/}"
+    [[ "$name" == "$REMOTE_TARGET_NAME" ]] && return 0
+  done <<<"$listing"
+  return 1
+}
+
+backup_remote_visualizer_lftp() {
+  local listing next_suffix backup_name
+  listing="$(lftp_remote_parent_listing)"
+
+  if ! remote_target_exists "$listing"; then
+    echo "リモート ${REMOTE_TARGET_NAME}/ は存在しません。バックアップ退避をスキップします。"
+    return 0
+  fi
+
+  next_suffix="$(compute_next_backup_suffix "$listing")"
+  if (( 10#$next_suffix > BACKUP_MAX )); then
+    echo "エラー: バックアップ番号が上限 (${BACKUP_MAX}) を超えます。" >&2
+    echo "  ${REMOTE_TARGET_NAME}.${BACKUP_MAX} まで使用中のため、古いバックアップを削除してから再実行してください。" >&2
+    exit 1
+  fi
+  backup_name="${REMOTE_TARGET_NAME}.${next_suffix}"
+
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    echo "バックアップ（ドライラン）: ${REMOTE_TARGET_NAME}/ → ${backup_name}/"
+    return 0
+  fi
+
+  local lftp_script
+  lftp_script="$(mktemp)"
+  chmod 600 "$lftp_script"
+  {
+    write_lftp_connection
+    if [[ "$REMOTE_PARENT" != "." ]]; then
+      printf 'cd %q\n' "/${REMOTE_PARENT}"
+    fi
+    printf 'mv %q %q\n' "$REMOTE_TARGET_NAME" "$backup_name"
+    echo "bye"
+  } >"$lftp_script"
+  echo "バックアップ: ${REMOTE_TARGET_NAME}/ → ${backup_name}/"
+  lftp -f "$lftp_script"
+  rm -f "$lftp_script"
+}
+
+echo "アップロード元: ${LOCAL_PATH}/"
+echo "アップロード先: ftp://${FTP_SERVER}/${REMOTE_PATH}/"
+if [[ "$REMOTE_PARENT" != "." ]]; then
+  echo "バックアップ先（同一親）: ftp://${FTP_SERVER}/${REMOTE_PARENT}/${REMOTE_TARGET_NAME}.NNN/"
+fi
+if [[ "$DRY_RUN" -eq 1 ]]; then
+  echo "モード: ドライラン（転送しません）"
+fi
+
+upload_with_lftp() {
+  local lftp_script
+  lftp_script="$(mktemp)"
+  chmod 600 "$lftp_script"
+  trap 'rm -f "$lftp_script"' RETURN
+
+  backup_remote_visualizer_lftp
+
+  {
+    write_lftp_connection
+    local mirror_args=( -R --verbose )
+    if [[ "$DRY_RUN" -eq 1 ]]; then
+      mirror_args+=( --dry-run )
+    fi
+    if [[ "$FTP_MIRROR_DELETE" == "1" ]]; then
+      mirror_args+=( --delete )
+    fi
+    printf 'mirror'
+    for a in "${mirror_args[@]}"; do
+      printf ' %q' "$a"
+    done
+    printf ' %q %q\n' "${LOCAL_PATH}/" "${REMOTE_PATH}/"
+    echo "bye"
+  } >"$lftp_script"
+
+  lftp -f "$lftp_script"
+}
+
+if ! command -v lftp >/dev/null 2>&1; then
+  echo "エラー: lftp が見つかりません（バックアップ退避とミラー転送に必要）。" >&2
+  echo "  インストール例: sudo apt install lftp" >&2
+  exit 1
+fi
+upload_with_lftp
+
+echo "完了."

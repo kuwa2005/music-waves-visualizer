@@ -11,8 +11,8 @@ Music Waves Visualizer is a web application that creates audio waveform videos b
 - **Real-time waveform**: Seven internal modes; **five plus OFF** are exposed in the UI (modes 1 and 5 hidden)
 - **Resolution**: Manual (1920×1080, 1080×1920, 1920×1920) + **Auto** (detect from loaded image aspect ratio and map to 16:9 / 9:16 / 1:1)
 - **Display adjustment**: Scale and position per mode (saved per resolved layout)
-- **Clip length limit (short platforms)**: When enabled, **Start (sec)** and **Duration (sec)** define the preview/recording window. Preset buttons only **fill suggested durations**; they do not hard-cap playback. **Empty duration** = play from start **to end of media**.
-- **Client persistence**: Most settings use **first-party cookies** (`SameSite=Lax`), with one-time migration from legacy **localStorage** keys. **Not persisted**: loaded media files, **title body text**, **SRT file content** (subtitle/title style toggles may be saved).
+- **Clip length limit (short platforms)**: Under the **Audio** tab — **Start (sec)** and **Duration (sec)** define the preview/recording window. Preset buttons only **fill suggested durations**; they do not hard-cap playback. **Empty duration** = play from start **to end of media**. **Fade in/out** apply to the audible segment (preview GainNode + FFmpeg `afade` on MP4 encode).
+- **Client persistence**: Most settings use **localStorage** via [`lib/mwvCookieStorage.ts`](../lib/mwvCookieStorage.ts), with one-time migration from legacy **cookies** on first read. **Not persisted**: loaded media files, **title body text**, **SRT file content** (subtitle/title style toggles may be saved).
 - **Subtitles**: SRT import, styling, animation, display timing offset, and an optional hidden authoring panel for pasted lyrics and timing recording.
 - **Preview**: Real-time waveform while playing
 - **Video generation**: Record and output as MP4; drawing/capture is capped at max 60 fps for stable frame pacing.
@@ -27,7 +27,21 @@ https://music-waves-visualizer.vercel.app/
 - **Language**: TypeScript 4.6.2
 - **UI**: Material-UI (MUI) 5.11.4
 - **Styling**: SCSS
-- **i18n**: i18next (Japanese / English)
+- **i18n**: i18next (Japanese / English); strings in `locales/ja.json` and `locales/en.json`
+
+### i18n namespaces (UI)
+
+| Namespace / prefix | Used for |
+|--------------------|----------|
+| `common`, `tabs`, `spectrum`, `effects`, `audio`, `subtitle`, `titleTab`, `clip`, `settings`, `encode`, `videoQuality`, … | Core tabs and shared controls |
+| `screen` | **Screen** tab — still-background zoom/pan, fades, audio-reactive brightness/shake/flash |
+| `waveFamily` | Spectrum modes **17–19** (height/width/flow/glow sliders) |
+| `particleSpectrum` | Mode **20** (pattern, count, size, life, boost) |
+| `radialSpectrum` | Mode **21** (bars, center gap, kick scale, rotate) |
+| `retroEq` | Mode **6** glyco extensions (CRT/VHS, bars/dots style) |
+| `subtitle.author` | Hidden SRT authoring (`panelToggle`, section title, lyrics editor) |
+
+Mode-specific slider labels must exist in both locale files before shipping UI changes in `pages/index.tsx`.
 
 ## 3. Spectrum Modes
 
@@ -52,16 +66,25 @@ https://music-waves-visualizer.vercel.app/
 - **Curtain**: Flowing curtain
 - **Sparkle** (きらきら): White +/X/* star shapes with twinkle; **no radial glow** (Canvas 2D and WebGL both draw star strokes + core only)
 - **Dust** (空気感 / atmosphere): Low-contrast drifting particles; Canvas uses solid circles + `lighter` blend; WebGL uses additive circles (no large soft bloom)
-- **Rain / Snow**: Weather-style particles with adjustable angle, amount, and color
+- **Rain / Snow**: Weather-style particles with adjustable angle, amount, and color; **rain** supports **audio sensitivity** 0–10 (spawn rate, streak alpha/length)
+- **Water ripple** (`waterRipple`): Variants ripple / heart / firework; **audio sensitivity** 0–10 (spawn rate, ring strength)
+- **Laser**: Multi-color edge bursts; Canvas 2D and WebGL; density weak / medium / strong (`lib/laserEffect.ts`)
 
 Effects are shown during preview/recording only. Strength: weak / medium / strong per effect.
 
+### File pickers (split button)
+
+- **Choose image(s)**: Default still images (`FILE_PICKER_ACCEPT_IMAGE`); menu alternate **video (MP4, etc.)** or **all files** (`components/FilePickerSplitButton.tsx`, `lib/fileValidation.ts`)
+- **Choose music**: Default audio; alternate **video (MP4, etc.)** or all; gates by extension + MIME + size caps
+
 ## 4. Settings UI
 
-- Tab order: **Spectrum Analyzer / Effects / Audio / Subtitles / Title / Clip Length / Settings** (labels depend on locale)
+- Tab order: **Spectrum Analyzer / Effects / Audio / Subtitles / Title / Settings** — **clip length** (presets, start/duration, audio fades) lives under the **Audio** tab (`audioSettings.videoLengthSection`)
 - Spectrum and effect adjustment sections are collapsible (default collapsed)
 - Resolution controls are located in **Settings** tab; the chosen preset (including **Auto** resolved to 16:9 / 9:16 / 1:1) is persisted
 - Hidden SRT authoring is toggled from the **SRT** checkbox in the Settings tab under bitrate settings. When enabled, the Subtitle tab shows **Subtitle authoring (hidden feature)** / **字幕作成支援（隠し機能）**.
+- **Desktop layout (≥1024px)**: Two-pane grid (`desktopTwoPane`) — **left**: file drop zone + sticky live preview canvas; **right**: tabbed controls (`pages/index.tsx`, `styles/Home.module.scss`). Below 1024px the layout stacks in a single column.
+- **Spectrum position (all modes)**: Per-layout/mode **offsetX** / **offsetY** sliders are **±150%** of canvas size (integer %). Implemented as **`ResettableSlider`** (double-click or reset control → defaults). **Mode 2 (circle)**: while adjusting offset sliders, a guide dot overlays the preview (`previewCanvasStageRef`); the dot can be dragged to update offset via `spectrumAdjustments` inverse mapping.
 
 ## 5. Settings Export/Import
 
@@ -101,6 +124,7 @@ Effects are shown during preview/recording only. Strength: weak / medium / stron
 
 - スペクトラムは内部で7モードあるが、**UI では OFF＋5種**（折れ線・波形上下対称のボタンは非表示。描画は残す）。
 - **きらきら**はラジアルグロウなし（星形のみ）。**空気感（ほこり）**は単色の小さな円で表現（Canvas/WebGL で方針を揃えた記述は上記）。
-- **設定の保存**は第一党 Cookie が主。クリップは開始＋長さで区間指定（長さ空欄＝末尾まで）。
+- **設定の保存**は **localStorage** が正（旧 Cookie は初回移行）。クリップは開始＋長さで区間指定（長さ空欄＝末尾まで）。
+- **デスクトップ（1024px以上）**は左プレビュー＋右タブの2ペイン。スペクトラム位置は **ResettableSlider**（±150%）、モード2はプレビュー上のガイド●で調整可。
 - **SRT 作成支援**は設定タブの **SRT** チェックで表示する隠し機能。プレビュー時の動画背景は 30fps に間引くが、録画品質は最大 60fps まで維持する。
 - **MP4 の音楽／背景動画の分離**は [VIDEO_BACKGROUND.md](./VIDEO_BACKGROUND.md) と [仕様書.md](./仕様書.md) §3.1 を参照。

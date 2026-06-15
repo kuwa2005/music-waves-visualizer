@@ -4,31 +4,61 @@
  */
 
 import type { ModeAdjustments, SpectrumSettings } from './Canvas';
+import { applyMode2LocalToScreen, applyModeAdjustments } from './spectrumAdjustments';
+import {
+  drawStillScreenBackground,
+  shouldUseStillScreenBackgroundPipeline,
+} from './drawStillScreenBackground';
+import {
+  DEFAULT_SCREEN_MOTION,
+  resolveCombinedImageFadeAlpha,
+} from './screenMotion';
 import {
   GLYCO_COLOR_SETS,
   GLYCO_GRADIENT_SETS,
+  getVisualOpacity,
   getSpectrumPrimaryRgb,
   getSpectrumSecondaryRgb,
+  parseSpectrumHexRgb,
   glycoBarRawEnergy,
   glycoAdjustedLevel,
+  glycoBarLayout,
+  glycoBackgroundDimAlpha,
+  glycoBarRegionBounds,
+  areaModeBarX,
   GLYCO_BAR_VERTICAL_SCALE,
   SPECTRUM_THROTTLE_TARGET_FPS,
   resolveSpectrumTargetFps,
   updateSpectrumFrameThrottle,
   spectrumLinearBarLowGain,
+  getSpectrumDotRadiusScale,
 } from './Canvas';
 import {
   updateAndGetSpaceParticles,
   updateAndGetSparkleParticles,
   updateAndGetDustParticles,
   updateAndGetRainStreaks,
+  updateAndGetWaterRippleDraws,
+  getWaterRippleArcSegments,
+  getWaterRippleHeartSteps,
+  densityToWaterRippleIntensity,
+  type WaterRippleDrawGl,
   updateAndGetSnowParticles,
   buildMirrorBallFrame,
   type EffectParams,
   type EffectType,
   type AudioReactiveData,
 } from './Effects';
+import { updateAndGetLaserSegments } from './laserEffect';
 import { drawGalleryBackground, peekGalleryImageTransitionFrame } from './galleryImageTransition';
+import {
+  clearTextOverlayCaches,
+  getSubtitlePrefetchLayer,
+  resolveSubtitleOverlayDraw,
+  resolveTitleOverlayDraw,
+  type TextOverlayDrawState,
+  type TextOverlayLayer,
+} from './subtitles';
 
 const BASE_LINE_WIDTH_WAVEFORM = 2.0;
 const BASE_LINE_WIDTH_CIRCLE = 2.0;
@@ -43,8 +73,10 @@ const EFFECT_TYPE_TO_GL: Record<EffectType, number> = {
   dust: 0,
   rain: 0,
   snow: 0,
+  waterRipple: 0,
   scanlines: 0,
   mirrorBall: 0,
+  laser: 0,
   filmGrain: 1,
   vignette: 2,
   rainbow: 3,
@@ -99,9 +131,11 @@ const textureFragmentShaderSource = `
 precision mediump float;
 varying vec2 v_texCoord;
 uniform sampler2D u_texture;
+uniform float u_alpha;
 
 void main() {
-  gl_FragColor = texture2D(u_texture, v_texCoord);
+  vec4 c = texture2D(u_texture, v_texCoord);
+  gl_FragColor = vec4(c.rgb, c.a * u_alpha);
 }
 `;
 
@@ -199,6 +233,7 @@ interface WebGLRendererContext {
   texCoordLocation: number;
   texResolutionLocation: WebGLUniformLocation | null;
   textureLocation: WebGLUniformLocation | null;
+  texAlphaLocation: WebGLUniformLocation | null;
   effectPositionLocation: number;
   effectResolutionLocation: WebGLUniformLocation | null;
   effectTimeLocation: WebGLUniformLocation | null;
@@ -208,6 +243,10 @@ interface WebGLRendererContext {
   effectVolumeLocation: WebGLUniformLocation | null;
   effectHighFreqLocation: WebGLUniformLocation | null;
   imageTexture: WebGLTexture | null;
+  subtitleOverlayTexture: WebGLTexture | null;
+  subtitleOverlayTextureSource: HTMLCanvasElement | null;
+  titleOverlayTexture: WebGLTexture | null;
+  titleOverlayTextureSource: HTMLCanvasElement | null;
   imageCache: {
     image: HTMLImageElement | null;
     width: number;
@@ -245,8 +284,104 @@ let glycoPeak: number[] = [];
 let glycoLastPeakTime: number[] = [];
 let lastGlycoMode = -1;
 
+// FFT 読み取り用スクラッチ（毎フレームの Uint8Array 確保を避ける）
+let fftBufferScratch: Uint8Array | null = null;
+let fftEffectScratch: Uint8Array | null = null;
+let fftEarlyScratch: Uint8Array | null = null;
+
+function ensureFftScratch(existing: Uint8Array | null, length: number): Uint8Array {
+  if (!existing || existing.length !== length) return new Uint8Array(length);
+  return existing;
+}
+
+// 背景2D→テクスチャ用スクラッチ（ギャラリー遷移・screenMotion の毎フレーム描画）
+let bgTempCanvas: HTMLCanvasElement | null = null;
+let bgTempCtx: CanvasRenderingContext2D | null = null;
+let bgTempSize = { width: 0, height: 0 };
+let bgTexUploadSize = { width: 0, height: 0 };
+
+function ensureBgTempCanvas(width: number, height: number): CanvasRenderingContext2D | null {
+  if (!bgTempCanvas || bgTempSize.width !== width || bgTempSize.height !== height) {
+    bgTempCanvas = document.createElement('canvas');
+    bgTempCanvas.width = width;
+    bgTempCanvas.height = height;
+    bgTempSize.width = width;
+    bgTempSize.height = height;
+    bgTempCtx = bgTempCanvas.getContext('2d', {
+      alpha: false,
+      desynchronized: true,
+      willReadFrequently: false,
+    });
+  }
+  return bgTempCtx;
+}
+
+function uploadBgTempCanvasToTexture(
+  ctx: WebGLRendererContext,
+  canvasWidth: number,
+  canvasHeight: number
+): void {
+  if (!bgTempCanvas) return;
+  const { gl } = ctx;
+  if (!ctx.imageTexture) {
+    ctx.imageTexture = gl.createTexture();
+  }
+  gl.bindTexture(gl.TEXTURE_2D, ctx.imageTexture);
+  const sizeUnchanged =
+    bgTexUploadSize.width === canvasWidth && bgTexUploadSize.height === canvasHeight;
+  if (sizeUnchanged) {
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, bgTempCanvas);
+  } else {
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, bgTempCanvas);
+    bgTexUploadSize.width = canvasWidth;
+    bgTexUploadSize.height = canvasHeight;
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  }
+}
+
+/** 再生タイムライン上の画像フェード（スペアナ・エフェクト描画用乗数） */
+let imageTimelineFadeMul = 1;
+
+function fadeAlpha(a: number): number {
+  return a * imageTimelineFadeMul;
+}
+
 // デバッグログ用フラグ
 const DEBUG_WEBGL = false;
+
+let lastSubtitleTextureUploadMs = 0;
+let lastTitleTextureUploadMs = 0;
+
+export function getSubtitleTextureUploadMs(): number {
+  return lastSubtitleTextureUploadMs;
+}
+
+export function getTitleTextureUploadMs(): number {
+  return lastTitleTextureUploadMs;
+}
+
+function scheduleIdleWork(fn: () => void): ReturnType<typeof setTimeout> | number {
+  if (typeof requestIdleCallback !== "undefined") {
+    return requestIdleCallback(fn, { timeout: 120 });
+  }
+  return setTimeout(fn, 0);
+}
+
+function cancelIdleWork(handle: ReturnType<typeof setTimeout> | number | null): void {
+  if (handle == null) return;
+  if (typeof cancelIdleCallback !== "undefined" && typeof handle === "number") {
+    cancelIdleCallback(handle);
+  } else {
+    clearTimeout(handle as ReturnType<typeof setTimeout>);
+  }
+}
+
+let pendingSubtitlePrefetchUpload: TextOverlayLayer | null = null;
+let subtitleUploadIdleHandle: ReturnType<typeof setTimeout> | number | null = null;
+let lastScheduledPrefetchUploadCanvas: HTMLCanvasElement | null = null;
 
 function debugLog(message: string, data?: any) {
   if (DEBUG_WEBGL) {
@@ -255,6 +390,265 @@ function debugLog(message: string, data?: any) {
     } else {
       console.log(`[WebGL] ${message}`);
     }
+  }
+}
+
+const TEXT_OVERLAY_TEX_COORDS = new Float32Array([0, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 1]);
+const textOverlayPositionsScratch = new Float32Array(12);
+
+type TextOverlayTexSlotIdx = 0 | 1;
+type TextOverlayTexSlotState = {
+  activeSlot: TextOverlayTexSlotIdx;
+  textures: [WebGLTexture | null, WebGLTexture | null];
+  sources: [HTMLCanvasElement | null, HTMLCanvasElement | null];
+  sizes: [{ width: number; height: number }, { width: number; height: number }];
+};
+
+function createTextOverlayTexSlotState(): TextOverlayTexSlotState {
+  return {
+    activeSlot: 0,
+    textures: [null, null],
+    sources: [null, null],
+    sizes: [{ width: 0, height: 0 }, { width: 0, height: 0 }],
+  };
+}
+
+let subtitleOverlayTexState = createTextOverlayTexSlotState();
+let titleOverlayTexState = createTextOverlayTexSlotState();
+
+function getTextOverlayTexState(slot: 'subtitle' | 'title'): TextOverlayTexSlotState {
+  return slot === 'subtitle' ? subtitleOverlayTexState : titleOverlayTexState;
+}
+
+function ensureTextOverlayTexture(
+  gl: WebGLRenderingContext,
+  texState: TextOverlayTexSlotState,
+  slotIdx: TextOverlayTexSlotIdx
+): WebGLTexture {
+  let texture = texState.textures[slotIdx];
+  if (!texture) {
+    texture = gl.createTexture();
+    texState.textures[slotIdx] = texture;
+  }
+  return texture;
+}
+
+function uploadTextOverlayCanvasToSlot(
+  gl: WebGLRenderingContext,
+  texState: TextOverlayTexSlotState,
+  slotIdx: TextOverlayTexSlotIdx,
+  canvas: HTMLCanvasElement,
+  slot: "subtitle" | "title"
+): WebGLTexture {
+  const texture = ensureTextOverlayTexture(gl, texState, slotIdx);
+  const sizeState = texState.sizes[slotIdx];
+  gl.bindTexture(gl.TEXTURE_2D, texture);
+  const w = canvas.width;
+  const h = canvas.height;
+  const sizeUnchanged = sizeState.width === w && sizeState.height === h;
+  const t0 = performance.now();
+  if (sizeUnchanged) {
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, canvas);
+  } else {
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, canvas);
+    sizeState.width = w;
+    sizeState.height = h;
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  }
+  const uploadMs = performance.now() - t0;
+  if (slot === "subtitle") {
+    lastSubtitleTextureUploadMs = uploadMs;
+  } else {
+    lastTitleTextureUploadMs = uploadMs;
+  }
+  if (DEBUG_WEBGL) {
+    debugLog('text overlay texture upload ms', {
+      slotIdx,
+      ms: uploadMs.toFixed(2),
+      subImage: sizeUnchanged,
+    });
+  }
+  texState.sources[slotIdx] = canvas;
+  return texture;
+}
+
+function resolveTextOverlayTexture(
+  gl: WebGLRenderingContext,
+  texState: TextOverlayTexSlotState,
+  canvas: HTMLCanvasElement,
+  slot: "subtitle" | "title"
+): WebGLTexture {
+  const inactiveIdx = (1 - texState.activeSlot) as TextOverlayTexSlotIdx;
+  if (texState.sources[inactiveIdx] === canvas) {
+    texState.activeSlot = inactiveIdx;
+    return ensureTextOverlayTexture(gl, texState, inactiveIdx);
+  }
+  const activeIdx = texState.activeSlot;
+  if (texState.sources[activeIdx] === canvas) {
+    return ensureTextOverlayTexture(gl, texState, activeIdx);
+  }
+  return uploadTextOverlayCanvasToSlot(gl, texState, activeIdx, canvas, slot);
+}
+
+function prefetchTextOverlayTextureUpload(
+  gl: WebGLRenderingContext,
+  texState: TextOverlayTexSlotState,
+  layer: TextOverlayLayer
+): void {
+  const inactiveIdx = (1 - texState.activeSlot) as TextOverlayTexSlotIdx;
+  if (texState.sources[inactiveIdx] === layer.canvas) return;
+  uploadTextOverlayCanvasToSlot(gl, texState, inactiveIdx, layer.canvas, "subtitle");
+}
+
+function schedulePrefetchTextOverlayTextureUpload(
+  gl: WebGLRenderingContext,
+  texState: TextOverlayTexSlotState,
+  layer: TextOverlayLayer
+): void {
+  const inactiveIdx = (1 - texState.activeSlot) as TextOverlayTexSlotIdx;
+  if (texState.sources[inactiveIdx] === layer.canvas) return;
+  if (
+    lastScheduledPrefetchUploadCanvas === layer.canvas &&
+    (subtitleUploadIdleHandle != null || pendingSubtitlePrefetchUpload?.canvas === layer.canvas)
+  ) {
+    return;
+  }
+  lastScheduledPrefetchUploadCanvas = layer.canvas;
+  pendingSubtitlePrefetchUpload = layer;
+  if (subtitleUploadIdleHandle != null) return;
+  subtitleUploadIdleHandle = scheduleIdleWork(() => {
+    subtitleUploadIdleHandle = null;
+    const pending = pendingSubtitlePrefetchUpload;
+    pendingSubtitlePrefetchUpload = null;
+    if (!pending) return;
+    prefetchTextOverlayTextureUpload(gl, texState, pending);
+  });
+}
+
+function cancelSubtitlePrefetchTextureUpload(): void {
+  cancelIdleWork(subtitleUploadIdleHandle);
+  subtitleUploadIdleHandle = null;
+  pendingSubtitlePrefetchUpload = null;
+  lastScheduledPrefetchUploadCanvas = null;
+}
+
+function resetTextOverlayTexState(gl: WebGLRenderingContext, texState: TextOverlayTexSlotState): void {
+  for (let i = 0; i < 2; i++) {
+    const idx = i as TextOverlayTexSlotIdx;
+    if (texState.textures[idx]) {
+      gl.deleteTexture(texState.textures[idx]);
+    }
+  }
+  texState.activeSlot = 0;
+  texState.textures = [null, null];
+  texState.sources = [null, null];
+  texState.sizes = [{ width: 0, height: 0 }, { width: 0, height: 0 }];
+}
+
+function setTextureDrawAlpha(ctx: WebGLRendererContext, alpha: number): void {
+  if (ctx.texAlphaLocation) {
+    ctx.gl.uniform1f(ctx.texAlphaLocation, alpha);
+  }
+}
+
+function drawTextOverlayLayerWebGL(
+  ctx: WebGLRendererContext,
+  state: TextOverlayDrawState,
+  canvasWidth: number,
+  canvasHeight: number,
+  slot: "subtitle" | "title"
+): void {
+  const { layer, alpha, dy, scale } = state;
+  if (alpha <= 0.001) return;
+
+  const { gl, textureProgram, texPositionLocation, texCoordLocation,
+    texResolutionLocation, textureLocation, positionBuffer, texCoordBuffer } = ctx;
+
+  let destX = layer.x;
+  let destY = layer.y;
+  let destW = layer.w;
+  let destH = layer.h;
+  if (scale !== 1 || dy !== 0) {
+    destX = layer.anchorX + (layer.x - layer.anchorX) * scale;
+    destY = layer.anchorY + dy + (layer.y - layer.anchorY) * scale;
+    destW = layer.w * scale;
+    destH = layer.h * scale;
+  }
+
+  const texState = getTextOverlayTexState(slot);
+  const overlayTexture = resolveTextOverlayTexture(gl, texState, layer.canvas, slot);
+
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  gl.useProgram(textureProgram);
+  if (texResolutionLocation) {
+    gl.uniform2f(texResolutionLocation, canvasWidth, canvasHeight);
+  }
+
+  const x1 = destX;
+  const y1 = destY;
+  const x2 = destX + destW;
+  const y2 = destY + destH;
+  textOverlayPositionsScratch[0] = x1;
+  textOverlayPositionsScratch[1] = y1;
+  textOverlayPositionsScratch[2] = x2;
+  textOverlayPositionsScratch[3] = y1;
+  textOverlayPositionsScratch[4] = x1;
+  textOverlayPositionsScratch[5] = y2;
+  textOverlayPositionsScratch[6] = x1;
+  textOverlayPositionsScratch[7] = y2;
+  textOverlayPositionsScratch[8] = x2;
+  textOverlayPositionsScratch[9] = y1;
+  textOverlayPositionsScratch[10] = x2;
+  textOverlayPositionsScratch[11] = y2;
+
+  gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+  gl.bufferData(gl.ARRAY_BUFFER, textOverlayPositionsScratch, gl.DYNAMIC_DRAW);
+  gl.enableVertexAttribArray(texPositionLocation);
+  gl.vertexAttribPointer(texPositionLocation, 2, gl.FLOAT, false, 0, 0);
+  gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
+  gl.bufferData(gl.ARRAY_BUFFER, TEXT_OVERLAY_TEX_COORDS, gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(texCoordLocation);
+  gl.vertexAttribPointer(texCoordLocation, 2, gl.FLOAT, false, 0, 0);
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, overlayTexture);
+  if (textureLocation) {
+    gl.uniform1i(textureLocation, 0);
+  }
+  setTextureDrawAlpha(ctx, alpha);
+  gl.drawArrays(gl.TRIANGLES, 0, 6);
+}
+
+function drawTextOverlaysWebGL(
+  ctx: WebGLRendererContext,
+  canvasWidth: number,
+  canvasHeight: number,
+  settings?: SpectrumSettings
+): void {
+  const subtitleOverlayEnabled =
+    settings?.subtitleOverlay?.getEnabled?.() ?? settings?.subtitleOverlay?.enabled;
+  const subtitleState = subtitleOverlayEnabled
+    ? resolveSubtitleOverlayDraw(canvasWidth, canvasHeight, settings.subtitleOverlay)
+    : null;
+  const titleState = settings?.titleOverlay?.enabled
+    ? resolveTitleOverlayDraw(canvasWidth, canvasHeight, settings.titleOverlay)
+    : null;
+
+  const prefetchLayer = getSubtitlePrefetchLayer();
+  if (prefetchLayer) {
+    schedulePrefetchTextOverlayTextureUpload(ctx.gl, subtitleOverlayTexState, prefetchLayer);
+  }
+
+  if (!subtitleState && !titleState) return;
+
+  if (subtitleState) {
+    drawTextOverlayLayerWebGL(ctx, subtitleState, canvasWidth, canvasHeight, "subtitle");
+  }
+  if (titleState) {
+    drawTextOverlayLayerWebGL(ctx, titleState, canvasWidth, canvasHeight, "title");
   }
 }
 
@@ -333,6 +727,7 @@ function initWebGL(canvas: HTMLCanvasElement): WebGLRendererContext | null {
   const texCoordLocation = gl.getAttribLocation(textureProgram, 'a_texCoord');
   const texResolutionLocation = gl.getUniformLocation(textureProgram, 'u_resolution');
   const textureLocation = gl.getUniformLocation(textureProgram, 'u_texture');
+  const texAlphaLocation = gl.getUniformLocation(textureProgram, 'u_alpha');
 
   const effectPositionLocation = gl.getAttribLocation(effectProgram, 'a_position');
   const effectResolutionLocation = gl.getUniformLocation(effectProgram, 'u_resolution');
@@ -358,6 +753,7 @@ function initWebGL(canvas: HTMLCanvasElement): WebGLRendererContext | null {
     texCoordLocation,
     texResolutionLocation,
     textureLocation,
+    texAlphaLocation,
     effectPositionLocation,
     effectResolutionLocation,
     effectTimeLocation,
@@ -367,6 +763,10 @@ function initWebGL(canvas: HTMLCanvasElement): WebGLRendererContext | null {
     effectVolumeLocation,
     effectHighFreqLocation,
     imageTexture: null,
+    subtitleOverlayTexture: null,
+    subtitleOverlayTextureSource: null,
+    titleOverlayTexture: null,
+    titleOverlayTextureSource: null,
     imageCache: {
       image: null,
       width: 0,
@@ -430,7 +830,10 @@ function createProgram(
 function drawBackgroundWebGL(
   ctx: WebGLRendererContext,
   canvas: HTMLCanvasElement,
-  image: HTMLImageElement | null
+  image: HTMLImageElement | null,
+  spectrumSettings?: SpectrumSettings,
+  bgAudioReactive?: AudioReactiveData,
+  plainImageFadeAlpha: number = 1
 ): void {
   debugLog('drawBackgroundWebGL called', {
     hasImage: !!image,
@@ -449,25 +852,10 @@ function drawBackgroundWebGL(
 
   const galleryTransition = peekGalleryImageTransitionFrame();
   if (galleryTransition) {
-    const tempCanvas = document.createElement('canvas');
-    tempCanvas.width = canvasWidth;
-    tempCanvas.height = canvasHeight;
-    const tctx = tempCanvas.getContext('2d', {
-      alpha: false,
-      desynchronized: true,
-      willReadFrequently: false,
-    });
+    const tctx = ensureBgTempCanvas(canvasWidth, canvasHeight);
     if (tctx) {
       drawGalleryBackground(tctx, canvasWidth, canvasHeight, null, galleryTransition);
-      if (!ctx.imageTexture) {
-        ctx.imageTexture = gl.createTexture();
-      }
-      gl.bindTexture(gl.TEXTURE_2D, ctx.imageTexture);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, tempCanvas);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      uploadBgTempCanvasToTexture(ctx, canvasWidth, canvasHeight);
       ctx.imageCache = { image: null, width: -1, height: -1 };
       gl.useProgram(textureProgram);
       if (texResolutionLocation) {
@@ -502,6 +890,7 @@ function drawBackgroundWebGL(
       if (textureLocation) {
         gl.uniform1i(textureLocation, 0);
       }
+      setTextureDrawAlpha(ctx, 1);
       gl.drawArrays(gl.TRIANGLES, 0, 6);
     }
     return;
@@ -510,6 +899,56 @@ function drawBackgroundWebGL(
   // 画像がない場合は背景色のみ
   if (!image) {
     debugLog('No image provided, showing background color only');
+    return;
+  }
+
+  const bgVideo = spectrumSettings?.backgroundVideo;
+  if (
+    shouldUseStillScreenBackgroundPipeline(image, spectrumSettings?.screenMotion, !!bgVideo, !!galleryTransition)
+  ) {
+    const tctx = ensureBgTempCanvas(canvasWidth, canvasHeight);
+    if (tctx) {
+      drawStillScreenBackground(
+        tctx,
+        image,
+        canvasWidth,
+        canvasHeight,
+        spectrumSettings?.screenMotion,
+        spectrumSettings?.getPlaybackTiming?.(),
+        bgAudioReactive,
+        spectrumSettings?.getStopGracefulImageFade?.() ?? null
+      );
+      uploadBgTempCanvasToTexture(ctx, canvasWidth, canvasHeight);
+      ctx.imageCache = { image, width: canvasWidth, height: canvasHeight };
+      gl.useProgram(textureProgram);
+      if (texResolutionLocation) {
+        gl.uniform2f(texResolutionLocation, canvasWidth, canvasHeight);
+      }
+      const positions = new Float32Array([
+        0, 0,
+        canvasWidth, 0,
+        0, canvasHeight,
+        0, canvasHeight,
+        canvasWidth, 0,
+        canvasWidth, canvasHeight,
+      ]);
+      const texCoords = new Float32Array([0, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 1]);
+      gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+      gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
+      gl.enableVertexAttribArray(texPositionLocation);
+      gl.vertexAttribPointer(texPositionLocation, 2, gl.FLOAT, false, 0, 0);
+      gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
+      gl.bufferData(gl.ARRAY_BUFFER, texCoords, gl.STATIC_DRAW);
+      gl.enableVertexAttribArray(texCoordLocation);
+      gl.vertexAttribPointer(texCoordLocation, 2, gl.FLOAT, false, 0, 0);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, ctx.imageTexture);
+      if (textureLocation) {
+        gl.uniform1i(textureLocation, 0);
+      }
+      setTextureDrawAlpha(ctx, 1);
+      gl.drawArrays(gl.TRIANGLES, 0, 6);
+    }
     return;
   }
 
@@ -579,6 +1018,7 @@ function drawBackgroundWebGL(
   if (textureLocation) {
     gl.uniform1i(textureLocation, 0);
   }
+  setTextureDrawAlpha(ctx, plainImageFadeAlpha);
 
   // 描画
   gl.drawArrays(gl.TRIANGLES, 0, 6);
@@ -664,9 +1104,6 @@ function prepareImageTexture(
   };
 }
 
-/**
- * WebGLで矩形（バー）を描画
- */
 function drawRect(
   ctx: WebGLRendererContext,
   x: number,
@@ -679,6 +1116,7 @@ function drawRect(
   a: number
 ): void {
   const { gl, positionBuffer, colorBuffer, positionLocation, colorLocation } = ctx;
+  const aFade = fadeAlpha(a);
 
   // 矩形の頂点（2つの三角形）
   const x1 = x;
@@ -696,12 +1134,12 @@ function drawRect(
   ]);
 
   const colors = new Float32Array([
-    r, g, b, a,
-    r, g, b, a,
-    r, g, b, a,
-    r, g, b, a,
-    r, g, b, a,
-    r, g, b, a,
+    r, g, b, aFade,
+    r, g, b, aFade,
+    r, g, b, aFade,
+    r, g, b, aFade,
+    r, g, b, aFade,
+    r, g, b, aFade,
   ]);
 
   // 位置バッファを設定
@@ -720,6 +1158,43 @@ function drawRect(
   gl.drawArrays(gl.TRIANGLES, 0, 6);
 }
 
+function drawGlycoBackgroundDimOverlayWebGL(
+  ctx: WebGLRendererContext,
+  canvasWidth: number,
+  canvasHeight: number,
+  params?: SpectrumSettings["retroEqParams"],
+  adj?: ModeAdjustments,
+  glycoRotationDeg?: number,
+  glycoColorSet?: string
+): void {
+  const amount = params?.backgroundDimAmount ?? 0;
+  if (amount <= 0) return;
+  const alpha = glycoBackgroundDimAlpha(amount);
+  const rgb = parseSpectrumHexRgb(params?.backgroundDimColor ?? "#000000") ?? [0, 0, 0];
+  const region = glycoBarRegionBounds(canvasWidth, canvasHeight, adj ?? {
+    scaleX: 1,
+    scaleY: 1,
+    offsetX: 0,
+    offsetY: 0,
+  }, {
+    glycoRotationDeg,
+    glycoColorSet,
+  });
+  const { gl, program } = ctx;
+  gl.useProgram(program);
+  drawRect(
+    ctx,
+    region.x,
+    region.y,
+    region.width,
+    region.height,
+    rgb[0] / 255,
+    rgb[1] / 255,
+    rgb[2] / 255,
+    alpha
+  );
+}
+
 /** WebGLで三角形を描画 */
 function drawTriangle(
   ctx: WebGLRendererContext,
@@ -735,8 +1210,9 @@ function drawTriangle(
   a: number
 ): void {
   const { gl, positionBuffer, colorBuffer, positionLocation, colorLocation } = ctx;
+  const aFade = fadeAlpha(a);
   const positions = new Float32Array([x1, y1, x2, y2, x3, y3]);
-  const colors = new Float32Array([r, g, b, a, r, g, b, a, r, g, b, a]);
+  const colors = new Float32Array([r, g, b, aFade, r, g, b, aFade, r, g, b, aFade]);
   gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
   gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
   gl.enableVertexAttribArray(positionLocation);
@@ -767,6 +1243,8 @@ function drawRectGradient(
   a2: number
 ): void {
   const { gl, positionBuffer, colorBuffer, positionLocation, colorLocation } = ctx;
+  const a1Fade = fadeAlpha(a1);
+  const a2Fade = fadeAlpha(a2);
 
   // 矩形の頂点（2つの三角形）
   const x1 = x;
@@ -785,12 +1263,12 @@ function drawRectGradient(
 
   // 上側の頂点(y1)には色1、下側の頂点(y2)には色2
   const colors = new Float32Array([
-    r1, g1, b1, a1,  // 左上
-    r1, g1, b1, a1,  // 右上
-    r2, g2, b2, a2,  // 左下
-    r2, g2, b2, a2,  // 左下(2つ目の三角形)
-    r1, g1, b1, a1,  // 右上(2つ目の三角形)
-    r2, g2, b2, a2,  // 右下
+    r1, g1, b1, a1Fade,  // 左上
+    r1, g1, b1, a1Fade,  // 右上
+    r2, g2, b2, a2Fade,  // 左下
+    r2, g2, b2, a2Fade,  // 左下(2つ目の三角形)
+    r1, g1, b1, a1Fade,  // 右上(2つ目の三角形)
+    r2, g2, b2, a2Fade,  // 右下
   ]);
 
   // 位置バッファを設定
@@ -821,6 +1299,7 @@ function drawPolygon(
   a: number
 ): void {
   const { gl, positionBuffer, colorBuffer, positionLocation, colorLocation } = ctx;
+  const aFade = fadeAlpha(a);
 
   // 頂点数
   const numVertices = vertices.length / 2;
@@ -837,7 +1316,7 @@ function drawPolygon(
 
     // 各頂点に同じ色
     for (let j = 0; j < 3; j++) {
-      colors.push(r, g, b, a);
+      colors.push(r, g, b, aFade);
     }
   }
 
@@ -876,6 +1355,7 @@ function drawLine(
   lineWidth: number = 2
 ): void {
   const { gl, positionBuffer, colorBuffer, positionLocation, colorLocation } = ctx;
+  const aFade = fadeAlpha(a);
 
   // 線の太さを考慮した矩形として描画
   const dx = x2 - x1;
@@ -898,12 +1378,12 @@ function drawLine(
   ]);
 
   const colors = new Float32Array([
-    r, g, b, a,
-    r, g, b, a,
-    r, g, b, a,
-    r, g, b, a,
-    r, g, b, a,
-    r, g, b, a,
+    r, g, b, aFade,
+    r, g, b, aFade,
+    r, g, b, aFade,
+    r, g, b, aFade,
+    r, g, b, aFade,
+    r, g, b, aFade,
   ]);
 
   gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
@@ -917,6 +1397,146 @@ function drawLine(
   gl.vertexAttribPointer(colorLocation, 4, gl.FLOAT, false, 0, 0);
 
   gl.drawArrays(gl.TRIANGLES, 0, 6);
+}
+
+const lineBatchPositionsScratch: number[] = [];
+const lineBatchColorsScratch: number[] = [];
+
+function resetLineBatch(): void {
+  lineBatchPositionsScratch.length = 0;
+  lineBatchColorsScratch.length = 0;
+}
+
+function addLineToBatch(
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  r: number,
+  g: number,
+  b: number,
+  a: number,
+  lineWidth: number = 2
+): void {
+  const aFade = fadeAlpha(a);
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const len = Math.sqrt(dx * dx + dy * dy);
+  if (len === 0) return;
+
+  const nx = -dy / len;
+  const ny = dx / len;
+  const hw = lineWidth / 2;
+
+  lineBatchPositionsScratch.push(
+    x1 + nx * hw,
+    y1 + ny * hw,
+    x2 + nx * hw,
+    y2 + ny * hw,
+    x1 - nx * hw,
+    y1 - ny * hw,
+    x1 - nx * hw,
+    y1 - ny * hw,
+    x2 + nx * hw,
+    y2 + ny * hw,
+    x2 - nx * hw,
+    y2 - ny * hw
+  );
+  for (let i = 0; i < 6; i++) {
+    lineBatchColorsScratch.push(r, g, b, aFade);
+  }
+}
+
+function flushLineBatch(ctx: WebGLRendererContext): void {
+  const vertexCount = lineBatchPositionsScratch.length / 2;
+  if (vertexCount === 0) return;
+
+  const { gl, positionBuffer, colorBuffer, positionLocation, colorLocation } = ctx;
+  gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(lineBatchPositionsScratch), gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(positionLocation);
+  gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
+
+  gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(lineBatchColorsScratch), gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(colorLocation);
+  gl.vertexAttribPointer(colorLocation, 4, gl.FLOAT, false, 0, 0);
+
+  gl.drawArrays(gl.TRIANGLES, 0, vertexCount);
+}
+
+function drawWaterRippleWebGL(
+  ctx: WebGLRendererContext,
+  draws: WaterRippleDrawGl[],
+  wrLightMode: boolean,
+  effectDucking: number
+): void {
+  resetLineBatch();
+  for (const d of draws) {
+    const rr = d.r / 255;
+    const gg = d.g / 255;
+    const bb = d.b / 255;
+    const aa = d.a * effectDucking;
+    if (aa < 0.012) continue;
+    const lw = d.lw;
+    if (d.kind === "firework") {
+      addLineToBatch(d.x1, d.y1, d.x2, d.y2, rr, gg, bb, aa, lw);
+      continue;
+    }
+    if (d.kind === "heart") {
+      const s = Math.max(3, d.scale);
+      const steps = getWaterRippleHeartSteps(wrLightMode);
+      const cosR = Math.cos(d.rotation);
+      const sinR = Math.sin(d.rotation);
+      let prevPx = 0;
+      let prevPy = 0;
+      for (let i = 0; i <= steps; i++) {
+        const t = (Math.PI * 2 * i) / steps;
+        const hx = 16 * Math.pow(Math.sin(t), 3);
+        const hy =
+          13 * Math.cos(t) -
+          5 * Math.cos(2 * t) -
+          2 * Math.cos(3 * t) -
+          Math.cos(4 * t);
+        const px = (hx / 18) * s;
+        const py = (-hy / 18) * s;
+        const rx = px * cosR - py * sinR;
+        const ry = px * sinR + py * cosR;
+        const x = d.x + rx;
+        const y = d.y + ry;
+        if (i > 0) {
+          addLineToBatch(prevPx, prevPy, x, y, rr, gg, bb, aa, lw);
+        }
+        prevPx = x;
+        prevPy = y;
+      }
+      continue;
+    }
+    if (d.radius < 0.45) continue;
+    const segments = getWaterRippleArcSegments(d.radius, wrLightMode);
+    const step = (Math.PI * 2) / segments;
+    let prevCos = 1;
+    let prevSin = 0;
+    for (let i = 0; i < segments; i++) {
+      const a2 = (i + 1) * step;
+      const nextCos = Math.cos(a2);
+      const nextSin = Math.sin(a2);
+      addLineToBatch(
+        d.x + prevCos * d.radius,
+        d.y + prevSin * d.radius,
+        d.x + nextCos * d.radius,
+        d.y + nextSin * d.radius,
+        rr,
+        gg,
+        bb,
+        aa,
+        lw
+      );
+      prevCos = nextCos;
+      prevSin = nextSin;
+    }
+  }
+  flushLineBatch(ctx);
 }
 
 /**
@@ -975,6 +1595,7 @@ function drawCircle(
   a: number
 ): void {
   const { gl, positionBuffer, colorBuffer, positionLocation, colorLocation } = ctx;
+  const aFade = fadeAlpha(a);
 
   const segments = 32;
   const positions: number[] = [];
@@ -993,9 +1614,9 @@ function drawCircle(
     positions.push(cx + Math.cos(angle1) * radius, cy + Math.sin(angle1) * radius);
     positions.push(cx + Math.cos(angle2) * radius, cy + Math.sin(angle2) * radius);
 
-    colors.push(r, g, b, a);
-    colors.push(r, g, b, a);
-    colors.push(r, g, b, a);
+    colors.push(r, g, b, aFade);
+    colors.push(r, g, b, aFade);
+    colors.push(r, g, b, aFade);
   }
 
   gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
@@ -1028,7 +1649,7 @@ function drawEffectOverlayWebGL(
           effectTimeLocation, effectStrengthLocation, effectTypeLocation,
           effectBassLocation, effectVolumeLocation, effectHighFreqLocation,
           positionBuffer } = ctx;
-  const strength = DENSITY_STRENGTH[effect.density];
+  const strength = DENSITY_STRENGTH[effect.density] * imageTimelineFadeMul;
 
   gl.useProgram(effectProgram);
   if (effectResolutionLocation) gl.uniform2f(effectResolutionLocation, width, height);
@@ -1106,8 +1727,62 @@ function renderFrame(): void {
     offsetY: 0,
   };
 
+  const spectrumForBg = latestSpectrumSettings;
+  const screenMotion = spectrumForBg?.screenMotion ?? DEFAULT_SCREEN_MOTION;
+  const imageTimelineFadeAlpha = resolveCombinedImageFadeAlpha(
+    screenMotion,
+    spectrumForBg?.getPlaybackTiming?.(),
+    spectrumForBg?.getStopGracefulImageFade?.() ?? null
+  );
+  imageTimelineFadeMul = imageTimelineFadeAlpha;
+
+  const galleryTransition = peekGalleryImageTransitionFrame();
+  const bgVideo = spectrumForBg?.backgroundVideo;
+  const useStillBackgroundPipeline =
+    !!imageCtx &&
+    shouldUseStillScreenBackgroundPipeline(
+      imageCtx,
+      screenMotion,
+      !!bgVideo,
+      !!galleryTransition
+    );
+  const plainImageFadeAlpha = useStillBackgroundPipeline ? 1 : imageTimelineFadeAlpha;
+
+  let bgAudioReactive: AudioReactiveData | undefined;
+  const sm = screenMotion;
+  if (
+    imageCtx &&
+    latestEffectActive &&
+    latestAnalyser &&
+    sm &&
+    (sm.brightnessOnPeak || sm.shakeOnChorus || sm.chorusZoomOnPeak || sm.flashOnDrop)
+  ) {
+    fftEarlyScratch = ensureFftScratch(fftEarlyScratch, latestAnalyser.frequencyBinCount);
+    const earlyFreq = fftEarlyScratch;
+    latestAnalyser.getByteFrequencyData(earlyFreq);
+    let bass = 0;
+    let volume = 0;
+    let highFreq = 0;
+    const bl = earlyFreq.length;
+    for (let i = 0; i < 16; i++) bass += earlyFreq[i];
+    for (let i = 0; i < bl; i++) volume += earlyFreq[i];
+    for (let i = 200; i < Math.min(256, bl); i++) highFreq += earlyFreq[i];
+    bgAudioReactive = {
+      bass: Math.min(1, bass / (16 * 200)),
+      volume: Math.min(1, volume / (bl * 180)),
+      highFreq: Math.min(1, highFreq / (56 * 150)),
+    };
+  }
+
   // 背景を描画（WebGLでテクスチャとして描画）
-  drawBackgroundWebGL(glContext, canvas, imageCtx);
+  drawBackgroundWebGL(
+    glContext,
+    canvas,
+    imageCtx,
+    spectrumForBg,
+    bgAudioReactive,
+    plainImageFadeAlpha
+  );
 
   // プレビュー/録画中のみアニメーション（エフェクトも同様。停止中は背景1枚のみで負荷なし）
   const wantSpectrum = latestEffectActive;
@@ -1116,6 +1791,21 @@ function renderFrame(): void {
   if (!wantSpectrum) {
     isAnimating = false;
     return;
+  }
+
+  if (mode === 6) {
+    const { gl } = glContext;
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    drawGlycoBackgroundDimOverlayWebGL(
+      glContext,
+      canvasWidth,
+      canvasHeight,
+      spectrumForBg?.retroEqParams,
+      adj,
+      spectrumForBg?.glycoRotationDeg,
+      spectrumForBg?.glycoColorSet
+    );
   }
 
   gl.enable(gl.BLEND);
@@ -1139,8 +1829,10 @@ function renderFrame(): void {
     };
 
     const bufferLength = analyser.frequencyBinCount;
-    const bufferData = new Uint8Array(bufferLength);
-    const freqForEffect = new Uint8Array(bufferLength);
+    fftBufferScratch = ensureFftScratch(fftBufferScratch, bufferLength);
+    const bufferData = fftBufferScratch;
+    fftEffectScratch = ensureFftScratch(fftEffectScratch, bufferLength);
+    const freqForEffect = fftEffectScratch;
     const needsFreqForEffect =
       latestEffect &&
       [
@@ -1154,7 +1846,9 @@ function renderFrame(): void {
         "dust",
         "rain",
         "snow",
+        "waterRipple",
         "mirrorBall",
+        "laser",
       ].includes(latestEffect.type);
     if (needsFreqForEffect) {
       analyser.getByteFrequencyData(freqForEffect);
@@ -1187,6 +1881,15 @@ function renderFrame(): void {
         }
         // エフェクトON時はスペアナを間引いてもオーバーレイは毎フレーム更新
         if (!wantEffects) {
+          drawTextOverlaysWebGL(glContext, canvasWidth, canvasHeight, latestSpectrumSettings ?? undefined);
+          fpsCounter++;
+          const throttleNow = performance.now();
+          if (throttleNow - fpsLastTime >= 1000) {
+            currentFPS = Math.round((fpsCounter * 1000) / (throttleNow - fpsLastTime));
+            fpsCounter = 0;
+            fpsLastTime = throttleNow;
+          }
+          animationFrameId = requestAnimationFrame(renderFrame);
           return;
         }
         skipSpectrumDraw = true;
@@ -1194,6 +1897,9 @@ function renderFrame(): void {
         (renderFrame as any)[key] = now;
       }
     }
+
+    const effAdj: ModeAdjustments =
+      mode === 6 ? { ...adj, scaleY: adj.scaleY / 3, scaleX: adj.scaleX } : adj;
 
     // モードに応じて描画
     if (!skipSpectrumDraw)
@@ -1203,71 +1909,75 @@ function renderFrame(): void {
         break;
       case 0:
         analyser.getByteFrequencyData(bufferData);
-        drawMode0(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
+        drawMode0(glContext, bufferData, canvasWidth, canvasHeight, effAdj, settings);
         break;
       case 1:
         analyser.getByteTimeDomainData(bufferData);
-        drawMode1(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
+        drawMode1(glContext, bufferData, canvasWidth, canvasHeight, effAdj, settings);
         break;
       case 2:
         analyser.getByteFrequencyData(bufferData);
-        drawMode2(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
+        drawMode2(glContext, bufferData, canvasWidth, canvasHeight, effAdj, settings);
         break;
       case 3:
         analyser.getByteFrequencyData(bufferData);
-        drawMode3(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
+        drawMode3(glContext, bufferData, canvasWidth, canvasHeight, effAdj, settings);
         break;
       case 4:
         analyser.getByteFrequencyData(bufferData);
-        drawMode4(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
+        drawMode4(glContext, bufferData, canvasWidth, canvasHeight, effAdj, settings);
         break;
       case 5:
         analyser.getByteTimeDomainData(bufferData);
-        drawMode5(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
+        drawMode5(glContext, bufferData, canvasWidth, canvasHeight, effAdj, settings);
         break;
       case 6:
-        analyser.getByteFrequencyData(bufferData);
+        if (!needsFreqForEffect) {
+          analyser.getByteFrequencyData(bufferData);
+        } else {
+          bufferData.set(freqForEffect);
+        }
         drawMode6Glyco(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
         break;
       case 7:
         analyser.getByteFrequencyData(bufferData);
-        drawMode7Area(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
+        drawMode7Area(glContext, bufferData, canvasWidth, canvasHeight, effAdj, settings);
         break;
       case 8:
         analyser.getByteFrequencyData(bufferData);
-        drawMode8LoudnessPulse(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
+        drawMode8LoudnessPulse(glContext, bufferData, canvasWidth, canvasHeight, effAdj, settings);
         break;
       case 9:
         analyser.getByteFrequencyData(bufferData);
-        drawMode9Vu(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
+        drawMode9Vu(glContext, bufferData, canvasWidth, canvasHeight, effAdj, settings);
         break;
       case 10:
         analyser.getByteFrequencyData(bufferData);
-        drawMode10Ring(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
+        drawMode10Ring(glContext, bufferData, canvasWidth, canvasHeight, effAdj, settings);
         break;
       case 11:
         analyser.getByteFrequencyData(bufferData);
-        drawMode11Orb(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
+        drawMode11Orb(glContext, bufferData, canvasWidth, canvasHeight, effAdj, settings);
         break;
       case 12:
         analyser.getByteFrequencyData(bufferData);
-        drawMode12Breathing(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
+        drawMode12Breathing(glContext, bufferData, canvasWidth, canvasHeight, effAdj, settings);
         break;
       case 13:
         analyser.getByteFrequencyData(bufferData);
-        drawMode13Particles(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
+        drawMode13Particles(glContext, bufferData, canvasWidth, canvasHeight, effAdj, settings);
         break;
       case 14:
         analyser.getByteFrequencyData(bufferData);
-        drawMode14Morph(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
+        drawMode14Morph(glContext, bufferData, canvasWidth, canvasHeight, effAdj, settings);
         break;
       case 15:
         analyser.getByteTimeDomainData(bufferData);
-        drawMode15Oscilloscope(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
+        drawMode15Oscilloscope(glContext, bufferData, canvasWidth, canvasHeight, effAdj, settings);
         break;
       case 16:
         analyser.getByteTimeDomainData(bufferData);
-        drawMode16Lissajous(glContext, bufferData, canvasWidth, canvasHeight, adj, settings);
+        drawMode16Lissajous(glContext, bufferData, canvasWidth, canvasHeight, effAdj, settings);
         break;
     }
   }
@@ -1292,7 +2002,9 @@ function renderFrame(): void {
         latestEffect.spaceDirection ?? "forward",
         latestEffect.spaceSpeed ?? 1,
         variant === "spaceAudio" ? audioRForEffects : undefined,
-        latestEffect.effectTintColor
+        latestEffect.effectTintColor,
+        latestEffect.spaceCenterX ?? 0.5,
+        latestEffect.spaceCenterY ?? 0.5
       );
       for (const p of particles) {
         const r = p.r / 255;
@@ -1394,7 +2106,8 @@ function renderFrame(): void {
         audioRForEffects,
         latestEffect.weatherAngleDeg ?? 18,
         latestEffect.weatherAmount ?? 0.65,
-        latestEffect.weatherColor
+        latestEffect.weatherColor,
+        latestEffect.rainAudioSensitivity ?? 0
       );
       gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
       for (const s of streaks) {
@@ -1439,6 +2152,31 @@ function renderFrame(): void {
         );
       }
       gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    } else if (latestEffect.type === "waterRipple") {
+      const now = performance.now();
+      const deltaTime = Math.min(now - lastEffectTime, 50);
+      lastEffectTime = now;
+      const wrIntensity =
+        latestEffect.waterRippleIntensity != null
+          ? Math.max(0, Math.min(1, latestEffect.waterRippleIntensity))
+          : densityToWaterRippleIntensity(latestEffect.density);
+      const wrLightMode = latestEffect.waterRippleLightMode !== false;
+      const draws = updateAndGetWaterRippleDraws(
+        canvasWidth,
+        canvasHeight,
+        wrIntensity,
+        deltaTime,
+        latestEffect.waterRippleColor ??
+          latestEffect.effectTintColor ??
+          latestEffect.weatherColor,
+        latestEffect.waterRippleVariant ?? "ripple",
+        wrLightMode,
+        audioRForEffects,
+        latestEffect.waterRippleAudioSensitivity ?? 0
+      );
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+      drawWaterRippleWebGL(glContext, draws, wrLightMode, effectDucking);
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     } else if (latestEffect.type === "scanlines") {
       const strength = DENSITY_STRENGTH[latestEffect.density];
       const spacing = latestEffect.density === 3 ? 2 : latestEffect.density === 2 ? 3 : 4;
@@ -1455,6 +2193,33 @@ function renderFrame(): void {
           drawRect(glContext, 0, y + 1, canvasWidth, 1, 0, 0, 0, alpha * 0.35);
         }
       }
+    } else if (latestEffect.type === "laser") {
+      const now = performance.now();
+      const deltaTime = Math.min(now - lastEffectTime, 50);
+      lastEffectTime = now;
+      const segments = updateAndGetLaserSegments(
+        canvasWidth,
+        canvasHeight,
+        latestEffect.density,
+        deltaTime
+      );
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+      for (const s of segments) {
+        if (s.a < 0.018) continue;
+        drawLine(
+          glContext,
+          s.x1,
+          s.y1,
+          s.x2,
+          s.y2,
+          s.r / 255,
+          s.g / 255,
+          s.b / 255,
+          s.a,
+          s.lw
+        );
+      }
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     } else if (latestEffect.type === "mirrorBall") {
       const now = performance.now();
       const deltaTime = Math.min(now - lastEffectTime, 50);
@@ -1579,6 +2344,8 @@ function renderFrame(): void {
     fpsLastTime = now;
   }
 
+  drawTextOverlaysWebGL(glContext, canvasWidth, canvasHeight, latestSpectrumSettings ?? undefined);
+
   // 次のフレームをスケジュール
   animationFrameId = requestAnimationFrame(renderFrame);
 }
@@ -1614,9 +2381,9 @@ export const drawBarsWebGL = (
   latestEffectActive = isEffectActive ?? false;
   latestSpectrumSettings = spectrumSettings;
 
-  // 既にアニメーション中の場合は、パラメータだけ更新して終了
+  // 既にアニメーション中: パラメータ更新後すぐ1フレーム描画（offset/scale 変更を即反映）
   if (isAnimating) {
-    debugLog('Already animating, updating parameters only');
+    renderFrame();
     return;
   }
 
@@ -1648,17 +2415,19 @@ function drawMode0(
   settings: SpectrumSettings
 ): void {
   const barsLength = 128;
-  const barWidth = canvasWidth / barsLength;
-  let barX = 0;
-  const opacity = settings.opacity;
+  const barPitch = canvasWidth / barsLength;
+  const barWidth = Math.max(1, barPitch * 0.72);
+  const barGap = barPitch - barWidth;
+  const opacity = getVisualOpacity(settings.opacity);
   const [pr, pg, pb] = getSpectrumPrimaryRgb(settings);
   const r = pr / 255;
-  const g = pg / 255;
+  const gCol = pg / 255;
   const b = pb / 255;
 
   for (let i = 0; i < barsLength; i++) {
     const g = spectrumLinearBarLowGain(i, barsLength);
     const barHeight = Math.min(255, bufferData[i] * g);
+    const barX = i * barPitch + barGap * 0.5;
     const y = canvasHeight - barHeight;
 
     // 4つの角の座標を変換
@@ -1669,8 +2438,12 @@ function drawMode0(
     const transformedWidth = x2 - x1;
     const transformedHeight = y2 - y1;
 
-    drawRect(ctx, x1, y1, transformedWidth, transformedHeight, r, g, b, opacity);
-    barX += barWidth;
+    drawRect(ctx, x1, y1, transformedWidth, transformedHeight, r, gCol, b, 0.84 * opacity);
+    const edgeR = Math.min(1, r + 0.1);
+    const edgeG = Math.min(1, gCol + 0.1);
+    const edgeB = Math.min(1, b + 0.1);
+    drawLine(ctx, x1, y1, x2, y1, edgeR, edgeG, edgeB, 0.45 * opacity, 1);
+    drawLine(ctx, x1, y1, x1, y2, edgeR, edgeG, edgeB, 0.3 * opacity, 1);
   }
 }
 
@@ -1722,8 +2495,6 @@ function drawMode2(
   const barWidth = BASE_LINE_WIDTH_CIRCLE * settings.lineWidthCircle;
 
   // User adjustment offsets in pixels
-  const offsetXPixels = (canvasWidth * adj.offsetX) / 100;
-  const offsetYPixels = (canvasHeight * adj.offsetY) / 100;
   const opacity = settings.opacity;
   const [pr, pg, pb] = getSpectrumPrimaryRgb(settings);
   const r = pr / 255;
@@ -1736,22 +2507,13 @@ function drawMode2(
     const value = bufferData[i];
     const angle = i * ((180 / 128) * Math.PI / 180) + rotationOffsetRad;
 
-    // Canvas.ts draws bars at (0, radius) with rotation
-    // After rotation by angle: point (0, radius) becomes (-radius*sin(angle), radius*cos(angle))
     const localX1 = -radius * Math.sin(angle);
     const localY1 = radius * Math.cos(angle);
     const localX2 = -(radius - value) * Math.sin(angle);
     const localY2 = (radius - value) * Math.cos(angle);
 
-    // Apply full Canvas.ts transformation:
-    // User adjustments are applied first, then mode-specific scale(0.5, 0.5)
-    // The offset is also scaled by the mode's 0.5 factor
-    // screen_x = local_x * scaleX * 0.5 + canvasWidth/2 + offsetXPixels * 0.5
-    // screen_y = local_y * scaleY * 0.5 + canvasHeight/2 + offsetYPixels * 0.5
-    const tx1 = localX1 * adj.scaleX * 0.5 + canvasWidth / 2 + offsetXPixels * 0.5;
-    const ty1 = localY1 * adj.scaleY * 0.5 + canvasHeight / 2 + offsetYPixels * 0.5;
-    const tx2 = localX2 * adj.scaleX * 0.5 + canvasWidth / 2 + offsetXPixels * 0.5;
-    const ty2 = localY2 * adj.scaleY * 0.5 + canvasHeight / 2 + offsetYPixels * 0.5;
+    const [tx1, ty1] = applyMode2LocalToScreen(localX1, localY1, canvasWidth, canvasHeight, adj);
+    const [tx2, ty2] = applyMode2LocalToScreen(localX2, localY2, canvasWidth, canvasHeight, adj);
 
     drawLine(ctx, tx1, ty1, tx2, ty2, r, g, b, opacity, barWidth);
   }
@@ -1823,7 +2585,8 @@ function drawMode4(
   const dotsPerCol = 16;
   const dotSizeX = canvasWidth / dotsPerRow;
   const dotSizeY = canvasHeight / dotsPerCol;
-  const dotRadius = Math.min(dotSizeX, dotSizeY) / 3;
+  const baseDotRadius = Math.min(dotSizeX, dotSizeY) / 3;
+  const dotRadius = baseDotRadius * getSpectrumDotRadiusScale(settings.dotSizeLevel);
   const baseOpacity = settings.opacity;
   const useRainbow = settings.spectrumRainbowColorful !== false;
   const [pr, pg, pb] = getSpectrumPrimaryRgb(settings);
@@ -1925,6 +2688,21 @@ function getVerticalEQFixedColor(t: number): [number, number, number] {
   ];
 }
 
+function rotatePointAroundCenter(
+  x: number,
+  y: number,
+  centerX: number,
+  centerY: number,
+  rad: number
+): [number, number] {
+  if (rad === 0) return [x, y];
+  const dx = x - centerX;
+  const dy = y - centerY;
+  const c = Math.cos(rad);
+  const s = Math.sin(rad);
+  return [centerX + dx * c - dy * s, centerY + dx * s + dy * c];
+}
+
 // 縦グラデーション用カラー（下→上: 青紫→シアン→緑→赤橙）
 const VERTICAL_EQ_COLORS = [
   [60 / 255, 50 / 255, 120 / 255] as [number, number, number],
@@ -1943,27 +2721,47 @@ function drawMode6Glyco(
   settings: SpectrumSettings
 ): void {
   const bufferLength = bufferData.length;
-  const barsLength = 64;
-  const barWidth = canvasWidth / barsLength;
+  const retro = settings.retroEqParams;
+  const barsLength = Math.max(24, Math.min(160, Math.round(retro?.bars ?? 64)));
+  const gapMul = Math.max(0.5, Math.min(2, retro?.barGap ?? 1));
+  const widthMul = Math.max(0.5, Math.min(2, retro?.barWidth ?? 1));
+  const { barPitch, barWidth, barGap } = glycoBarLayout(canvasWidth, barsLength, widthMul, gapMul);
   const scale = (canvasHeight / 255) * GLYCO_BAR_VERTICAL_SCALE;
   const holdMs = 350;
   const decayPerFrame = 2.5;
   const now = performance.now();
-  const baseOpacity = settings.opacity;
+  const glycoOp = settings.opacity;
   const colorSet = settings.glycoColorSet ?? "amber";
   const useVerticalGradient = colorSet === "verticalEQ";
   const useVerticalGradientFixed = colorSet === "verticalEQFixed";
   const peakLineWidth = 5; // ピーク「-」を太く
-
   const effAdj: ModeAdjustments = { ...adj, scaleY: adj.scaleY / 3, scaleX: adj.scaleX };
+  const glycoRotationRad = ((settings.glycoRotationDeg ?? 0) * Math.PI) / 180;
+  const [glycoCenterX, glycoCenterY] = applyTransform(
+    canvasWidth / 2,
+    canvasHeight / 2,
+    canvasWidth,
+    canvasHeight,
+    effAdj
+  );
 
-  if (lastGlycoMode !== 6) {
+  if (lastGlycoMode !== 6 || glycoPeak.length !== barsLength) {
     glycoPeak = new Array(barsLength).fill(0);
     glycoLastPeakTime = new Array(barsLength).fill(0);
   }
   lastGlycoMode = 6;
 
   const getColor = (i: number) => {
+    if (colorSet === "palette") {
+      const p = settings.spectrumColorHex ? parseSpectrumHexRgb(settings.spectrumColorHex) : null;
+      const bar: [number, number, number] = p ?? GLYCO_COLOR_SETS.amber.bar;
+      const dash: [number, number, number] = [
+        Math.min(255, bar[0] + 44),
+        Math.min(255, bar[1] + 44),
+        Math.min(255, bar[2] + 44),
+      ];
+      return { bar, dash };
+    }
     if (GLYCO_COLOR_SETS[colorSet]) {
       const c = GLYCO_COLOR_SETS[colorSet];
       return { bar: c.bar, dash: c.dash };
@@ -1981,7 +2779,7 @@ function drawMode6Glyco(
     const rawValue = glycoBarRawEnergy(i, barsLength, bufferLength, bufferData);
     const value = glycoAdjustedLevel(rawValue);
     const barHeight = Math.min(value * scale, canvasHeight);
-    const x = i * barWidth;
+    const x = i * barPitch + barGap * 0.5;
 
     if (value >= glycoPeak[i]) {
       glycoPeak[i] = value;
@@ -1990,11 +2788,13 @@ function drawMode6Glyco(
       glycoPeak[i] = Math.max(0, glycoPeak[i] - decayPerFrame);
     }
 
-    const barOpacity = 0.6 * baseOpacity;
+    const barOpacity = glycoOp;
 
     if (useVerticalGradient) {
-      const [x1, y1] = applyTransform(x, canvasHeight - barHeight, canvasWidth, canvasHeight, effAdj);
-      const [x2, y2] = applyTransform(x + barWidth, canvasHeight, canvasWidth, canvasHeight, effAdj);
+      let [x1, y1] = applyTransform(x, canvasHeight - barHeight, canvasWidth, canvasHeight, effAdj);
+      let [x2, y2] = applyTransform(x + barWidth, canvasHeight, canvasWidth, canvasHeight, effAdj);
+      [x1, y1] = rotatePointAroundCenter(x1, y1, glycoCenterX, glycoCenterY, glycoRotationRad);
+      [x2, y2] = rotatePointAroundCenter(x2, y2, glycoCenterX, glycoCenterY, glycoRotationRad);
       const rectW = Math.abs(x2 - x1);
       const rectH = Math.abs(y2 - y1);
       const segH = rectH / 3;
@@ -2005,7 +2805,11 @@ function drawMode6Glyco(
       drawRectGradient(ctx, rectX, rectY + segH, rectW, segH, ...VERTICAL_EQ_COLORS[2], barOpacity, ...VERTICAL_EQ_COLORS[1], barOpacity);
       drawRectGradient(ctx, rectX, rectY, rectW, segH, ...VERTICAL_EQ_COLORS[3], barOpacity, ...VERTICAL_EQ_COLORS[2], barOpacity);
     } else if (useVerticalGradientFixed) {
-      const rectW = Math.abs(applyTransform(x + barWidth, 0, canvasWidth, canvasHeight, effAdj)[0] - applyTransform(x, 0, canvasWidth, canvasHeight, effAdj)[0]);
+      const [rwLx, rwLy] = applyTransform(x, 0, canvasWidth, canvasHeight, effAdj);
+      const [rwRx, rwRy] = applyTransform(x + barWidth, 0, canvasWidth, canvasHeight, effAdj);
+      const [rwLrx, rwLry] = rotatePointAroundCenter(rwLx, rwLy, glycoCenterX, glycoCenterY, glycoRotationRad);
+      const [rwRrx, rwRry] = rotatePointAroundCenter(rwRx, rwRy, glycoCenterX, glycoCenterY, glycoRotationRad);
+      const rectW = Math.hypot(rwRrx - rwLrx, rwRry - rwLry);
       const segCount = 16;
       for (let s = 0; s < segCount; s++) {
         const segBottom = canvasHeight - ((s + 1) / segCount) * barHeight;
@@ -2013,8 +2817,10 @@ function drawMode6Glyco(
         const midY = (segBottom + segTop) / 2;
         const t = (canvasHeight - midY) / canvasHeight;
         const [r, g, b] = getVerticalEQFixedColor(t);
-        const [sx1, sy1] = applyTransform(x, segBottom, canvasWidth, canvasHeight, effAdj);
-        const [sx2, sy2] = applyTransform(x + barWidth, segTop, canvasWidth, canvasHeight, effAdj);
+        let [sx1, sy1] = applyTransform(x, segBottom, canvasWidth, canvasHeight, effAdj);
+        let [sx2, sy2] = applyTransform(x + barWidth, segTop, canvasWidth, canvasHeight, effAdj);
+        [sx1, sy1] = rotatePointAroundCenter(sx1, sy1, glycoCenterX, glycoCenterY, glycoRotationRad);
+        [sx2, sy2] = rotatePointAroundCenter(sx2, sy2, glycoCenterX, glycoCenterY, glycoRotationRad);
         const segX = Math.min(sx1, sx2);
         const segY = Math.min(sy1, sy2);
         const segW = Math.abs(sx2 - sx1);
@@ -2023,8 +2829,10 @@ function drawMode6Glyco(
       }
     } else {
       const { bar, dash } = getColor(i);
-      const [x1, y1] = applyTransform(x, canvasHeight - barHeight, canvasWidth, canvasHeight, effAdj);
-      const [x2, y2] = applyTransform(x + barWidth, canvasHeight, canvasWidth, canvasHeight, effAdj);
+      let [x1, y1] = applyTransform(x, canvasHeight - barHeight, canvasWidth, canvasHeight, effAdj);
+      let [x2, y2] = applyTransform(x + barWidth, canvasHeight, canvasWidth, canvasHeight, effAdj);
+      [x1, y1] = rotatePointAroundCenter(x1, y1, glycoCenterX, glycoCenterY, glycoRotationRad);
+      [x2, y2] = rotatePointAroundCenter(x2, y2, glycoCenterX, glycoCenterY, glycoRotationRad);
       const rectX = Math.min(x1, x2);
       const rectY = Math.min(y1, y2);
       drawRect(ctx, rectX, rectY, Math.abs(x2 - x1), Math.abs(y2 - y1), bar[0] / 255, bar[1] / 255, bar[2] / 255, barOpacity);
@@ -2034,9 +2842,11 @@ function drawMode6Glyco(
     const dashWidth = barWidth * 0.7;
     const dashX = x + (barWidth - dashWidth) / 2;
     const dashY = canvasHeight - peakHeight;
-    const [dx1, dy1] = applyTransform(dashX, dashY, canvasWidth, canvasHeight, effAdj);
-    const [dx2, dy2] = applyTransform(dashX + dashWidth, dashY, canvasWidth, canvasHeight, effAdj);
-    const dashOpacity = 0.95 * baseOpacity;
+    let [dx1, dy1] = applyTransform(dashX, dashY, canvasWidth, canvasHeight, effAdj);
+    let [dx2, dy2] = applyTransform(dashX + dashWidth, dashY, canvasWidth, canvasHeight, effAdj);
+    [dx1, dy1] = rotatePointAroundCenter(dx1, dy1, glycoCenterX, glycoCenterY, glycoRotationRad);
+    [dx2, dy2] = rotatePointAroundCenter(dx2, dy2, glycoCenterX, glycoCenterY, glycoRotationRad);
+    const dashOpacity = 0.95 * glycoOp;
     if (useVerticalGradient || useVerticalGradientFixed) {
       drawLine(ctx, dx1, dy1, dx2, dy2, 100 / 255, 200 / 255, 255 / 255, dashOpacity, peakLineWidth);
     } else {
@@ -2057,30 +2867,37 @@ function drawMode7Area(
 ): void {
   const bufferLength = bufferData.length;
   const barsLength = 128;
-  const barWidth = canvasWidth / barsLength;
   const op = getVisualOpacity(settings.opacity);
   const [pr, pg, pb] = getSpectrumPrimaryRgb(settings);
   const [sr, sg, sb] = getSpectrumSecondaryRgb(settings);
+  const smoothed = new Float32Array(barsLength);
   for (let i = 0; i < barsLength; i++) {
-    const h = bufferData[Math.floor((i / barsLength) * bufferLength)];
-    const yTop = canvasHeight - h;
-    const x0 = i * barWidth;
-    const t = barsLength <= 1 ? 0 : i / (barsLength - 1);
-    const r = (pr + (sr - pr) * t) / 255;
-    const gCol = (pg + (sg - pg) * t) / 255;
-    const bCol = (pb + (sb - pb) * t) / 255;
-    const [x1, y1] = applyTransform(x0, yTop, canvasWidth, canvasHeight, adj);
-    const [x2, y2] = applyTransform(x0 + barWidth, canvasHeight, canvasWidth, canvasHeight, adj);
-    const rx = Math.min(x1, x2);
-    const ry = Math.min(y1, y2);
-    drawRect(ctx, rx, ry, Math.abs(x2 - x1), Math.abs(y2 - y1), r, gCol, bCol, 0.78 * op);
+    const cur = glycoBarRawEnergy(i, barsLength, bufferLength, bufferData);
+    const prev = i > 0 ? glycoBarRawEnergy(i - 1, barsLength, bufferLength, bufferData) : cur;
+    const next = i < barsLength - 1 ? glycoBarRawEnergy(i + 1, barsLength, bufferLength, bufferData) : cur;
+    smoothed[i] = prev * 0.2 + cur * 0.6 + next * 0.2;
   }
-  const lineW = Math.max(1, BASE_LINE_WIDTH_WAVEFORM * 0.55);
+
+  const vertices: number[] = [];
+  const [baseLeftX, baseLeftY] = applyTransform(0, canvasHeight, canvasWidth, canvasHeight, adj);
+  vertices.push(baseLeftX, baseLeftY);
+  for (let i = 0; i < barsLength; i++) {
+    const h = smoothed[i];
+    const x = areaModeBarX(i, barsLength, canvasWidth);
+    const y = canvasHeight - h;
+    const [tx, ty] = applyTransform(x, y, canvasWidth, canvasHeight, adj);
+    vertices.push(tx, ty);
+  }
+  const [baseRightX, baseRightY] = applyTransform(canvasWidth, canvasHeight, canvasWidth, canvasHeight, adj);
+  vertices.push(baseRightX, baseRightY);
+  drawPolygon(ctx, vertices, pr / 255, pg / 255, pb / 255, 0.62 * op);
+
+  const lineW = Math.max(1.6, BASE_LINE_WIDTH_WAVEFORM * 1.05);
   for (let i = 0; i < barsLength - 1; i++) {
-    const h0 = bufferData[Math.floor((i / barsLength) * bufferLength)];
-    const h1 = bufferData[Math.floor(((i + 1) / barsLength) * bufferLength)];
-    const x0 = i * barWidth + barWidth / 2;
-    const x1 = (i + 1) * barWidth + barWidth / 2;
+    const h0 = smoothed[i];
+    const h1 = smoothed[i + 1];
+    const x0 = areaModeBarX(i, barsLength, canvasWidth);
+    const x1 = areaModeBarX(i + 1, barsLength, canvasWidth);
     const y0 = canvasHeight - h0;
     const y1 = canvasHeight - h1;
     const [tx0, ty0] = applyTransform(x0, y0, canvasWidth, canvasHeight, adj);
@@ -2147,10 +2964,6 @@ function getLoudnessLevel(bufferData: Uint8Array, gamma = 0.85, boost = 1.3): nu
 function smoothAR(prev: number, target: number, attack: number, release: number): number {
   const a = target > prev ? attack : release;
   return prev + (target - prev) * a;
-}
-
-function getVisualOpacity(opacity: number): number {
-  return Math.min(0.92, 0.12 + opacity * 0.8);
 }
 
 function getParticlePerfScale(): number {
@@ -2552,24 +3365,7 @@ function applyTransform(
   canvasHeight: number,
   adj: ModeAdjustments
 ): [number, number] {
-  // offsetをピクセルに変換（パーセンテージ → ピクセル）
-  const offsetXPixels = (canvasWidth * adj.offsetX) / 100;
-  const offsetYPixels = (canvasHeight * adj.offsetY) / 100;
-
-  // Canvas 2Dと同じ変換を適用：
-  // 1. 原点を中心に移動
-  let tx = x - canvasWidth / 2;
-  let ty = y - canvasHeight / 2;
-
-  // 2. スケール適用
-  tx *= adj.scaleX;
-  ty *= adj.scaleY;
-
-  // 3. 原点を戻してオフセット適用
-  tx += canvasWidth / 2 + offsetXPixels;
-  ty += canvasHeight / 2 + offsetYPixels;
-
-  return [tx, ty];
+  return applyModeAdjustments(x, y, canvasWidth, canvasHeight, adj);
 }
 
 /**
@@ -2584,6 +3380,7 @@ export function getFPSWebGL(): number {
  */
 export function stopWebGLAnimation(): void {
   debugLog('stopWebGLAnimation called', { wasAnimating: isAnimating });
+  cancelSubtitlePrefetchTextureUpload();
   if (animationFrameId !== null) {
     cancelAnimationFrame(animationFrameId);
     animationFrameId = null;
@@ -2595,24 +3392,61 @@ export function stopWebGLAnimation(): void {
 /**
  * WebGLの画像キャッシュをクリア
  */
+function deleteOverlayTextures(ctx: WebGLRendererContext): void {
+  const { gl } = ctx;
+  resetTextOverlayTexState(gl, subtitleOverlayTexState);
+  resetTextOverlayTexState(gl, titleOverlayTexState);
+  if (ctx.subtitleOverlayTexture) {
+    gl.deleteTexture(ctx.subtitleOverlayTexture);
+    ctx.subtitleOverlayTexture = null;
+  }
+  ctx.subtitleOverlayTextureSource = null;
+  if (ctx.titleOverlayTexture) {
+    gl.deleteTexture(ctx.titleOverlayTexture);
+    ctx.titleOverlayTexture = null;
+  }
+  ctx.titleOverlayTextureSource = null;
+}
+
+function resetSubtitleOverlayTextures(ctx: WebGLRendererContext): void {
+  const { gl } = ctx;
+  resetTextOverlayTexState(gl, subtitleOverlayTexState);
+  if (ctx.subtitleOverlayTexture) {
+    gl.deleteTexture(ctx.subtitleOverlayTexture);
+    ctx.subtitleOverlayTexture = null;
+  }
+  ctx.subtitleOverlayTextureSource = null;
+}
+
+export function clearWebGLSubtitleOverlayCache(): void {
+  cancelSubtitlePrefetchTextureUpload();
+  if (glContext) {
+    resetSubtitleOverlayTextures(glContext);
+  }
+}
+
 export function clearWebGLImageCache(): void {
+  cancelSubtitlePrefetchTextureUpload();
   if (glContext) {
     if (glContext.imageTexture) {
       glContext.gl.deleteTexture(glContext.imageTexture);
       glContext.imageTexture = null;
     }
+    deleteOverlayTextures(glContext);
     glContext.imageCache = {
       image: null,
       width: 0,
       height: 0,
     };
   }
+  clearTextOverlayCaches();
 }
 
 /**
  * WebGLコンテキストをクリーンアップ
  */
 export function cleanupWebGL(): void {
+  cancelSubtitlePrefetchTextureUpload();
   // アニメーションフレームをキャンセル
   if (animationFrameId !== null) {
     cancelAnimationFrame(animationFrameId);
@@ -2632,8 +3466,10 @@ export function cleanupWebGL(): void {
     if (imageTexture) {
       gl.deleteTexture(imageTexture);
     }
+    deleteOverlayTextures(glContext);
     glContext = null;
   }
+  clearTextOverlayCaches();
   fpsCounter = 0;
   fpsLastTime = performance.now();
   currentFPS = 0;

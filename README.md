@@ -28,8 +28,8 @@ Static build with SEO-friendly absolute URLs for that host: `npm run build:html:
 - **Clip length limit**: Presets and manual ranges for preview/recording windows, including YouTube, TikTok, and NicoNico-oriented lengths
 - **Video generation**: MP4 output plus a fast-generation path when the alternative encoder route is available; normal recording quality is preserved up to 60 fps
 - **Settings management**: Export/import settings JSON, persistent saved values, and one-click clear
-- **Client persistence**: Most settings are saved in first-party browser cookies, with migration from older localStorage keys on first visit
-- **UI extras**: Dark/light mode toggle and bilingual Japanese / English UI
+- **Client persistence**: Most settings use **localStorage** (`lib/mwvCookieStorage.ts`), with one-time migration from legacy cookies on first read
+- **UI extras**: Dark/light mode toggle, bilingual Japanese / English UI, and a **desktop two-pane layout** (preview + controls) from 1024px width upward
 
 ## Quick Start
 
@@ -55,6 +55,7 @@ npm run build:html
 - The generated `visualizer/` is a **static HTML build** (Next.js `next export`; CLI may print deprecation / static-export notices — see [docs/BUILD.md](./docs/BUILD.md)).
 - Default config uses **`/visualizer` path**. Upload to the server's `visualizer` directory.
   - Example: Place `index.html`, `_next/`, `.htaccess` in `public_html/visualizer/`
+- **FTP upload (WSL/Linux)**: copy [`deploy.env.example`](./deploy.env.example) to `deploy.env`, then `./deploy-ftp.sh` (optional `--build`, `--dry-run`). Requires [lftp](https://lftp.yar.ru/). Password: interactive prompt, optional `~/.netrc`, or `FTP_PASSWORD` in `deploy.env` (do not commit).
 - For custom paths, see [docs/HTML_HOSTING.md](./docs/HTML_HOSTING.md).
 
 ## Usage
@@ -136,6 +137,7 @@ npm run dev
 # 静的HTML版（レンタルサーバー用）
 npm run build:html
 # visualizer/ の中身をサーバーにアップロード
+# FTP: deploy.env.example → deploy.env を編集後 ./deploy-ftp.sh（--build / --dry-run 可。要 lftp）
 ```
 
 ### ドキュメント（日本語）

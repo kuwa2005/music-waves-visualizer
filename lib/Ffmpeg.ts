@@ -1,15 +1,156 @@
 import { FFmpeg } from "@ffmpeg/ffmpeg";
 import getConfig from "next/config";
+import { buildFfmpegAfadeFilter } from "./clipAudioFade";
+import {
+  parseFfmpegDurationFromLogs,
+  resolveMp4EncodeDurationSec,
+} from "./mp4EncodeDuration";
+import { MP4_THUMB_MAX_LONG_EDGE } from "./mp4Thumbnail";
 import { mwvError, mwvLog, mwvMilestone, mwvVerbose, mwvWarn } from "./mwvConsole";
 
-function getFfmpegAssetUrl(name: "ffmpeg-core.js" | "ffmpeg-core.wasm" | "ffmpeg-core.worker.js"): string {
+/** MP4 変換時の音声フェード（可聴区間長に対する in/out） */
+export type Mp4AudioFadeEncode = {
+  fadeInSec: number;
+  fadeOutSec: number;
+  /** min(planned, actualRecorded, webmProbe) — afade の区間長 */
+  outputDurationSec: number;
+  plannedSec?: number;
+  actualRecordedSec?: number;
+  recordStopReason?: string;
+};
+
+function buildMp4AudioFilterChain(
+  audioFade: Mp4AudioFadeEncode | null | undefined,
+  encodeLufs: number | null,
+  segmentSecOverride?: number
+): string | null {
+  const seg = segmentSecOverride ?? audioFade?.outputDurationSec ?? 0;
+  const afade =
+    seg > 0 && audioFade
+      ? buildFfmpegAfadeFilter(seg, audioFade.fadeInSec, audioFade.fadeOutSec)
+      : null;
+  const parts: string[] = [];
+  if (afade) parts.push(afade);
+  if (encodeLufs != null) {
+    parts.push(`loudnorm=I=${encodeLufs}:LRA=11:TP=-1.5`);
+  }
+  return parts.length > 0 ? parts.join(",") : null;
+}
+
+function sanitizeTrimDurationSec(outputDurationSec: number): number {
+  if (!Number.isFinite(outputDurationSec) || outputDurationSec <= 0) return 0;
+  return outputDurationSec;
+}
+
+function mp4EncodeInputArgs(
+  webmName: string,
+  outputDurationSec: number
+): string[] {
+  const args = ["-i", webmName];
+  const trimSec = sanitizeTrimDurationSec(outputDurationSec);
+  if (trimSec > 0) {
+    args.push("-t", String(trimSec));
+  }
+  return args;
+}
+
+function isLikelyValidMp4(bytes: Uint8Array): boolean {
+  if (bytes.length < 12) return false;
+  return (
+    bytes[4] === 0x66 &&
+    bytes[5] === 0x74 &&
+    bytes[6] === 0x79 &&
+    bytes[7] === 0x70
+  );
+}
+
+type FfmpegCoreAssetName = "ffmpeg-core.js" | "ffmpeg-core.wasm" | "ffmpeg-core.worker.js";
+type FfmpegCoreUrls = { coreURL: string; wasmURL: string; workerURL: string; basePath: string };
+
+function normalizeBasePath(base: string): string {
+  if (!base || base === "/") return "";
+  return base.endsWith("/") ? base.slice(0, -1) : base;
+}
+
+function getFfmpegAssetBaseCandidates(): string[] {
   const { publicRuntimeConfig } = getConfig();
-  const base = publicRuntimeConfig?.assetBasePath ?? "";
-  const rel = `${base}/ffmpeg-core/${name}`.replace(/\/{2,}/g, "/");
+  const base = normalizeBasePath(publicRuntimeConfig?.assetBasePath ?? "");
+  const candidates = [
+    `${base}/ffmpeg`,
+    `${base}/ffmpeg-core`,
+    "/ffmpeg",
+    "/ffmpeg-core",
+  ].map((p) => p.replace(/\/{2,}/g, "/"));
+  return Array.from(new Set(candidates));
+}
+
+function toAbsoluteUrl(rel: string): string {
   if (typeof window !== "undefined") {
     return new URL(rel, window.location.origin).href;
   }
-  return rel;
+  return rel.replace(/\/{2,}/g, "/");
+}
+
+function getFfmpegAssetUrl(basePath: string, name: FfmpegCoreAssetName): string {
+  const rel = `${basePath}/${name}`.replace(/\/{2,}/g, "/");
+  return toAbsoluteUrl(rel);
+}
+
+function startsWithHtml(bytes: Uint8Array): boolean {
+  const view = bytes.subarray(0, 32);
+  const text = new TextDecoder().decode(view).trimStart().toUpperCase();
+  return text.startsWith("<!DOCTYPE") || text.startsWith("<HTML");
+}
+
+function isWasmMagic(bytes: Uint8Array): boolean {
+  return bytes.length >= 4 && bytes[0] === 0x00 && bytes[1] === 0x61 && bytes[2] === 0x73 && bytes[3] === 0x6d;
+}
+
+async function probeAsset(url: string, name: FfmpegCoreAssetName): Promise<void> {
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(`${name}: HTTP ${response.status} ${response.statusText}`);
+  }
+  const contentType = (response.headers.get("content-type") || "").toLowerCase();
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  if (!bytes.length) {
+    throw new Error(`${name}: empty response`);
+  }
+  if (name === "ffmpeg-core.wasm") {
+    if (!isWasmMagic(bytes)) {
+      const headText = new TextDecoder().decode(bytes.subarray(0, 24)).replace(/\s+/g, " ");
+      throw new Error(`${name}: invalid wasm magic (head="${headText}")`);
+    }
+    if (contentType.includes("text/html")) {
+      throw new Error(`${name}: received HTML content-type (${contentType})`);
+    }
+    return;
+  }
+  if (startsWithHtml(bytes)) {
+    throw new Error(`${name}: received HTML body`);
+  }
+}
+
+async function resolveFfmpegCoreUrls(): Promise<FfmpegCoreUrls> {
+  const candidates = getFfmpegAssetBaseCandidates();
+  mwvMilestone("ffmpeg: core url candidates", { candidates });
+  for (const basePath of candidates) {
+    const coreURL = getFfmpegAssetUrl(basePath, "ffmpeg-core.js");
+    const wasmURL = getFfmpegAssetUrl(basePath, "ffmpeg-core.wasm");
+    const workerURL = getFfmpegAssetUrl(basePath, "ffmpeg-core.worker.js");
+    try {
+      await probeAsset(wasmURL, "ffmpeg-core.wasm");
+      await probeAsset(coreURL, "ffmpeg-core.js");
+      await probeAsset(workerURL, "ffmpeg-core.worker.js");
+      mwvMilestone("ffmpeg: core url selected", { basePath, coreURL, wasmURL, workerURL });
+      return { basePath, coreURL, wasmURL, workerURL };
+    } catch (error) {
+      mwvWarn("ffmpeg: core candidate rejected", { basePath, coreURL, wasmURL, workerURL, error });
+    }
+  }
+  throw new Error(
+    "FFmpegコアの読み込みに失敗しました。広告ブロッカーや拡張機能がFFmpeg関連ファイルを遮断している可能性があります。拡張機能を一時停止するか、シークレットウィンドウで開くか、localhostを許可してください。"
+  );
 }
 
 export type EncodeProgressCallbacks = {
@@ -33,9 +174,158 @@ function capFfmpegRatioForMerge(r: number): number {
   return Math.min(0.86, r);
 }
 
+/**
+ * UI の「YouTube等 -14 LUFS」→ FFmpeg loudnorm の integrated target。
+ * 単一パス loudnorm と YouTube 計測の差を埋める小さな加算（UI は -14 のまま）。
+ *
+ * 実測（Stats for nerds / 同一素材・再アップロード後）:
+ * | 補正 | encode 目標 | Normalized | Content loudness |
+ * |------|-------------|------------|------------------|
+ * | +0   | -14.0       | ~96%       | （やや静か）     |
+ * | +0.35| -13.65      | 89%        | -13.0 dB         |
+ * | +0.2 | -13.8       | 90%        | -13.0 dB         |
+ * | +0.1 | -13.9       | （要再計測）| 目標 -14.0      |
+ * | +0.05| -13.95      | （要再計測）| 目標 -14.0      |
+ */
+const YOUTUBE_UI_TARGET_LUFS = -14;
+/** エンコード時のみ加算（UI 表示・保存値は -14 のまま） */
+const YOUTUBE_LOUDNORM_CALIBRATION_LUFS = 0.05;
+
+function resolveLoudnormIntegratedTarget(uiLufs: number): number {
+  if (uiLufs === YOUTUBE_UI_TARGET_LUFS) {
+    return YOUTUBE_UI_TARGET_LUFS + YOUTUBE_LOUDNORM_CALIBRATION_LUFS;
+  }
+  return uiLufs;
+}
+
 async function execFfmpeg(ffmpeg: FFmpeg, args: string[]): Promise<void> {
   mwvLog("ffmpeg: exec", args);
   await ffmpeg.exec(args);
+}
+
+/** 入力コンテナの長さ（秒）。失敗時は null */
+async function probeInputDurationSec(ffmpeg: FFmpeg, inputName: string): Promise<number | null> {
+  const ffmpegAny = ffmpeg as { on?: (e: string, h: (p: { message?: string }) => void) => void; off?: (e: string, h: (p: { message?: string }) => void) => void };
+  const lines: string[] = [];
+  const onLog = ({ message }: { message?: string }) => {
+    if (message) lines.push(message);
+  };
+  if (typeof ffmpegAny.on === "function") {
+    ffmpegAny.on("log", onLog);
+  }
+  try {
+    await ffmpeg.exec(["-hide_banner", "-i", inputName]);
+  } catch {
+    /* -i のみは出力なしのため非ゼロ終了が普通 */
+  } finally {
+    if (typeof ffmpegAny.off === "function") {
+      ffmpegAny.off("log", onLog);
+    }
+  }
+  return parseFfmpegDurationFromLogs(lines.join("\n"));
+}
+
+function readFfmpegBytes(fileData: Uint8Array | string): Uint8Array {
+  if (fileData instanceof Uint8Array) return fileData;
+  if (typeof fileData === "string") return new TextEncoder().encode(fileData);
+  return new Uint8Array(fileData as unknown as ArrayBuffer);
+}
+
+/** 動画から 1 フレームを JPEG として抽出（長辺上限） */
+async function extractVideoFrameThumbnailJpeg(
+  ffmpeg: FFmpeg,
+  videoName: string,
+  thumbName: string
+): Promise<Uint8Array | null> {
+  const max = MP4_THUMB_MAX_LONG_EDGE;
+  const scaleFilter = `scale='min(${max},iw)':'min(${max},ih)':force_original_aspect_ratio=decrease`;
+  try {
+    await execFfmpeg(ffmpeg, [
+      "-i",
+      videoName,
+      "-frames:v",
+      "1",
+      "-vf",
+      scaleFilter,
+      "-q:v",
+      "4",
+      "-update",
+      "1",
+      thumbName,
+    ]);
+    const raw = await ffmpeg.readFile(thumbName);
+    const bytes = readFfmpegBytes(raw as Uint8Array | string);
+    return bytes.length > 0 ? bytes : null;
+  } catch (error) {
+    mwvWarn("ffmpeg: frame thumbnail extract failed", error);
+    return null;
+  }
+}
+
+/**
+ * MP4 に attached_pic として JPEG を埋め込む。
+ * mjpeg 非対応時は copy のみのマッピングを試す。失敗しても例外は投げない。
+ */
+async function attachThumbnailToMp4(
+  ffmpeg: FFmpeg,
+  mp4Name: string,
+  thumbJpeg: Uint8Array
+): Promise<boolean> {
+  if (!thumbJpeg.length) return false;
+
+  const thumbName = "thumb_embed.jpg";
+  const outName = "mp4_with_thumb.mp4";
+  await ffmpeg.writeFile(thumbName, thumbJpeg);
+
+  const attempts: string[][] = [
+    [
+      "-i",
+      mp4Name,
+      "-i",
+      thumbName,
+      "-map",
+      "0",
+      "-map",
+      "1",
+      "-c",
+      "copy",
+      "-c:v:1",
+      "mjpeg",
+      "-disposition:v:1",
+      "attached_pic",
+      outName,
+    ],
+    [
+      "-i",
+      mp4Name,
+      "-i",
+      thumbName,
+      "-map",
+      "0",
+      "-map",
+      "1",
+      "-c",
+      "copy",
+      "-disposition:v:1",
+      "attached_pic",
+      outName,
+    ],
+  ];
+
+  for (const args of attempts) {
+    try {
+      await execFfmpeg(ffmpeg, args);
+      const merged = await ffmpeg.readFile(outName);
+      const mergedBytes = readFfmpegBytes(merged as Uint8Array | string);
+      if (mergedBytes.length === 0) continue;
+      await ffmpeg.writeFile(mp4Name, mergedBytes);
+      mwvMilestone("ffmpeg: thumbnail attached", { mp4Bytes: mergedBytes.length });
+      return true;
+    } catch (error) {
+      mwvWarn("ffmpeg: attach thumbnail attempt failed", args.join(" "), error);
+    }
+  }
+  return false;
 }
 
 export async function generateMp4Video(
@@ -44,7 +334,9 @@ export async function generateMp4Video(
   mp4Name: string,
   callbacks?: EncodeProgressCallbacks,
   targetLufs?: number | null,
-  audioBitrateKbps?: number | null
+  audioBitrateKbps?: number | null,
+  thumbnailJpeg?: Uint8Array | null,
+  audioFade?: Mp4AudioFadeEncode | null
 ) {
   const { onLoadStart, onLoadComplete, onProgress } = callbacks || {};
   mwvMilestone("ffmpeg: encode start", {
@@ -52,6 +344,8 @@ export async function generateMp4Video(
     mp4Name,
     targetLufs: targetLufs ?? null,
     audioBitrateKbps: audioBitrateKbps ?? null,
+    audioFade: audioFade ?? null,
+    hasThumbnailInput: !!(thumbnailJpeg && thumbnailJpeg.length > 0),
   });
 
   const ffmpeg = new FFmpeg();
@@ -93,15 +387,35 @@ export async function generateMp4Video(
   try {
     onLoadStart?.();
     mwvMilestone("ffmpeg: wasm loading…");
+    const selectedUrls = await resolveFfmpegCoreUrls();
     await ffmpeg.load({
-      coreURL: getFfmpegAssetUrl("ffmpeg-core.js"),
-      wasmURL: getFfmpegAssetUrl("ffmpeg-core.wasm"),
-      workerURL: getFfmpegAssetUrl("ffmpeg-core.worker.js"),
+      coreURL: selectedUrls.coreURL,
+      wasmURL: selectedUrls.wasmURL,
+      workerURL: selectedUrls.workerURL,
     });
     mwvMilestone("ffmpeg: wasm loaded");
     onLoadComplete?.();
 
     await ffmpeg.writeFile(webmName, binaryData);
+
+    const plannedSec = sanitizeTrimDurationSec(audioFade?.plannedSec ?? audioFade?.outputDurationSec ?? 0);
+    const webmProbeSec = await probeInputDurationSec(ffmpeg, webmName);
+    const actualHint = audioFade?.actualRecordedSec ?? null;
+    const trimSec = audioFade
+      ? resolveMp4EncodeDurationSec(plannedSec, actualHint, webmProbeSec)
+      : 0;
+    const afadeSegmentSec = trimSec > 0 ? trimSec : 0;
+    const encodeAudioFade: Mp4AudioFadeEncode | null =
+      audioFade && afadeSegmentSec > 0
+        ? { ...audioFade, outputDurationSec: afadeSegmentSec }
+        : audioFade;
+    mwvMilestone("record: MP4 encode params", {
+      recordStopReason: audioFade?.recordStopReason ?? null,
+      plannedSec: audioFade?.plannedSec ?? plannedSec,
+      actualRecordedSec: actualHint,
+      actualWebmSec: webmProbeSec,
+      outputDurationSec: afadeSegmentSec > 0 ? afadeSegmentSec : plannedSec,
+    });
 
     ratioFromFfmpeg = 0;
     smoothedDisplay = 0;
@@ -115,29 +429,64 @@ export async function generateMp4Video(
       audioBitrateKbps != null && audioBitrateKbps >= 64 && audioBitrateKbps <= 320
         ? `${Math.round(audioBitrateKbps)}k`
         : "192k";
-    const lufs = targetLufs != null && targetLufs > -60 && targetLufs < 0 ? targetLufs : null;
+    const uiLufs =
+      targetLufs != null && targetLufs > -60 && targetLufs < 0 ? targetLufs : null;
+    const encodeLufs = uiLufs != null ? resolveLoudnormIntegratedTarget(uiLufs) : null;
+    const audioFilter = buildMp4AudioFilterChain(encodeAudioFade, encodeLufs, afadeSegmentSec);
 
-    if (lufs != null) {
+    if (audioFilter != null) {
       try {
         await execFfmpeg(ffmpeg, [
-          "-i",
-          webmName,
+          ...mp4EncodeInputArgs(webmName, trimSec),
           "-vcodec",
           "copy",
           "-af",
-          `loudnorm=I=${lufs}:LRA=11:TP=-1.5`,
+          audioFilter,
           "-c:a",
           "aac",
           "-b:a",
           ab,
+          "-shortest",
           mp4Name,
         ]);
       } catch (error) {
-        mwvWarn("ffmpeg: loudnorm failed, remux copy only", error);
-        await execFfmpeg(ffmpeg, ["-i", webmName, "-vcodec", "copy", mp4Name]);
+        mwvWarn("ffmpeg: audio filter failed, remux copy only", error);
+        await execFfmpeg(ffmpeg, [
+          ...mp4EncodeInputArgs(webmName, trimSec),
+          "-vcodec",
+          "copy",
+          "-shortest",
+          mp4Name,
+        ]);
       }
     } else {
-      await execFfmpeg(ffmpeg, ["-i", webmName, "-vcodec", "copy", mp4Name]);
+      await execFfmpeg(ffmpeg, [
+        ...mp4EncodeInputArgs(webmName, trimSec),
+        "-vcodec",
+        "copy",
+        "-shortest",
+        mp4Name,
+      ]);
+    }
+
+    let thumbBytes =
+      thumbnailJpeg && thumbnailJpeg.length > 0 ? thumbnailJpeg : null;
+    if (!thumbBytes) {
+      thumbBytes = await extractVideoFrameThumbnailJpeg(ffmpeg, mp4Name, "thumb_from_video.jpg");
+      if (thumbBytes) {
+        mwvMilestone("ffmpeg: thumbnail from first video frame");
+      }
+    } else {
+      mwvMilestone("ffmpeg: thumbnail from caller JPEG");
+    }
+
+    if (thumbBytes) {
+      const attached = await attachThumbnailToMp4(ffmpeg, mp4Name, thumbBytes);
+      if (!attached) {
+        mwvWarn(
+          "ffmpeg: could not embed thumbnail (attached_pic / mjpeg may be unavailable in wasm build); MP4 export continues without cover art"
+        );
+      }
     }
 
     if (progressTick != null) {
@@ -148,12 +497,11 @@ export async function generateMp4Video(
     onProgress?.(0.99);
 
     const fileData = await ffmpeg.readFile(mp4Name);
-    const videoUint8Array =
-      fileData instanceof Uint8Array
-        ? fileData
-        : typeof fileData === "string"
-          ? new TextEncoder().encode(fileData)
-          : new Uint8Array(fileData as unknown as ArrayBuffer);
+    const videoUint8Array = readFfmpegBytes(fileData as Uint8Array | string);
+
+    if (!isLikelyValidMp4(videoUint8Array)) {
+      throw new Error("invalid_mp4_output");
+    }
 
     onProgress?.(1);
     mwvMilestone("ffmpeg: mp4 ready", { mp4Bytes: videoUint8Array.length });
@@ -164,6 +512,18 @@ export async function generateMp4Video(
       progressTick = null;
     }
     runStartedAtMs = 0;
+    const message = error instanceof Error ? error.message : String(error);
+    if (
+      /ERR_BLOCKED_BY_CLIENT|invalid wasm magic|received HTML|Failed to fetch|ffmpeg-core\.wasm/i.test(
+        message
+      )
+    ) {
+      const hintError = new Error(
+        "MP4変換の初期化に失敗しました。広告ブロッカーやセキュリティ拡張がFFmpegのwasm取得を遮断している可能性があります。拡張機能を一時停止、シークレットウィンドウで再試行、またはlocalhost/このサイトを許可してください。"
+      );
+      mwvError("ffmpeg: encode failed (blocked/asset issue)", { original: error, hint: hintError.message });
+      throw hintError;
+    }
     mwvError("ffmpeg: encode failed", error);
     throw error;
   } finally {

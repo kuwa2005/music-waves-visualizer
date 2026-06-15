@@ -4,6 +4,43 @@
 フォーク: [kuwa2005/music-waves-visualizer](https://github.com/kuwa2005/music-waves-visualizer)（元: [komura-c/music-waves-visualizer](https://github.com/komura-c/music-waves-visualizer)）  
 作成時点のローカルブランチ: **`main`**（2026-05-23 更新: 本セッション分をコミット予定）
 
+**2026-06-05（v1.0.6）** — [docs/CHANGELOG.md](docs/CHANGELOG.md) [1.0.6]、[docs/SESSION_20260601.md](docs/SESSION_20260601.md) §2026-06-05。
+
+**2026-06-13（描画・字幕 perf）** — PR [#41](https://github.com/kuwa2005/music-waves-visualizer/pull/41)、[docs/SESSION_20260601.md](docs/SESSION_20260601.md) §2026-06-13、[docs/DEVELOPER_MODE.md](docs/DEVELOPER_MODE.md)。
+
+| 領域 | 内容 |
+|------|------|
+| WebGL 背景 | `bgTempCanvas` 再利用、`texSubImage2D` |
+| FFT | Canvas/WebGL 共通スクラッチバッファ |
+| 水滴 | WebGL `LineBatch` 1 draw call |
+| 字幕 | キャッシュ・プリフェッチ・二分探索・`parseSrtAsync`・seq guard・WebGL デュアルスロット |
+| 開発者 HUD | 字幕レイヤー / プリフェッチ / テクスチャ UP ms |
+| 未解決 | #34 同期ドリフト、#36 WebGL 動画背景、#42 `filmGrain` / `mirrorBall` perf |
+
+**2026-06-05（v1.0.6）** — 以下は v1.0.6 本体。
+
+| 領域 | 内容 |
+|------|------|
+| レーザー | `laserEffect.ts`、エフェクト UI |
+| ピッカー | 静止画/動画/すべて、音声/動画/すべて（`FilePickerSplitButton`） |
+| 音設定 | 動画長・フェードを音設定タブへ統合 |
+| 雨・水滴 | 音連動感度 0–10 |
+| 停止 | 早期停止の音声・画像フェード |
+| YouTube | loudnorm +0.05（UI -14 のまま） |
+
+**2026-06-01 セッション追記** — 詳細は [docs/SESSION_20260601.md](docs/SESSION_20260601.md)、[docs/CHANGELOG.md](docs/CHANGELOG.md) [1.0.5] 以降。
+
+| 領域 | 内容 |
+|------|------|
+| 画面タブ | `screenMotion.ts` / `drawStillScreenBackground.ts` — ズーム・パン・画像フェード・音連動演出 |
+| スペクトラム | モード 17–19 波形、20 パーティクル、21 放射状、6 レトロEQ＋バー領域のみ暗転 |
+| エフェクト | `waterRipple`（ripple / heart / firework）、軽量モード・適応リング数 |
+| 永続化 | localStorage 正、旧 Cookie 初回移行（`mwvCookieStorage.ts`） |
+| MP4 サムネ | **静止画背景**時は原画 JPEG；それ以外は合成の先頭フレーム — [SESSION_20260601.md](docs/SESSION_20260601.md) |
+| 新規 lib | `spectrumAdjustments.ts`, `mp4Thumbnail.ts`, `public/ffmpeg` コピー先追加 |
+| **2ペイン UI** | `≥1024px` 左プレビュー＋右タブ。誤 `checkout HEAD` 後に transcript / 静的 bundle 照合で復元（`a68ec07`） |
+| **offset スライダー** | `ResettableSlider` + モード2プレビューガイド●（ドラッグ可） |
+
 **2026-05-23 セッション追記** — 詳細は [docs/audio-quality.md](docs/audio-quality.md)、[docs/CHANGELOG.md](docs/CHANGELOG.md) Unreleased。
 
 | 領域 | 内容 |
@@ -115,6 +152,18 @@
 
 - `effect.type === "mirrorBall"` で描画可能。エフェクト種別の `<Select>` からは **`EFFECT_TYPES_UI_HIDDEN` で除外**
 - Cookie `common_mirrorBall`、設定 export にパラメータあり。UI 再公開は別タスク
+- WebGL 描画は水滴（`waterRipple`）のような LineBatch 化は **未着手**（2026-06-13）
+
+### 動画背景・同期（#34 / #36）
+
+- **#34**: 音声用と映像用で別 MP4 のときの長時間ドリフト低減 — **未解決**（`getCurrentPlaybackTimeSec` + `syncBackgroundOnlyVideo` はベストエフォート）
+- **#36**: WebGL で動画背景 MP4 — **未実装**。動画背景時は Canvas 2D 強制。PR #41 でプレビュー 30fps・FFT 無駄削減のみ
+- 詳細: [docs/VIDEO_BACKGROUND.md](docs/VIDEO_BACKGROUND.md)
+
+### 描画パフォーマンス（2026-06-13 完了分）
+
+- FFT スクラッチ、WebGL 背景 temp canvas、水滴 LineBatch、字幕 round 1–4 — [docs/SESSION_20260601.md](docs/SESSION_20260601.md) §2026-06-13
+- **残**: `filmGrain` の `createImageData` 毎フレーム、`mirrorBall` WebGL batching — [#42](https://github.com/kuwa2005/music-waves-visualizer/issues/42)
 
 ### 動画品質・クリップ（2026-05-23）
 

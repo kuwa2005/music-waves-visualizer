@@ -1,3 +1,10 @@
+.pageShell {
+  box-sizing: border-box;
+  width: min(100%, 900px);
+  margin: 0 auto;
+  padding: 1rem 0.75rem 2rem;
+}
+
 .heading {
   border-bottom: 1px solid rgba(0, 0, 0, 0.04);
   padding: 5px 10px;
@@ -113,6 +120,163 @@
   padding: 0 10px;
 }
 
+.previewCanvasStage {
+  position: relative;
+  display: inline-block;
+  line-height: 0;
+  max-width: 100%;
+}
+
+.spaceCenterGuideLayer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.spaceCenterGuideDot {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.92);
+  background: rgba(255, 87, 34, 0.9);
+  box-shadow:
+    0 0 0 2px rgba(0, 0, 0, 0.4),
+    0 0 14px rgba(255, 87, 34, 0.55);
+  transform: translate(-50%, -50%);
+}
+
+.previewCanvasStage {
+  position: relative;
+  display: inline-block;
+  line-height: 0;
+  max-width: 100%;
+}
+
+.spaceCenterGuideLayer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.spaceCenterGuideDot {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.92);
+  background: rgba(255, 87, 34, 0.9);
+  box-shadow:
+    0 0 0 2px rgba(0, 0, 0, 0.4),
+    0 0 14px rgba(255, 87, 34, 0.55);
+  transform: translate(-50%, -50%);
+}
+
+.previewCanvasStage {
+  position: relative;
+  display: inline-block;
+  line-height: 0;
+  max-width: 480px;
+  width: 100%;
+
+  &[data-size="1080x1920"] {
+    max-width: 240px;
+  }
+}
+
+.previewSeekBar {
+  width: 100%;
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 0 8px 4px;
+}
+
+.spaceCenterGuideLayer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.spaceCenterGuideDot {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.92);
+  background: rgba(255, 87, 34, 0.9);
+  box-shadow:
+    0 0 0 2px rgba(0, 0, 0, 0.4),
+    0 0 14px rgba(255, 87, 34, 0.55);
+  transform: translate(-50%, -50%);
+}
+
+.spectrumOffsetGuideDot {
+  pointer-events: auto;
+  cursor: grab;
+  touch-action: none;
+
+  &:active {
+    cursor: grabbing;
+  }
+}
+
+.previewCanvasStage {
+  position: relative;
+  display: inline-block;
+  line-height: 0;
+  max-width: 480px;
+  width: 100%;
+
+  &[data-size="1080x1920"] {
+    max-width: 240px;
+  }
+}
+
+.spaceCenterGuideLayer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.spaceCenterGuideDot {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.92);
+  background: rgba(255, 87, 34, 0.9);
+  box-shadow:
+    0 0 0 2px rgba(0, 0, 0, 0.4),
+    0 0 14px rgba(255, 87, 34, 0.55);
+  transform: translate(-50%, -50%);
+}
+
+.previewCanvasStage {
+  position: relative;
+  display: inline-block;
+  line-height: 0;
+  max-width: 100%;
+}
+
+.spaceCenterGuideLayer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.spaceCenterGuideDot {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.92);
+  background: rgba(255, 87, 34, 0.9);
+  box-shadow:
+    0 0 0 2px rgba(0, 0, 0, 0.4),
+    0 0 14px rgba(255, 87, 34, 0.55);
+  transform: translate(-50%, -50%);
+}
+
 .canvas {
   width: 100%;
   max-width: 480px; // 1920pxの1/4サイズ
@@ -136,6 +300,29 @@
   padding: 4px 8px;
   background-color: rgba(0, 0, 0, 0.05);
   border-radius: 4px;
+}
+
+.desktopTwoPane {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.desktopLeftInputs {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  min-width: 0;
+
+  .dropZone {
+    margin: 0;
+    width: 100%;
+  }
+}
+
+.desktopRightControls,
+.desktopLeftPreview {
+  min-width: 0;
 }
 
 :global(html.dark) .heading {
@@ -174,6 +361,62 @@
     &:hover {
       color: #ff8533;
       text-decoration: underline;
+    }
+  }
+}
+
+@media (min-width: 768px) {
+  .pageShell {
+    padding: 2rem 1rem 2rem;
+  }
+}
+
+@media (min-width: 1024px) {
+  .pageShell {
+    width: 100%;
+    max-width: none;
+    padding-top: 0.5rem;
+    padding-inline: clamp(1rem, 1.5vw, 1.5rem);
+  }
+
+  .desktopTwoPane {
+    display: grid;
+    grid-template-columns: minmax(420px, 0.95fr) minmax(360px, 0.8fr);
+    grid-template-areas: "left controls";
+    gap: 1.25rem;
+    align-items: start;
+    --desktop-left-inputs-height: 0px;
+  }
+
+  .desktopLeftInputs {
+    grid-area: left;
+    margin: 0;
+    z-index: 1;
+  }
+
+  .desktopRightControls {
+    grid-area: controls;
+    margin: 0;
+    align-self: start;
+  }
+
+  .desktopLeftPreview {
+    grid-area: left;
+    margin: calc(var(--desktop-left-inputs-height) + 1.25rem) 0 0;
+    align-self: start;
+    position: sticky;
+    top: 1rem;
+  }
+
+  .canvas {
+    max-width: min(100%, 640px);
+
+    &[data-size="1080x1920"] {
+      max-width: min(100%, 360px);
+    }
+
+    &[data-size="1920x1920"] {
+      max-width: min(100%, 540px);
     }
   }
 }

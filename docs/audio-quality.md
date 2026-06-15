@@ -34,6 +34,8 @@
 | Tier B: 無劣化 WAV を FFmpeg で mux | 未実装 | ブラウザ録画は WebM 前提。WAV 直結は容量・処理時間・UX が重い |
 | 録画 512 kbps の自動切替 | 未実装 | YouTube 再エンコード後の実効品質に対し 384→512 の体感差が小さい |
 | ミラーボール UI の公開 | 未実装 | 実装・Cookie 保存はあるが `EFFECT_TYPES_UI_HIDDEN` で選択肢から除外 |
+| WebGL `mirrorBall` draw call 集約 | 未実装 | 水滴は LineBatch 化済み — [#42](https://github.com/kuwa2005/music-waves-visualizer/issues/42) |
+| `filmGrain` の毎フレーム ImageData | 未最適化 | オフスクリーン canvas は再利用するがノイズ生成は毎フレーム — [#42](https://github.com/kuwa2005/music-waves-visualizer/issues/42) |
 
 ## YouTube / TikTok 調査と 384 / 320 kbps 維持の根拠
 
@@ -41,6 +43,7 @@
 - **録画 384 kbps**: WebM（Opus 等）段階で十分なヘッドルームを確保し、波形・エフェクト付き動画の録画品質を安定させる。512 kbps へ上げてもファイルサイズとエンコード負荷が増える一方、再アップロード後の差は限定的と判断。
 - **AAC 320 kbps**: LUFS 正規化後の再エンコードで、知覚品質とファイルサイズのバランスが良い。128〜256 は帯域制限や配信制約向けの下位オプションとして残す。
 - **LUFS -14**: 多数の動画プラットフォーム推奨に合わせ、プリセットの共通ターゲットとする。
+- **YouTube 音量表示の補正**: UI は -14 のまま、MP4 変換時の FFmpeg `loudnorm` だけ **-13.95 LUFS**（+0.05）を目標にする。実測: 補正なし ~96%、+0.35〜+0.1 は Content -13.0 / Normalized 89–90% と過大 → +0.05 に段階調整（`lib/Ffmpeg.ts` の表コメント参照）。**最新ビルドで MP4 を再変換してから**再アップロードし、Content loudness ≈ -14.0・Normalized ≈ 100% を確認すること。
 
 詳細な調査メモは会話セッション内。本ファイルは運用・引継ぎ用の決定記録です。
 
@@ -57,4 +60,4 @@
 
 ---
 
-*2026-05-23 時点。仕様変更時は本ファイルと [CHANGELOG.md](./CHANGELOG.md) を更新すること。*
+*最終更新: 2026-06-05（v1.0.6 — YouTube loudnorm +0.05）。仕様変更時は本ファイルと [CHANGELOG.md](./CHANGELOG.md) を更新すること。*
