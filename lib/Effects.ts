@@ -2220,13 +2220,13 @@ export function resolveMirrorBallParams(effect: EffectParams): ResolvedMirrorBal
   const strength = DENSITY_STRENGTH[effect.density];
   return {
     ballX: Math.max(0.05, Math.min(0.95, effect.mirrorBallX ?? 0.5)),
-    ballY: Math.max(0.08, Math.min(0.92, effect.mirrorBallY ?? 0.28)),
-    rotationSpeedDeg: Math.max(-180, Math.min(180, effect.mirrorBallRotationSpeed ?? 14)),
-    radiusFrac: Math.max(0.04, Math.min(0.35, effect.mirrorBallRadius ?? 0.12)),
-    facetCount: Math.round(Math.max(8, Math.min(64, effect.mirrorBallFacetCount ?? 32))),
-    sparkle: Math.max(0, Math.min(1, effect.mirrorBallSparkle ?? 0.65)),
-    beamCount: Math.round(Math.max(4, Math.min(32, effect.mirrorBallBeamCount ?? 18))),
-    beamSpreadDeg: Math.max(8, Math.min(90, effect.mirrorBallBeamSpread ?? 26)),
+    ballY: Math.max(0.05, Math.min(0.5, effect.mirrorBallY ?? 0.15)),
+    rotationSpeedDeg: Math.max(-180, Math.min(180, effect.mirrorBallRotationSpeed ?? 20)),
+    radiusFrac: Math.max(0.04, Math.min(0.35, effect.mirrorBallRadius ?? 0.14)),
+    facetCount: Math.round(Math.max(8, Math.min(64, effect.mirrorBallFacetCount ?? 48))),
+    sparkle: Math.max(0, Math.min(1, effect.mirrorBallSparkle ?? 0.7)),
+    beamCount: Math.round(Math.max(4, Math.min(32, effect.mirrorBallBeamCount ?? 24))),
+    beamSpreadDeg: Math.max(8, Math.min(90, effect.mirrorBallBeamSpread ?? 35)),
     ambient: Math.max(0, Math.min(1, effect.mirrorBallAmbient ?? 0.62)),
     specular: Math.max(0.05, Math.min(1, effect.mirrorBallSpecular ?? 0.72)),
     reflectivity: Math.max(0.1, Math.min(1, effect.mirrorBallReflectivity ?? 0.88)),
@@ -2575,14 +2575,15 @@ function drawMirrorBallSoftSpot(
   const half = spot.radius;
   const aspect = spot.square ?? 1;
   const hw = half * aspect;
-  const hh = half / Math.max(0.75, aspect);
-  const g = ctx.createRadialGradient(spot.x, spot.y, 0, spot.x, spot.y, Math.max(hw, hh) * 1.15);
-  g.addColorStop(0, `rgba(255,255,255,${spot.a * 0.95})`);
-  g.addColorStop(0.35, `rgba(${spot.r},${spot.g},${spot.b},${spot.a * 0.85})`);
+  const hh = half / Math.max(0.6, aspect);
+  const g = ctx.createRadialGradient(spot.x, spot.y, 0, spot.x, spot.y, Math.max(hw, hh) * 1.3);
+  g.addColorStop(0, `rgba(255,255,255,${spot.a * 0.9})`);
+  g.addColorStop(0.3, `rgba(${spot.r},${spot.g},${spot.b},${spot.a * 0.7})`);
+  g.addColorStop(0.7, `rgba(${spot.r},${spot.g},${spot.b},${spot.a * 0.25})`);
   g.addColorStop(1, `rgba(${spot.r},${spot.g},${spot.b},0)`);
   ctx.fillStyle = g;
   ctx.beginPath();
-  ctx.ellipse(spot.x, spot.y, hw, hh, 0, 0, Math.PI * 2);
+  ctx.ellipse(spot.x, spot.y, hw * 1.2, hh * 1.2, 0, 0, Math.PI * 2);
   ctx.fill();
 }
 
@@ -2614,18 +2615,18 @@ export function buildMirrorBallFrame(
 
   const audioBoost = a.bass * 0.45 + a.volume * 0.18 + a.highFreq * 0.12 * p.sparkle;
 
-  // 壁スポット: ボールから放射状に散らす
+  // 壁スポット: ボールから放射状に散らす（広範囲）
   const wallSpotsRaw: MirrorBallWallSpotDraw[] = [];
-  const spotCount = Math.round((40 + p.beamCount * 8) * p.strength);
+  const spotCount = Math.round((60 + p.beamCount * 10) * p.strength);
   for (let i = 0; i < spotCount; i++) {
     const seed = i * 7.31 + 2.17;
-    const angle = (i / spotCount) * Math.PI * 2 + mirrorBallRotationRad * 0.7;
-    const dist = 0.3 + mirrorBallHash(seed) * 0.7;
-    const sx = cx + Math.cos(angle) * r * dist * 3;
-    const sy = cy + Math.sin(angle) * r * dist * 2.5 + r * 0.5;
-    if (sx < -r || sx > width + r || sy < -r || sy > height + r) continue;
-    const spotR = r * (0.08 + mirrorBallHash(seed + 1) * 0.18) * (1 + audioBoost * 0.3);
-    const spotA = (0.15 + mirrorBallHash(seed + 2) * 0.25) * p.strength * (0.7 + audioBoost * 0.3);
+    const angle = (i / spotCount) * Math.PI * 2 + mirrorBallRotationRad * 0.6;
+    const dist = 0.2 + mirrorBallHash(seed) * 1.8;
+    const sx = cx + Math.cos(angle) * r * dist * 2.5;
+    const sy = cy + Math.sin(angle) * r * dist * 2.0 + r * 1.5;
+    if (sx < -r * 2 || sx > width + r * 2 || sy < -r * 2 || sy > height + r * 2) continue;
+    const spotR = r * (0.12 + mirrorBallHash(seed + 1) * 0.25) * (1 + audioBoost * 0.4);
+    const spotA = (0.12 + mirrorBallHash(seed + 2) * 0.2) * p.strength * (0.6 + audioBoost * 0.4);
     const tintMix = mirrorBallHash(seed + 3);
     const sr = Math.round(p.lightRgb[0] * (1 - tintMix * 0.3) + 255 * tintMix * 0.3);
     const sg = Math.round(p.lightRgb[1] * (1 - tintMix * 0.2) + 240 * tintMix * 0.2);
@@ -2633,30 +2634,30 @@ export function buildMirrorBallFrame(
     wallSpotsRaw.push({ x: sx, y: sy, radius: spotR, r: sr, g: sg, b: sb, a: spotA });
   }
 
-  const wallSpots = capWallSpots(wallSpotsRaw, Math.round(80 * p.strength));
+  const wallSpots = capWallSpots(wallSpotsRaw, Math.round(120 * p.strength));
   const beams: MirrorBallBeamDraw[] = [];
 
-  // ボール上のグリッド線（回転する鏡面パターン）
+  // ボール上のグリッド線（回転する鏡面パターン）- 高密度
   const facets: MirrorBallFacetDraw[] = [];
-  const gridLines = Math.max(6, Math.round(p.facetCount / 4));
+  const gridLines = Math.max(12, Math.round(p.facetCount / 2));
   for (let i = 0; i < gridLines; i++) {
     const lon = (i / gridLines) * Math.PI * 2 + mirrorBallRotationRad;
-    const steps = 16;
+    const steps = 24;
     for (let j = 0; j < steps; j++) {
-      const lat0 = -Math.PI * 0.45 + (j / steps) * Math.PI * 0.9;
-      const lat1 = -Math.PI * 0.45 + ((j + 1) / steps) * Math.PI * 0.9;
+      const lat0 = -Math.PI * 0.48 + (j / steps) * Math.PI * 0.96;
+      const lat1 = -Math.PI * 0.48 + ((j + 1) / steps) * Math.PI * 0.96;
       const [nx0, ny0, nz0] = sphereNormal(lon, lat0);
       const [nx1, ny1, nz1] = sphereNormal(lon, lat1);
-      if (nz0 < -0.1 && nz1 < -0.1) continue;
+      if (nz0 < -0.15 && nz1 < -0.15) continue;
       const [px0, py0] = projectBallPoint(nx0, ny0, nz0, cx, cy, r);
       const [px1, py1] = projectBallPoint(nx1, ny1, nz1, cx, cy, r);
-      const brightness = 0.3 + 0.4 * Math.max(0, nz0);
+      const brightness = 0.25 + 0.5 * Math.max(0, nz0);
       facets.push({
         points: [px0, py0, px1, py1, px1 + 0.1, py1 + 0.1],
-        r: Math.round(180 * brightness),
-        g: Math.round(185 * brightness),
-        b: Math.round(200 * brightness),
-        a: 0.3 * brightness * p.strength,
+        r: Math.round(200 * brightness),
+        g: Math.round(205 * brightness),
+        b: Math.round(220 * brightness),
+        a: 0.35 * brightness * p.strength,
       });
     }
   }
@@ -2710,7 +2711,6 @@ function drawMirrorBallCanvas(
 ): void {
   const frame = buildMirrorBallFrame(width, height, effect, deltaTime, audio);
   const p = resolveMirrorBallParams(effect);
-  const [cr, cg, cb] = p.lightRgb;
   ctx.save();
 
   // 室内の暗さ
@@ -2723,78 +2723,11 @@ function drawMirrorBallCanvas(
     ctx.globalCompositeOperation = "source-over";
   }
 
-  // 壁スポット（加算合成）
+  // 壁スポットのみ描画（ミラーボール本体は非表示）
   ctx.globalCompositeOperation = "lighter";
   for (const w of frame.wallSpots) {
     drawMirrorBallSoftSpot(ctx, w);
   }
-
-  // ボール本体（球体グラデーション）
-  ctx.globalCompositeOperation = "source-over";
-  const ballGrad = ctx.createRadialGradient(
-    frame.ballCx - frame.ballR * 0.25,
-    frame.ballCy - frame.ballR * 0.2,
-    frame.ballR * 0.05,
-    frame.ballCx,
-    frame.ballCy,
-    frame.ballR
-  );
-  ballGrad.addColorStop(0, `rgba(180,185,200,0.9)`);
-  ballGrad.addColorStop(0.4, `rgba(80,85,100,0.85)`);
-  ballGrad.addColorStop(0.8, `rgba(30,32,42,0.9)`);
-  ballGrad.addColorStop(1, "rgba(10,10,18,0.95)");
-  ctx.fillStyle = ballGrad;
-  ctx.beginPath();
-  ctx.arc(frame.ballCx, frame.ballCy, frame.ballR, 0, Math.PI * 2);
-  ctx.fill();
-
-  // グリッド線（鏡面パターン）
-  for (const f of frame.facets) {
-    const [x1, y1, x2, y2] = f.points;
-    ctx.strokeStyle = `rgba(${f.r},${f.g},${f.b},${f.a})`;
-    ctx.lineWidth = Math.max(0.5, frame.ballR * 0.008);
-    ctx.beginPath();
-    ctx.moveTo(x1, y1);
-    ctx.lineTo(x2, y2);
-    ctx.stroke();
-  }
-
-  // ボール縁のハイライト
-  ctx.strokeStyle = "rgba(160,165,185,0.35)";
-  ctx.lineWidth = Math.max(0.8, frame.ballR * 0.012);
-  ctx.beginPath();
-  ctx.arc(frame.ballCx, frame.ballCy, frame.ballR, 0, Math.PI * 2);
-  ctx.stroke();
-
-  // スパークル（加算合成）
-  ctx.globalCompositeOperation = "lighter";
-  for (const s of frame.sparkles) {
-    const g = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, s.radius * 2.5);
-    g.addColorStop(0, `rgba(255,255,255,${s.a})`);
-    g.addColorStop(0.4, `rgba(${s.r},${s.g},${s.b},${s.a * 0.6})`);
-    g.addColorStop(1, `rgba(${s.r},${s.g},${s.b},0)`);
-    ctx.fillStyle = g;
-    ctx.beginPath();
-    ctx.arc(s.x, s.y, s.radius * 2.5, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  // 光源グロー
-  const lightGlow = ctx.createRadialGradient(
-    frame.lightX,
-    frame.lightY,
-    0,
-    frame.lightX,
-    frame.lightY,
-    frame.ballR * 1.5
-  );
-  lightGlow.addColorStop(0, `rgba(${cr},${cg},${cb},${0.18 * p.lightIntensity * p.strength})`);
-  lightGlow.addColorStop(0.5, `rgba(${cr},${cg},${cb},${0.04 * p.lightIntensity})`);
-  lightGlow.addColorStop(1, "rgba(255,255,255,0)");
-  ctx.fillStyle = lightGlow;
-  ctx.beginPath();
-  ctx.arc(frame.lightX, frame.lightY, frame.ballR * 1.5, 0, Math.PI * 2);
-  ctx.fill();
 
   ctx.restore();
 }
