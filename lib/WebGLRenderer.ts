@@ -2231,104 +2231,17 @@ function renderFrame(): void {
         deltaTime,
         audioRForEffects
       );
-      const roomDim = Math.min(0.55, frame.ambientAlpha);
+      const roomDim = Math.min(0.5, frame.ambientAlpha);
       if (roomDim > 0.001) {
-        const shade = 1 - roomDim * 0.92;
+        const shade = 1 - roomDim * 0.9;
         gl.blendFunc(gl.DST_COLOR, gl.ZERO);
-        drawRect(
-          glContext,
-          0,
-          0,
-          canvasWidth,
-          canvasHeight,
-          shade,
-          shade,
-          Math.min(1, shade + 0.03),
-          1
-        );
+        drawRect(glContext, 0, 0, canvasWidth, canvasHeight, shade, shade, Math.min(1, shade + 0.03), 1);
         gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
       }
       gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
-      for (const w of frame.wallSpots) {
-        const aspect = w.square ?? 1;
-        const hw = w.radius * aspect;
-        const hh = w.radius / Math.max(0.75, aspect);
-        const spotA = w.a * 0.92;
-        drawRect(
-          glContext,
-          w.x - hw,
-          w.y - hh,
-          hw * 2,
-          hh * 2,
-          w.r / 255,
-          w.g / 255,
-          w.b / 255,
-          spotA
-        );
-        drawCircle(
-          glContext,
-          w.x,
-          w.y,
-          Math.max(hw, hh) * 0.55,
-          1,
-          1,
-          0.98,
-          spotA * 0.35
-        );
+      for (const spot of frame.spots) {
+        drawCircle(glContext, spot.x, spot.y, spot.radius, spot.r / 255, spot.g / 255, spot.b / 255, spot.a);
       }
-      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-      for (const f of frame.facets) {
-        const [x1, y1, x2, y2, x3, y3] = f.points;
-        drawTriangle(
-          glContext,
-          x1,
-          y1,
-          x2,
-          y2,
-          x3,
-          y3,
-          f.r / 255,
-          f.g / 255,
-          f.b / 255,
-          f.a
-        );
-      }
-      gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
-      for (const s of frame.sparkles) {
-        drawCircle(
-          glContext,
-          s.x,
-          s.y,
-          Math.max(1.2, s.radius * 2),
-          s.r / 255,
-          s.g / 255,
-          s.b / 255,
-          s.a
-        );
-      }
-      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-      drawCircle(glContext, frame.ballCx, frame.ballCy, frame.ballR, 0.22, 0.23, 0.28, 0.82);
-      drawCircle(
-        glContext,
-        frame.ballCx,
-        frame.ballCy,
-        frame.coreR,
-        0.78,
-        0.8,
-        0.86,
-        frame.coreAlpha * 0.35
-      );
-      gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
-      drawCircle(
-        glContext,
-        frame.lightX,
-        frame.lightY,
-        frame.ballR * 1.25,
-        1,
-        0.97,
-        0.86,
-        0.06
-      );
       gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     } else {
       drawEffectOverlayWebGL(glContext, canvasWidth, canvasHeight, latestEffect, audioRForEffects);

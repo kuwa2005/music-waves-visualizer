@@ -72,6 +72,8 @@ export interface EffectParams {
   mirrorBallY?: number;
   /** ミラーボール: 回転速度（度/秒、負で逆回転） */
   mirrorBallRotationSpeed?: number;
+  /** ミラーボール: 光源数（1〜10） */
+  mirrorBallLightCount?: number;
   /** ミラーボール: 半径（画面短辺に対する比率 0.04〜0.35） */
   mirrorBallRadius?: number;
   /** ミラーボール: 鏡面ファセット数（8〜64） */
@@ -2128,42 +2130,8 @@ function drawScanlinesCanvas(
 }
 
 // --- ミラーボール（ディスコ）---
-/** @deprecated 光線ビームは描画しない（互換のため型のみ残す） */
-export interface MirrorBallBeamDraw {
-  x1: number;
-  y1: number;
-  x2: number;
-  y2: number;
-  r: number;
-  g: number;
-  b: number;
-  a: number;
-  lw: number;
-  kind?: "reflected" | "spotlight";
-}
 
-/** 壁・床・天井に落ちる反射スポット（小さめの角丸四角） */
-export interface MirrorBallWallSpotDraw {
-  x: number;
-  y: number;
-  radius: number;
-  r: number;
-  g: number;
-  b: number;
-  a: number;
-  /** 1=正方形に近い, 未指定時1 */
-  square?: number;
-}
-
-export interface MirrorBallFacetDraw {
-  points: [number, number, number, number, number, number];
-  r: number;
-  g: number;
-  b: number;
-  a: number;
-}
-
-export interface MirrorBallSparkleDraw {
+export interface MirrorBallLightDraw {
   x: number;
   y: number;
   radius: number;
@@ -2174,91 +2142,19 @@ export interface MirrorBallSparkleDraw {
 }
 
 export interface MirrorBallFrameDraw {
+  spots: MirrorBallLightDraw[];
   ambientAlpha: number;
-  beams: MirrorBallBeamDraw[];
-  wallSpots: MirrorBallWallSpotDraw[];
-  facets: MirrorBallFacetDraw[];
-  sparkles: MirrorBallSparkleDraw[];
-  ballCx: number;
-  ballCy: number;
-  ballR: number;
-  coreR: number;
-  coreAlpha: number;
-  lightX: number;
-  lightY: number;
 }
 
 let mirrorBallRotationRad = 0;
-let mirrorBallSparklePhase = 0;
-
-export interface MirrorBallLightConfig {
-  color: [number, number, number];
-  intensity: number;
-}
-
-export interface ResolvedMirrorBallParams {
-  rotationSpeedDeg: number;
-  radiusFrac: number;
-  lights: MirrorBallLightConfig[];
-  strength: number;
-}
-
-const DEFAULT_LIGHT_COLORS: [number, number, number][] = [
-  [255, 248, 220],
-  [180, 210, 255],
-  [255, 200, 180],
-  [200, 255, 200],
-];
-
-export function resolveMirrorBallParams(effect: EffectParams): ResolvedMirrorBallParams {
-  const strength = DENSITY_STRENGTH[effect.density];
-  const lights: MirrorBallLightConfig[] = [];
-  for (let i = 0; i < 4; i++) {
-    const color = parseWeatherColorHex(
-      (effect as any)[`mirrorBallLight${i}Color`],
-      DEFAULT_LIGHT_COLORS[i]
-    );
-    const intensity = Math.max(0, Math.min(1,
-      (effect as any)[`mirrorBallLight${i}Intensity`] ?? (i === 0 ? 0.85 : 0.5)
-    ));
-    lights.push({ color, intensity });
-  }
-  return {
-    rotationSpeedDeg: Math.max(-180, Math.min(180, effect.mirrorBallRotationSpeed ?? 20)),
-    radiusFrac: Math.max(0.04, Math.min(0.35, effect.mirrorBallRadius ?? 0.14)),
-    lights,
-    strength,
-  };
-}
 
 function mirrorBallHash(n: number): number {
   const x = Math.sin(n * 127.1 + 311.7) * 43758.5453;
   return x - Math.floor(x);
 }
 
-function capWallSpots(spots: MirrorBallWallSpotDraw[], maxSpots: number): MirrorBallWallSpotDraw[] {
-  if (spots.length <= maxSpots) return spots;
-  spots.sort((a, b) => b.a - a.a);
-  return spots.slice(0, maxSpots);
-}
-
-function drawMirrorBallSoftSpot(
-  ctx: CanvasRenderingContext2D,
-  spot: MirrorBallWallSpotDraw
-): void {
-  const half = spot.radius;
-  const aspect = spot.square ?? 1;
-  const hw = half * aspect;
-  const hh = half / Math.max(0.6, aspect);
-  const g = ctx.createRadialGradient(spot.x, spot.y, 0, spot.x, spot.y, Math.max(hw, hh) * 1.3);
-  g.addColorStop(0, `rgba(255,255,255,${spot.a * 0.9})`);
-  g.addColorStop(0.3, `rgba(${spot.r},${spot.g},${spot.b},${spot.a * 0.7})`);
-  g.addColorStop(0.7, `rgba(${spot.r},${spot.g},${spot.b},${spot.a * 0.25})`);
-  g.addColorStop(1, `rgba(${spot.r},${spot.g},${spot.b},0)`);
-  ctx.fillStyle = g;
-  ctx.beginPath();
-  ctx.ellipse(spot.x, spot.y, hw * 1.2, hh * 1.2, 0, 0, Math.PI * 2);
-  ctx.fill();
+function parseMirrorBallColor(hex: string | undefined, fallback: [number, number, number]): [number, number, number] {
+  return parseWeatherColorHex(hex, fallback);
 }
 
 export function buildMirrorBallFrame(
@@ -2268,60 +2164,100 @@ export function buildMirrorBallFrame(
   deltaTime: number,
   audio?: AudioReactiveData
 ): MirrorBallFrameDraw {
-  const p = resolveMirrorBallParams(effect);
   const a = audio ?? SILENT_AUDIO_REACTIVE;
   const minDim = Math.min(width, height);
+  const strength = DENSITY_STRENGTH[effect.density];
 
+  // ボールは天井中央に固定（描画しない）
   const cx = width * 0.5;
-  const cy = height * 0.12;
-  const r = p.radiusFrac * minDim;
+  const cy = height * 0.1;
+  const r = minDim * 0.12;
 
-  mirrorBallRotationRad += (p.rotationSpeedDeg * Math.PI) / 180 * (deltaTime / 1000);
+  // 回転
+  const rotSpeed = Math.max(-180, Math.min(180, effect.mirrorBallRotationSpeed ?? 20));
+  mirrorBallRotationRad += (rotSpeed * Math.PI) / 180 * (deltaTime / 1000);
 
-  const audioBoost = a.bass * 0.45 + a.volume * 0.18 + a.highFreq * 0.12;
+  const audioBoost = a.bass * 0.4 + a.volume * 0.2 + a.highFreq * 0.15;
 
-  const lightAngles = [-Math.PI * 0.75, -Math.PI * 0.25, Math.PI * 0.25, Math.PI * 0.75];
-  const wallSpotsRaw: MirrorBallWallSpotDraw[] = [];
+  // 光源数（1〜10、デフォルト4）
+  const lightCount = Math.max(1, Math.min(10, effect.mirrorBallLightCount ?? 4));
 
-  for (let li = 0; li < 4; li++) {
-    const light = p.lights[li];
+  // 各光源の色と強さを読み取り
+  const lights: Array<{ color: [number, number, number]; intensity: number }> = [];
+  const defaultColors: [number, number, number][] = [
+    [255, 248, 220], [180, 210, 255], [255, 200, 180], [200, 255, 200],
+    [255, 255, 180], [200, 180, 255], [255, 180, 220], [180, 255, 240],
+    [240, 220, 255], [255, 220, 200],
+  ];
+  for (let i = 0; i < lightCount; i++) {
+    const color = parseMirrorBallColor(
+      (effect as any)[`mirrorBallLight${i}Color`],
+      defaultColors[i % defaultColors.length]
+    );
+    const intensity = Math.max(0, Math.min(1,
+      (effect as any)[`mirrorBallLight${i}Intensity`] ?? 0.7
+    ));
+    lights.push({ color, intensity });
+  }
+
+  // 光源を等間隔で配置（回転で角度がずれる）
+  const spots: MirrorBallLightDraw[] = [];
+  const angleStep = (Math.PI * 2) / lightCount;
+
+  for (let li = 0; li < lightCount; li++) {
+    const light = lights[li];
     if (light.intensity <= 0.01) continue;
-    const baseAngle = lightAngles[li] + mirrorBallRotationRad * 0.25;
-    const spotCount = Math.round(30 * p.strength * light.intensity);
+
+    // 光源の角度（回転に連動）
+    const baseAngle = angleStep * li + mirrorBallRotationRad * 0.3;
+
+    // 反射スポットを生成（光源の逆方向に散らす）
+    const spotCount = Math.round(25 * strength * light.intensity);
     for (let i = 0; i < spotCount; i++) {
-      const seed = i * 7.31 + li * 100 + 2.17;
-      const spread = (mirrorBallHash(seed) - 0.5) * 0.8;
+      const seed = i * 7.31 + li * 97 + 2.17;
+      const spread = (mirrorBallHash(seed) - 0.5) * 0.6;
       const angle = baseAngle + Math.PI + spread;
-      const dist = 0.4 + mirrorBallHash(seed + 4) * 2.2;
-      const sx = cx + Math.cos(angle) * dist * r * 1.8;
-      const sy = cy + Math.sin(angle) * dist * r * 1.6;
+      const dist = 0.3 + mirrorBallHash(seed + 4) * 2.5;
+      const sx = cx + Math.cos(angle) * dist * r * 2.0;
+      const sy = cy + Math.sin(angle) * dist * r * 1.8 + r * 0.5;
       if (sx < -r * 2 || sx > width + r * 2 || sy < -r * 2 || sy > height + r * 2) continue;
-      const spotR = r * (0.1 + mirrorBallHash(seed + 1) * 0.22) * (1 + audioBoost * 0.4);
-      const spotA = (0.1 + mirrorBallHash(seed + 2) * 0.18) * p.strength * light.intensity * (0.6 + audioBoost * 0.4);
-      const tintMix = mirrorBallHash(seed + 3) * 0.3;
-      const sr = Math.round(light.color[0] * (1 - tintMix) + 255 * tintMix);
-      const sg = Math.round(light.color[1] * (1 - tintMix) + 250 * tintMix);
-      const sb = Math.round(light.color[2] * (1 - tintMix) + 240 * tintMix);
-      wallSpotsRaw.push({ x: sx, y: sy, radius: spotR, r: sr, g: sg, b: sb, a: spotA });
+      const spotR = r * (0.04 + mirrorBallHash(seed + 1) * 0.08) * (1 + audioBoost * 0.3);
+      const spotA = (0.08 + mirrorBallHash(seed + 2) * 0.15) * strength * light.intensity * (0.6 + audioBoost * 0.4);
+      const tintMix = mirrorBallHash(seed + 3) * 0.25;
+      spots.push({
+        x: sx,
+        y: sy,
+        radius: spotR,
+        r: Math.round(light.color[0] * (1 - tintMix) + 255 * tintMix),
+        g: Math.round(light.color[1] * (1 - tintMix) + 250 * tintMix),
+        b: Math.round(light.color[2] * (1 - tintMix) + 240 * tintMix),
+        a: spotA,
+      });
     }
   }
 
-  const wallSpots = capWallSpots(wallSpotsRaw, Math.round(150 * p.strength));
+  // 輝度順にソートして上限を設定
+  if (spots.length > 200) {
+    spots.sort((a, b) => b.a - a.a);
+    spots.length = 200;
+  }
 
-  return {
-    ambientAlpha: 0.3 * p.strength,
-    wallSpots,
-    facets: [],
-    sparkles: [],
-    beams: [],
-    ballCx: cx,
-    ballCy: cy,
-    ballR: r,
-    coreR: 0,
-    coreAlpha: 0,
-    lightX: cx,
-    lightY: cy,
-  };
+  return { spots, ambientAlpha: 0.3 * strength };
+}
+
+function drawMirrorBallSoftSpot(
+  ctx: CanvasRenderingContext2D,
+  spot: MirrorBallLightDraw
+): void {
+  const g = ctx.createRadialGradient(spot.x, spot.y, 0, spot.x, spot.y, spot.radius * 1.2);
+  g.addColorStop(0, `rgba(255,255,255,${spot.a * 0.9})`);
+  g.addColorStop(0.4, `rgba(${spot.r},${spot.g},${spot.b},${spot.a * 0.5})`);
+  g.addColorStop(0.8, `rgba(${spot.r},${spot.g},${spot.b},${spot.a * 0.1})`);
+  g.addColorStop(1, `rgba(${spot.r},${spot.g},${spot.b},0)`);
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.ellipse(spot.x, spot.y, spot.radius * 1.1, spot.radius * 0.9, 0, 0, Math.PI * 2);
+  ctx.fill();
 }
 
 function drawMirrorBallCanvas(
@@ -2335,18 +2271,20 @@ function drawMirrorBallCanvas(
   const frame = buildMirrorBallFrame(width, height, effect, deltaTime, audio);
   ctx.save();
 
-  const roomDim = Math.min(0.55, frame.ambientAlpha);
+  // 室内の暗さ
+  const roomDim = Math.min(0.5, frame.ambientAlpha);
   if (roomDim > 0.001) {
     ctx.globalCompositeOperation = "multiply";
-    const shade = Math.round(255 * (1 - roomDim * 0.92));
+    const shade = Math.round(255 * (1 - roomDim * 0.9));
     ctx.fillStyle = `rgb(${shade},${shade},${Math.min(255, shade + 8)})`;
     ctx.fillRect(0, 0, width, height);
     ctx.globalCompositeOperation = "source-over";
   }
 
+  // 反射スポット
   ctx.globalCompositeOperation = "lighter";
-  for (const w of frame.wallSpots) {
-    drawMirrorBallSoftSpot(ctx, w);
+  for (const spot of frame.spots) {
+    drawMirrorBallSoftSpot(ctx, spot);
   }
 
   ctx.restore();

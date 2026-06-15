@@ -840,50 +840,28 @@ const Home: NextPage = () => {
   const DEFAULT_WATER_RIPPLE_VARIANT: WaterRippleVariant = "ripple";
   const DEFAULT_WATER_RIPPLE_LIGHT_MODE = true;
   type MirrorBallAdjust = {
-    ballX: number;
-    ballY: number;
     rotationSpeed: number;
-    radius: number;
-    facetCount: number;
-    sparkle: number;
-    beamCount: number;
-    beamSpread: number;
-    ambient: number;
-    specular: number;
-    reflectivity: number;
-    lightX: number;
-    lightY: number;
-    lightColor: string;
-    lightIntensity: number;
-    secondaryEnabled: boolean;
-    secondaryX: number;
-    secondaryY: number;
-    secondaryColor: string;
-    secondaryIntensity: number;
-    audioSyncRotation: boolean;
+    lightCount: number;
+    light0Color: string;
+    light0Intensity: number;
+    light1Color: string;
+    light1Intensity: number;
+    light2Color: string;
+    light2Intensity: number;
+    light3Color: string;
+    light3Intensity: number;
   };
   const DEFAULT_MIRROR_BALL: MirrorBallAdjust = {
-    ballX: 0.5,
-    ballY: 0.28,
-    rotationSpeed: 14,
-    radius: 0.12,
-    facetCount: 32,
-    sparkle: 0.6,
-    beamCount: 18,
-    beamSpread: 26,
-    ambient: 0.62,
-    specular: 0.72,
-    reflectivity: 0.88,
-    lightX: 0.5,
-    lightY: 0.08,
-    lightColor: "#fff8dc",
-    lightIntensity: 0.85,
-    secondaryEnabled: false,
-    secondaryX: 0.18,
-    secondaryY: 0.22,
-    secondaryColor: "#b4d2ff",
-    secondaryIntensity: 0.45,
-    audioSyncRotation: false,
+    rotationSpeed: 20,
+    lightCount: 4,
+    light0Color: "#fff8dc",
+    light0Intensity: 0.85,
+    light1Color: "#b4d2ff",
+    light1Intensity: 0.6,
+    light2Color: "#ffb4b4",
+    light2Intensity: 0.5,
+    light3Color: "#b4ffb4",
+    light3Intensity: 0.4,
   };
   const [rainWeather, setRainWeather] = useState<WeatherAdjust>(DEFAULT_RAIN_WEATHER);
   const [rainAudioSensitivity, setRainAudioSensitivity] = useState<number>(0);
@@ -925,12 +903,6 @@ const Home: NextPage = () => {
 
   const [rainColorInput, setRainColorInput] = useState<string>(DEFAULT_RAIN_WEATHER.color.toUpperCase());
   const [snowColorInput, setSnowColorInput] = useState<string>(DEFAULT_SNOW_WEATHER.color.toUpperCase());
-  const [mirrorBallLightColorInput, setMirrorBallLightColorInput] = useState<string>(
-    DEFAULT_MIRROR_BALL.lightColor.toUpperCase()
-  );
-  const [mirrorBallSecondaryColorInput, setMirrorBallSecondaryColorInput] = useState<string>(
-    DEFAULT_MIRROR_BALL.secondaryColor.toUpperCase()
-  );
   const isSpaceEffect = effectType === "space" || effectType === "spaceConstant" || effectType === "spaceAudio";
 
   // スペクトラム調整
@@ -1072,27 +1044,12 @@ const Home: NextPage = () => {
       base.waterRippleLightMode = waterRippleLightMode;
       base.waterRippleAudioSensitivity = waterRippleAudioSensitivity;
     } else if (effectType === "mirrorBall") {
-      base.mirrorBallX = mirrorBall.ballX;
-      base.mirrorBallY = mirrorBall.ballY;
       base.mirrorBallRotationSpeed = mirrorBall.rotationSpeed;
-      base.mirrorBallRadius = mirrorBall.radius;
-      base.mirrorBallFacetCount = mirrorBall.facetCount;
-      base.mirrorBallSparkle = mirrorBall.sparkle;
-      base.mirrorBallBeamCount = mirrorBall.beamCount;
-      base.mirrorBallBeamSpread = mirrorBall.beamSpread;
-      base.mirrorBallAmbient = mirrorBall.ambient;
-      base.mirrorBallSpecular = mirrorBall.specular;
-      base.mirrorBallReflectivity = mirrorBall.reflectivity;
-      base.mirrorBallLightX = mirrorBall.lightX;
-      base.mirrorBallLightY = mirrorBall.lightY;
-      base.mirrorBallLightColor = mirrorBall.lightColor;
-      base.mirrorBallLightIntensity = mirrorBall.lightIntensity;
-      base.mirrorBallSecondaryEnabled = mirrorBall.secondaryEnabled;
-      base.mirrorBallSecondaryX = mirrorBall.secondaryX;
-      base.mirrorBallSecondaryY = mirrorBall.secondaryY;
-      base.mirrorBallSecondaryColor = mirrorBall.secondaryColor;
-      base.mirrorBallSecondaryIntensity = mirrorBall.secondaryIntensity;
-      base.mirrorBallAudioSyncRotation = mirrorBall.audioSyncRotation;
+      base.mirrorBallLightCount = mirrorBall.lightCount;
+      for (let i = 0; i < mirrorBall.lightCount; i++) {
+        (base as any)[`mirrorBallLight${i}Color`] = (mirrorBall as any)[`light${i}Color`];
+        (base as any)[`mirrorBallLight${i}Intensity`] = (mirrorBall as any)[`light${i}Intensity`];
+      }
     }
     return base;
   }, [
@@ -1894,35 +1851,19 @@ const Home: NextPage = () => {
             typeof v === "number" && !isNaN(v) ? Math.max(0, Math.min(1, v)) : fallback;
           const clampNum = (v: unknown, min: number, max: number, fallback: number) =>
             typeof v === "number" && !isNaN(v) ? Math.max(min, Math.min(max, v)) : fallback;
-          setMirrorBall({
-            ballX: clamp01(mb.ballX, DEFAULT_MIRROR_BALL.ballX),
-            ballY: clamp01(mb.ballY, DEFAULT_MIRROR_BALL.ballY),
+          const newMb: MirrorBallAdjust = {
             rotationSpeed: clampNum(mb.rotationSpeed, -180, 180, DEFAULT_MIRROR_BALL.rotationSpeed),
-            radius: clampNum(mb.radius, 0.04, 0.35, DEFAULT_MIRROR_BALL.radius),
-            facetCount: Math.round(clampNum(mb.facetCount, 8, 64, DEFAULT_MIRROR_BALL.facetCount)),
-            sparkle: clamp01(mb.sparkle, DEFAULT_MIRROR_BALL.sparkle),
-            beamCount: Math.round(clampNum(mb.beamCount, 4, 32, DEFAULT_MIRROR_BALL.beamCount)),
-            beamSpread: clampNum(mb.beamSpread, 8, 90, DEFAULT_MIRROR_BALL.beamSpread),
-            ambient: clamp01(mb.ambient, DEFAULT_MIRROR_BALL.ambient),
-            specular: clamp01(mb.specular, DEFAULT_MIRROR_BALL.specular),
-            reflectivity: clamp01(mb.reflectivity, DEFAULT_MIRROR_BALL.reflectivity),
-            lightX: clamp01(mb.lightX, DEFAULT_MIRROR_BALL.lightX),
-            lightY: clamp01(mb.lightY, DEFAULT_MIRROR_BALL.lightY),
-            lightColor:
-              typeof mb.lightColor === "string" && /^#[0-9a-fA-F]{6}$/.test(mb.lightColor)
-                ? mb.lightColor
-                : DEFAULT_MIRROR_BALL.lightColor,
-            lightIntensity: clamp01(mb.lightIntensity, DEFAULT_MIRROR_BALL.lightIntensity),
-            secondaryEnabled: mb.secondaryEnabled === true,
-            secondaryX: clamp01(mb.secondaryX, DEFAULT_MIRROR_BALL.secondaryX),
-            secondaryY: clamp01(mb.secondaryY, DEFAULT_MIRROR_BALL.secondaryY),
-            secondaryColor:
-              typeof mb.secondaryColor === "string" && /^#[0-9a-fA-F]{6}$/.test(mb.secondaryColor)
-                ? mb.secondaryColor
-                : DEFAULT_MIRROR_BALL.secondaryColor,
-            secondaryIntensity: clamp01(mb.secondaryIntensity, DEFAULT_MIRROR_BALL.secondaryIntensity),
-            audioSyncRotation: mb.audioSyncRotation === true,
-          });
+            lightCount: Math.round(clampNum(mb.lightCount, 1, 10, DEFAULT_MIRROR_BALL.lightCount)),
+            light0Color: typeof mb.light0Color === "string" && /^#[0-9a-fA-F]{6}$/.test(mb.light0Color) ? mb.light0Color : DEFAULT_MIRROR_BALL.light0Color,
+            light0Intensity: clamp01(mb.light0Intensity, DEFAULT_MIRROR_BALL.light0Intensity),
+            light1Color: typeof mb.light1Color === "string" && /^#[0-9a-fA-F]{6}$/.test(mb.light1Color) ? mb.light1Color : DEFAULT_MIRROR_BALL.light1Color,
+            light1Intensity: clamp01(mb.light1Intensity, DEFAULT_MIRROR_BALL.light1Intensity),
+            light2Color: typeof mb.light2Color === "string" && /^#[0-9a-fA-F]{6}$/.test(mb.light2Color) ? mb.light2Color : DEFAULT_MIRROR_BALL.light2Color,
+            light2Intensity: clamp01(mb.light2Intensity, DEFAULT_MIRROR_BALL.light2Intensity),
+            light3Color: typeof mb.light3Color === "string" && /^#[0-9a-fA-F]{6}$/.test(mb.light3Color) ? mb.light3Color : DEFAULT_MIRROR_BALL.light3Color,
+            light3Intensity: clamp01(mb.light3Intensity, DEFAULT_MIRROR_BALL.light3Intensity),
+          };
+          setMirrorBall(newMb);
         }
         if (
           c.canvasSize === "auto" ||
@@ -2153,22 +2094,6 @@ const Home: NextPage = () => {
   useEffect(() => {
     setWaterRippleColorInput(waterRippleColor.toUpperCase());
   }, [waterRippleColor]);
-
-  useEffect(() => {
-    setMirrorBallLightColorInput(mirrorBall.lightColor.toUpperCase());
-  }, [mirrorBall.lightColor]);
-
-  useEffect(() => {
-    setMirrorBallSecondaryColorInput(mirrorBall.secondaryColor.toUpperCase());
-  }, [mirrorBall.secondaryColor]);
-
-  useEffect(() => {
-    setMirrorBallLightColorInput(mirrorBall.lightColor.toUpperCase());
-  }, [mirrorBall.lightColor]);
-
-  useEffect(() => {
-    setMirrorBallSecondaryColorInput(mirrorBall.secondaryColor.toUpperCase());
-  }, [mirrorBall.secondaryColor]);
 
   useEffect(() => {
     setSpaceColorInput(spaceParticleColor.toUpperCase());
@@ -3291,34 +3216,19 @@ const Home: NextPage = () => {
           typeof v === "number" && !isNaN(v) ? Math.max(0, Math.min(1, v)) : fallback;
         const clampNum = (v: unknown, min: number, max: number, fallback: number) =>
           typeof v === "number" && !isNaN(v) ? Math.max(min, Math.min(max, v)) : fallback;
+        const parseColor = (v: unknown, fallback: string) =>
+          typeof v === "string" && /^#[0-9a-fA-F]{6}$/.test(v) ? v : fallback;
         setMirrorBall({
-          ballX: clamp01(p.ballX, DEFAULT_MIRROR_BALL.ballX),
-          ballY: clamp01(p.ballY, DEFAULT_MIRROR_BALL.ballY),
           rotationSpeed: clampNum(p.rotationSpeed, -180, 180, DEFAULT_MIRROR_BALL.rotationSpeed),
-          radius: clampNum(p.radius, 0.04, 0.35, DEFAULT_MIRROR_BALL.radius),
-          facetCount: Math.round(clampNum(p.facetCount, 8, 64, DEFAULT_MIRROR_BALL.facetCount)),
-          sparkle: clamp01(p.sparkle, DEFAULT_MIRROR_BALL.sparkle),
-          beamCount: Math.round(clampNum(p.beamCount, 4, 32, DEFAULT_MIRROR_BALL.beamCount)),
-          beamSpread: clampNum(p.beamSpread, 8, 90, DEFAULT_MIRROR_BALL.beamSpread),
-          ambient: clamp01(p.ambient, DEFAULT_MIRROR_BALL.ambient),
-          specular: clamp01(p.specular, DEFAULT_MIRROR_BALL.specular),
-          reflectivity: clamp01(p.reflectivity, DEFAULT_MIRROR_BALL.reflectivity),
-          lightX: clamp01(p.lightX, DEFAULT_MIRROR_BALL.lightX),
-          lightY: clamp01(p.lightY, DEFAULT_MIRROR_BALL.lightY),
-          lightColor:
-            typeof p.lightColor === "string" && /^#[0-9a-fA-F]{6}$/.test(p.lightColor)
-              ? p.lightColor
-              : DEFAULT_MIRROR_BALL.lightColor,
-          lightIntensity: clamp01(p.lightIntensity, DEFAULT_MIRROR_BALL.lightIntensity),
-          secondaryEnabled: p.secondaryEnabled === true,
-          secondaryX: clamp01(p.secondaryX, DEFAULT_MIRROR_BALL.secondaryX),
-          secondaryY: clamp01(p.secondaryY, DEFAULT_MIRROR_BALL.secondaryY),
-          secondaryColor:
-            typeof p.secondaryColor === "string" && /^#[0-9a-fA-F]{6}$/.test(p.secondaryColor)
-              ? p.secondaryColor
-              : DEFAULT_MIRROR_BALL.secondaryColor,
-          secondaryIntensity: clamp01(p.secondaryIntensity, DEFAULT_MIRROR_BALL.secondaryIntensity),
-          audioSyncRotation: p.audioSyncRotation === true,
+          lightCount: Math.round(clampNum(p.lightCount, 1, 10, DEFAULT_MIRROR_BALL.lightCount)),
+          light0Color: parseColor(p.light0Color, DEFAULT_MIRROR_BALL.light0Color),
+          light0Intensity: clamp01(p.light0Intensity, DEFAULT_MIRROR_BALL.light0Intensity),
+          light1Color: parseColor(p.light1Color, DEFAULT_MIRROR_BALL.light1Color),
+          light1Intensity: clamp01(p.light1Intensity, DEFAULT_MIRROR_BALL.light1Intensity),
+          light2Color: parseColor(p.light2Color, DEFAULT_MIRROR_BALL.light2Color),
+          light2Intensity: clamp01(p.light2Intensity, DEFAULT_MIRROR_BALL.light2Intensity),
+          light3Color: parseColor(p.light3Color, DEFAULT_MIRROR_BALL.light3Color),
+          light3Intensity: clamp01(p.light3Intensity, DEFAULT_MIRROR_BALL.light3Intensity),
         });
       }
     } catch (_e) { /* ignore */ }
@@ -3331,34 +3241,19 @@ const Home: NextPage = () => {
           typeof v === "number" && !isNaN(v) ? Math.max(0, Math.min(1, v)) : fallback;
         const clampNum = (v: unknown, min: number, max: number, fallback: number) =>
           typeof v === "number" && !isNaN(v) ? Math.max(min, Math.min(max, v)) : fallback;
+        const parseColor = (v: unknown, fallback: string) =>
+          typeof v === "string" && /^#[0-9a-fA-F]{6}$/.test(v) ? v : fallback;
         setMirrorBall({
-          ballX: clamp01(p.ballX, DEFAULT_MIRROR_BALL.ballX),
-          ballY: clamp01(p.ballY, DEFAULT_MIRROR_BALL.ballY),
           rotationSpeed: clampNum(p.rotationSpeed, -180, 180, DEFAULT_MIRROR_BALL.rotationSpeed),
-          radius: clampNum(p.radius, 0.04, 0.35, DEFAULT_MIRROR_BALL.radius),
-          facetCount: Math.round(clampNum(p.facetCount, 8, 64, DEFAULT_MIRROR_BALL.facetCount)),
-          sparkle: clamp01(p.sparkle, DEFAULT_MIRROR_BALL.sparkle),
-          beamCount: Math.round(clampNum(p.beamCount, 4, 32, DEFAULT_MIRROR_BALL.beamCount)),
-          beamSpread: clampNum(p.beamSpread, 8, 90, DEFAULT_MIRROR_BALL.beamSpread),
-          ambient: clamp01(p.ambient, DEFAULT_MIRROR_BALL.ambient),
-          specular: clamp01(p.specular, DEFAULT_MIRROR_BALL.specular),
-          reflectivity: clamp01(p.reflectivity, DEFAULT_MIRROR_BALL.reflectivity),
-          lightX: clamp01(p.lightX, DEFAULT_MIRROR_BALL.lightX),
-          lightY: clamp01(p.lightY, DEFAULT_MIRROR_BALL.lightY),
-          lightColor:
-            typeof p.lightColor === "string" && /^#[0-9a-fA-F]{6}$/.test(p.lightColor)
-              ? p.lightColor
-              : DEFAULT_MIRROR_BALL.lightColor,
-          lightIntensity: clamp01(p.lightIntensity, DEFAULT_MIRROR_BALL.lightIntensity),
-          secondaryEnabled: p.secondaryEnabled === true,
-          secondaryX: clamp01(p.secondaryX, DEFAULT_MIRROR_BALL.secondaryX),
-          secondaryY: clamp01(p.secondaryY, DEFAULT_MIRROR_BALL.secondaryY),
-          secondaryColor:
-            typeof p.secondaryColor === "string" && /^#[0-9a-fA-F]{6}$/.test(p.secondaryColor)
-              ? p.secondaryColor
-              : DEFAULT_MIRROR_BALL.secondaryColor,
-          secondaryIntensity: clamp01(p.secondaryIntensity, DEFAULT_MIRROR_BALL.secondaryIntensity),
-          audioSyncRotation: p.audioSyncRotation === true,
+          lightCount: Math.round(clampNum(p.lightCount, 1, 10, DEFAULT_MIRROR_BALL.lightCount)),
+          light0Color: parseColor(p.light0Color, DEFAULT_MIRROR_BALL.light0Color),
+          light0Intensity: clamp01(p.light0Intensity, DEFAULT_MIRROR_BALL.light0Intensity),
+          light1Color: parseColor(p.light1Color, DEFAULT_MIRROR_BALL.light1Color),
+          light1Intensity: clamp01(p.light1Intensity, DEFAULT_MIRROR_BALL.light1Intensity),
+          light2Color: parseColor(p.light2Color, DEFAULT_MIRROR_BALL.light2Color),
+          light2Intensity: clamp01(p.light2Intensity, DEFAULT_MIRROR_BALL.light2Intensity),
+          light3Color: parseColor(p.light3Color, DEFAULT_MIRROR_BALL.light3Color),
+          light3Intensity: clamp01(p.light3Intensity, DEFAULT_MIRROR_BALL.light3Intensity),
         });
       }
     } catch (_e) { /* ignore */ }
@@ -5452,8 +5347,6 @@ const Home: NextPage = () => {
     setSpaceColorInput(DEFAULT_SPACE_PARTICLE.toUpperCase());
     setSparkleColorInput(DEFAULT_SPARKLE_PARTICLE.toUpperCase());
     setDustColorInput(DEFAULT_DUST_PARTICLE.toUpperCase());
-    setMirrorBallLightColorInput(DEFAULT_MIRROR_BALL.lightColor.toUpperCase());
-    setMirrorBallSecondaryColorInput(DEFAULT_MIRROR_BALL.secondaryColor.toUpperCase());
     setSpectrumRainbowColorful(true);
     setRecordVideoBitrateMbps(8);
     setExportAudioBitrateKbps(320);
@@ -7248,321 +7141,65 @@ const Home: NextPage = () => {
                     {effectType === "mirrorBall" && (
                       <Box sx={{ width: "100%", maxWidth: 480, mt: 1.5, mx: "auto" }}>
                         <Typography variant="caption" color="textSecondary" display="block">
-                          {t("effect.mirrorBallPosX", { value: Math.round(mirrorBall.ballX * 100) })}
-                        </Typography>
-                        <Slider
-                          value={mirrorBall.ballX}
-                          min={0.05}
-                          max={0.95}
-                          step={0.01}
-                          onChange={(_, v) => setMirrorBall((p) => ({ ...p, ballX: v as number }))}
-                        />
-                        <Typography variant="caption" color="textSecondary" display="block">
-                          {t("effect.mirrorBallPosY", { value: Math.round(mirrorBall.ballY * 100) })}
-                        </Typography>
-                        <Slider
-                          value={mirrorBall.ballY}
-                          min={0.08}
-                          max={0.92}
-                          step={0.01}
-                          onChange={(_, v) => setMirrorBall((p) => ({ ...p, ballY: v as number }))}
-                        />
-                        <Typography variant="caption" color="textSecondary" display="block">
-                          {t("effect.mirrorBallRotation", { value: mirrorBall.rotationSpeed.toFixed(0) })}
+                          回転速度: {mirrorBall.rotationSpeed.toFixed(0)}°/秒
                         </Typography>
                         <Slider
                           value={mirrorBall.rotationSpeed}
-                          min={-120}
-                          max={120}
+                          min={-60}
+                          max={60}
                           step={1}
                           onChange={(_, v) => setMirrorBall((p) => ({ ...p, rotationSpeed: v as number }))}
                         />
-                        <Typography variant="caption" color="textSecondary" display="block">
-                          {t("effect.mirrorBallRadius", { value: Math.round(mirrorBall.radius * 100) })}
+                        <Typography variant="caption" color="textSecondary" display="block" sx={{ mt: 1 }}>
+                          光源数: {mirrorBall.lightCount}
                         </Typography>
                         <Slider
-                          value={mirrorBall.radius}
-                          min={0.04}
-                          max={0.35}
-                          step={0.01}
-                          onChange={(_, v) => setMirrorBall((p) => ({ ...p, radius: v as number }))}
-                        />
-                        <Typography variant="caption" color="textSecondary" display="block">
-                          {t("effect.mirrorBallFacets", { value: mirrorBall.facetCount })}
-                        </Typography>
-                        <Slider
-                          value={mirrorBall.facetCount}
-                          min={8}
-                          max={64}
+                          value={mirrorBall.lightCount}
+                          min={1}
+                          max={4}
                           step={1}
-                          onChange={(_, v) => setMirrorBall((p) => ({ ...p, facetCount: v as number }))}
+                          marks={[1, 2, 3, 4].map((v) => ({ value: v, label: String(v) }))}
+                          onChange={(_, v) => setMirrorBall((p) => ({ ...p, lightCount: v as number }))}
                         />
-                        <Typography variant="caption" color="textSecondary" display="block">
-                          {t("effect.mirrorBallSparkle", { value: Math.round(mirrorBall.sparkle * 100) })}
-                        </Typography>
-                        <Slider
-                          value={mirrorBall.sparkle}
-                          min={0}
-                          max={1}
-                          step={0.01}
-                          onChange={(_, v) => setMirrorBall((p) => ({ ...p, sparkle: v as number }))}
-                        />
-                        <Typography variant="caption" color="textSecondary" display="block">
-                          {t("effect.mirrorBallBeams", { value: mirrorBall.beamCount })}
-                        </Typography>
-                        <Slider
-                          value={mirrorBall.beamCount}
-                          min={4}
-                          max={32}
-                          step={1}
-                          onChange={(_, v) => setMirrorBall((p) => ({ ...p, beamCount: v as number }))}
-                        />
-                        <Typography variant="caption" color="textSecondary" display="block">
-                          {t("effect.mirrorBallBeamSpread", { value: Math.round(mirrorBall.beamSpread) })}
-                        </Typography>
-                        <Slider
-                          value={mirrorBall.beamSpread}
-                          min={8}
-                          max={90}
-                          step={1}
-                          onChange={(_, v) => setMirrorBall((p) => ({ ...p, beamSpread: v as number }))}
-                        />
-                        <Typography variant="caption" color="textSecondary" display="block">
-                          {t("effect.mirrorBallAmbient", { value: Math.round(mirrorBall.ambient * 100) })}
-                        </Typography>
-                        <Slider
-                          value={mirrorBall.ambient}
-                          min={0}
-                          max={1}
-                          step={0.01}
-                          onChange={(_, v) => setMirrorBall((p) => ({ ...p, ambient: v as number }))}
-                        />
-                        <Typography variant="caption" color="textSecondary" display="block">
-                          {t("effect.mirrorBallSpecular", { value: Math.round(mirrorBall.specular * 100) })}
-                        </Typography>
-                        <Slider
-                          value={mirrorBall.specular}
-                          min={0.05}
-                          max={1}
-                          step={0.01}
-                          onChange={(_, v) => setMirrorBall((p) => ({ ...p, specular: v as number }))}
-                        />
-                        <Typography variant="caption" color="textSecondary" display="block">
-                          {t("effect.mirrorBallReflectivity", { value: Math.round(mirrorBall.reflectivity * 100) })}
-                        </Typography>
-                        <Slider
-                          value={mirrorBall.reflectivity}
-                          min={0.1}
-                          max={1}
-                          step={0.01}
-                          onChange={(_, v) => setMirrorBall((p) => ({ ...p, reflectivity: v as number }))}
-                        />
-                        <Divider sx={{ my: 1.5 }} />
-                        <Typography variant="caption" color="textSecondary" fontWeight={600} display="block">
-                          {t("effect.mirrorBallPrimaryLight")}
-                        </Typography>
-                        <Typography variant="caption" color="textSecondary" display="block">
-                          {t("effect.mirrorBallLightPosX", { value: Math.round(mirrorBall.lightX * 100) })}
-                        </Typography>
-                        <Slider
-                          value={mirrorBall.lightX}
-                          min={0}
-                          max={1}
-                          step={0.01}
-                          onChange={(_, v) => setMirrorBall((p) => ({ ...p, lightX: v as number }))}
-                        />
-                        <Typography variant="caption" color="textSecondary" display="block">
-                          {t("effect.mirrorBallLightPosY", { value: Math.round(mirrorBall.lightY * 100) })}
-                        </Typography>
-                        <Slider
-                          value={mirrorBall.lightY}
-                          min={0}
-                          max={1}
-                          step={0.01}
-                          onChange={(_, v) => setMirrorBall((p) => ({ ...p, lightY: v as number }))}
-                        />
-                        <Typography variant="caption" color="textSecondary" display="block">
-                          {t("effect.mirrorBallLightIntensity", { value: Math.round(mirrorBall.lightIntensity * 100) })}
-                        </Typography>
-                        <Slider
-                          value={mirrorBall.lightIntensity}
-                          min={0}
-                          max={1}
-                          step={0.01}
-                          onChange={(_, v) => setMirrorBall((p) => ({ ...p, lightIntensity: v as number }))}
-                        />
-                        <Box sx={{ mt: 1 }}>
-                          <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 0.5 }}>
-                            {t("effect.weatherColor")}
-                          </Typography>
-                          <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5, justifyContent: "center" }}>
-                            {DEFAULT_COLOR_PALETTE_20.map((c) => (
-                              <button
-                                key={`mb-light-${c}`}
-                                type="button"
-                                aria-label={`${t("effect.mirrorBallPrimaryLight")} ${c}`}
-                                onClick={() => {
-                                  setMirrorBall((p) => ({ ...p, lightColor: c }));
-                                  setMirrorBallLightColorInput(c.toUpperCase());
-                                }}
-                                style={{
-                                  width: 22,
-                                  height: 22,
-                                  borderRadius: 4,
-                                  background: c,
-                                  cursor: "pointer",
-                                  border:
-                                    mirrorBall.lightColor.toUpperCase() === c.toUpperCase()
-                                      ? "2px solid #111"
-                                      : "1px solid #999",
-                                }}
-                              />
-                            ))}
-                          </Box>
-                          <TextField
-                            size="small"
-                            label={t("effect.weatherColorCode")}
-                            value={mirrorBallLightColorInput}
-                            onChange={(e) => {
-                              const v = e.target.value.trim();
-                              setMirrorBallLightColorInput(v.startsWith("#") ? v.toUpperCase() : `#${v}`.toUpperCase());
-                              if (/^#[0-9A-F]{6}$/.test(v.startsWith("#") ? v.toUpperCase() : `#${v}`.toUpperCase())) {
-                                setMirrorBall((p) => ({
-                                  ...p,
-                                  lightColor: v.startsWith("#") ? v.toUpperCase() : `#${v}`.toUpperCase(),
-                                }));
-                              }
-                            }}
-                            error={
-                              mirrorBallLightColorInput.length > 0 &&
-                              !/^#?[0-9A-F]{6}$/.test(mirrorBallLightColorInput.replace(/^#/, ""))
-                            }
-                            helperText={
-                              mirrorBallLightColorInput.length > 0 &&
-                              !/^#?[0-9A-F]{6}$/.test(mirrorBallLightColorInput.replace(/^#/, ""))
-                                ? t("effect.weatherColorCodeInvalid")
-                                : " "
-                            }
-                            inputProps={{ inputMode: "text", pattern: "#?[0-9a-fA-F]{6}" }}
-                            sx={{ width: 220, mt: 1 }}
-                          />
-                        </Box>
-                        <Divider sx={{ my: 1.5 }} />
-                        <FormControlLabel
-                          control={
-                            <Switch
-                              checked={mirrorBall.secondaryEnabled}
-                              onChange={(_, c) => setMirrorBall((p) => ({ ...p, secondaryEnabled: c }))}
-                              size="small"
-                            />
-                          }
-                          label={t("effect.mirrorBallSecondaryLight")}
-                        />
-                        {mirrorBall.secondaryEnabled && (
-                          <>
-                            <Typography variant="caption" color="textSecondary" display="block">
-                              {t("effect.mirrorBallLightPosX", { value: Math.round(mirrorBall.secondaryX * 100) })}
-                            </Typography>
-                            <Slider
-                              value={mirrorBall.secondaryX}
-                              min={0}
-                              max={1}
-                              step={0.01}
-                              onChange={(_, v) => setMirrorBall((p) => ({ ...p, secondaryX: v as number }))}
-                            />
-                            <Typography variant="caption" color="textSecondary" display="block">
-                              {t("effect.mirrorBallLightPosY", { value: Math.round(mirrorBall.secondaryY * 100) })}
-                            </Typography>
-                            <Slider
-                              value={mirrorBall.secondaryY}
-                              min={0}
-                              max={1}
-                              step={0.01}
-                              onChange={(_, v) => setMirrorBall((p) => ({ ...p, secondaryY: v as number }))}
-                            />
-                            <Typography variant="caption" color="textSecondary" display="block">
-                              {t("effect.mirrorBallSecondaryIntensity", {
-                                value: Math.round(mirrorBall.secondaryIntensity * 100),
-                              })}
-                            </Typography>
-                            <Slider
-                              value={mirrorBall.secondaryIntensity}
-                              min={0}
-                              max={1}
-                              step={0.01}
-                              onChange={(_, v) => setMirrorBall((p) => ({ ...p, secondaryIntensity: v as number }))}
-                            />
-                            <Box sx={{ mt: 1 }}>
+                        {Array.from({ length: mirrorBall.lightCount }, (_, i) => {
+                          const colorKey = `light${i}Color` as keyof MirrorBallAdjust;
+                          const intensityKey = `light${i}Intensity` as keyof MirrorBallAdjust;
+                          return (
+                            <Box key={i} sx={{ mb: 1.5, p: 1, border: "1px solid", borderColor: "divider", borderRadius: 1 }}>
                               <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 0.5 }}>
-                                {t("effect.weatherColor")}
+                                光源 {i + 1} — 強さ: {Math.round(((mirrorBall[intensityKey] as number) ?? 0.7) * 100)}%
                               </Typography>
-                              <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5, justifyContent: "center" }}>
-                                {DEFAULT_COLOR_PALETTE_20.map((c) => (
-                                  <button
-                                    key={`mb-sec-${c}`}
-                                    type="button"
-                                    aria-label={`${t("effect.mirrorBallSecondaryLight")} ${c}`}
-                                    onClick={() => {
-                                      setMirrorBall((p) => ({ ...p, secondaryColor: c }));
-                                      setMirrorBallSecondaryColorInput(c.toUpperCase());
-                                    }}
-                                    style={{
-                                      width: 22,
-                                      height: 22,
-                                      borderRadius: 4,
-                                      background: c,
-                                      cursor: "pointer",
-                                      border:
-                                        mirrorBall.secondaryColor.toUpperCase() === c.toUpperCase()
-                                          ? "2px solid #111"
-                                          : "1px solid #999",
+                              <Slider
+                                value={(mirrorBall[intensityKey] as number) ?? 0.7}
+                                min={0}
+                                max={1}
+                                step={0.05}
+                                size="small"
+                                onChange={(_, v) => setMirrorBall((p) => ({ ...p, [intensityKey]: v as number }))}
+                              />
+                              <Box sx={{ display: "flex", gap: 0.5, mt: 0.5, flexWrap: "wrap" }}>
+                                {["#FFE8DC", "#B4D2FF", "#FFB4B4", "#B4FFB4", "#FFFFB4", "#FFB4FF", "#B4FFFF", "#FFFFFF"].map((c) => (
+                                  <Box
+                                    key={c}
+                                    onClick={() => setMirrorBall((p) => ({ ...p, [colorKey]: c }))}
+                                    sx={{
+                                      width: 22, height: 22, borderRadius: 0.5, cursor: "pointer",
+                                      backgroundColor: c,
+                                      border: (mirrorBall[colorKey] as string)?.toUpperCase() === c.toUpperCase()
+                                        ? "2px solid #111" : "1px solid #999",
                                     }}
                                   />
                                 ))}
+                                <input
+                                  type="color"
+                                  value={(mirrorBall[colorKey] as string) ?? "#FFE8DC"}
+                                  onChange={(e) => setMirrorBall((p) => ({ ...p, [colorKey]: e.target.value.toUpperCase() }))}
+                                  style={{ width: 22, height: 22, border: "none", padding: 0, cursor: "pointer" }}
+                                />
                               </Box>
-                              <TextField
-                                size="small"
-                                label={t("effect.weatherColorCode")}
-                                value={mirrorBallSecondaryColorInput}
-                                onChange={(e) => {
-                                  const v = e.target.value.trim();
-                                  setMirrorBallSecondaryColorInput(
-                                    v.startsWith("#") ? v.toUpperCase() : `#${v}`.toUpperCase()
-                                  );
-                                  if (/^#[0-9A-F]{6}$/.test(v.startsWith("#") ? v.toUpperCase() : `#${v}`.toUpperCase())) {
-                                    setMirrorBall((p) => ({
-                                      ...p,
-                                      secondaryColor: v.startsWith("#") ? v.toUpperCase() : `#${v}`.toUpperCase(),
-                                    }));
-                                  }
-                                }}
-                                error={
-                                  mirrorBallSecondaryColorInput.length > 0 &&
-                                  !/^#?[0-9A-F]{6}$/.test(mirrorBallSecondaryColorInput.replace(/^#/, ""))
-                                }
-                                helperText={
-                                  mirrorBallSecondaryColorInput.length > 0 &&
-                                  !/^#?[0-9A-F]{6}$/.test(mirrorBallSecondaryColorInput.replace(/^#/, ""))
-                                    ? t("effect.weatherColorCodeInvalid")
-                                    : " "
-                                }
-                                inputProps={{ inputMode: "text", pattern: "#?[0-9a-fA-F]{6}" }}
-                                sx={{ width: 220, mt: 1 }}
-                              />
                             </Box>
-                          </>
-                        )}
-                        <FormControlLabel
-                          sx={{ mt: 1 }}
-                          control={
-                            <Switch
-                              checked={mirrorBall.audioSyncRotation}
-                              onChange={(_, c) => setMirrorBall((p) => ({ ...p, audioSyncRotation: c }))}
-                              size="small"
-                            />
-                          }
-                          label={t("effect.mirrorBallAudioSync")}
-                        />
+                          );
+                        })}
                       </Box>
                     )}
                   </AccordionDetails>
