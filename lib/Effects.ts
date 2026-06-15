@@ -2615,7 +2615,7 @@ export function buildMirrorBallFrame(
 
   const audioBoost = a.bass * 0.45 + a.volume * 0.18 + a.highFreq * 0.12 * p.sparkle;
 
-  // 壁スポット: ボールから放射状に散らす（広範囲）
+  // 壁スポット: 主光源からの反射
   const wallSpotsRaw: MirrorBallWallSpotDraw[] = [];
   const spotCount = Math.round((60 + p.beamCount * 10) * p.strength);
   for (let i = 0; i < spotCount; i++) {
@@ -2632,6 +2632,28 @@ export function buildMirrorBallFrame(
     const sg = Math.round(p.lightRgb[1] * (1 - tintMix * 0.2) + 240 * tintMix * 0.2);
     const sb = Math.round(p.lightRgb[2] * (1 - tintMix * 0.1) + 200 * tintMix * 0.1);
     wallSpotsRaw.push({ x: sx, y: sy, radius: spotR, r: sr, g: sg, b: sb, a: spotA });
+  }
+
+  // 副光源からの反射スポット
+  if (p.secondaryEnabled) {
+    const scx = p.secondaryX * width;
+    const scy = p.secondaryY * height;
+    const sspotCount = Math.round(spotCount * 0.5);
+    for (let i = 0; i < sspotCount; i++) {
+      const seed = i * 11.31 + 5.17;
+      const angle = (i / sspotCount) * Math.PI * 2 + mirrorBallRotationRad * 0.4;
+      const dist = 0.3 + mirrorBallHash(seed) * 1.5;
+      const sx = scx + Math.cos(angle) * r * dist * 2.2;
+      const sy = scy + Math.sin(angle) * r * dist * 1.8 + r * 1.2;
+      if (sx < -r * 2 || sx > width + r * 2 || sy < -r * 2 || sy > height + r * 2) continue;
+      const spotR = r * (0.1 + mirrorBallHash(seed + 1) * 0.2) * (1 + audioBoost * 0.3);
+      const spotA = (0.08 + mirrorBallHash(seed + 2) * 0.15) * p.strength * p.secondaryIntensity * (0.5 + audioBoost * 0.3);
+      const tintMix = mirrorBallHash(seed + 3);
+      const sr = Math.round(p.secondaryRgb[0] * (1 - tintMix * 0.3) + 255 * tintMix * 0.3);
+      const sg = Math.round(p.secondaryRgb[1] * (1 - tintMix * 0.2) + 240 * tintMix * 0.2);
+      const sb = Math.round(p.secondaryRgb[2] * (1 - tintMix * 0.1) + 200 * tintMix * 0.1);
+      wallSpotsRaw.push({ x: sx, y: sy, radius: spotR, r: sr, g: sg, b: sb, a: spotA });
+    }
   }
 
   const wallSpots = capWallSpots(wallSpotsRaw, Math.round(120 * p.strength));
