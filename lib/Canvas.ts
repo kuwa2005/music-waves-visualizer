@@ -1093,6 +1093,7 @@ export const drawBars = (
         "mirrorBall",
         "laser",
       ].includes(effect.type)) ||
+    mode === 6 ||
     mode === 15 ||
     mode === 16;
   if (needsSharedFreq) {

@@ -233,6 +233,9 @@ export function updateAndGetSpaceParticles(
   const minSpawnRadius = maxRadius * 0.08;
   const maxSpawnRadius = maxRadius * 0.25;
 
+  const [tintR, tintG, tintB] = parseWeatherColorHex(tintHex, [255, 255, 255]);
+  const tintMix = tintHex ? 0.52 : 0;
+
   for (const p of spaceParticles) {
     // 音源連動: 閾値未満の星は非表示
     if (variant === "spaceAudio" && p.visibilityThreshold != null && audioLevel >= 0) {
@@ -280,11 +283,9 @@ export function updateAndGetSpaceParticles(
     alpha *= twinkle;
 
     const color = STAR_COLORS[p.colorIndex];
-    const [tr, tg, tb] = parseWeatherColorHex(tintHex, [255, 255, 255]);
-    const mix = tintHex ? 0.52 : 0;
-    const r = Math.round(color.r * (1 - mix) + tr * mix);
-    const g = Math.round(color.g * (1 - mix) + tg * mix);
-    const b = Math.round(color.b * (1 - mix) + tb * mix);
+    const r = Math.round(color.r * (1 - tintMix) + tintR * tintMix);
+    const g = Math.round(color.g * (1 - tintMix) + tintG * tintMix);
+    const b = Math.round(color.b * (1 - tintMix) + tintB * tintMix);
     result.push({
       x,
       y,
@@ -352,6 +353,7 @@ export function drawSpaceEffectCanvas(
 // --- フィルムグレイン（ベースに連動して強度がパルス）---
 let filmGrainCanvas: HTMLCanvasElement | null = null;
 let filmGrainCanvasSize = "";
+let filmGrainImageData: ImageData | null = null;
 
 function drawFilmGrainCanvas(
   ctx: CanvasRenderingContext2D,
@@ -370,18 +372,21 @@ function drawFilmGrainCanvas(
     filmGrainCanvas.width = width;
     filmGrainCanvas.height = height;
     filmGrainCanvasSize = sizeKey;
+    filmGrainImageData = null;
   }
   const grainCtx = filmGrainCanvas.getContext("2d");
   if (!grainCtx) return;
-  const imageData = grainCtx.createImageData(width, height);
-  const data = imageData.data;
+  if (!filmGrainImageData || filmGrainImageData.width !== width || filmGrainImageData.height !== height) {
+    filmGrainImageData = grainCtx.createImageData(width, height);
+  }
+  const data = filmGrainImageData.data;
   const alpha = Math.round(255 * Math.min(0.5, strength * 0.35));
   for (let i = 0; i < data.length; i += 4) {
     const n = Math.floor(Math.random() * 256);
     data[i] = data[i + 1] = data[i + 2] = n;
     data[i + 3] = alpha;
   }
-  grainCtx.putImageData(imageData, 0, 0);
+  grainCtx.putImageData(filmGrainImageData, 0, 0);
   ctx.save();
   ctx.globalAlpha = 0.35 * strength;
   ctx.drawImage(filmGrainCanvas, 0, 0);
@@ -613,6 +618,8 @@ export function updateAndGetSparkleParticles(
   const { rLo, rHi } = getSparkleRadiusRange(Math.min(width, height));
   const out: SparkleParticleDraw[] = [];
 
+  const [tintR, tintG, tintB] = parseWeatherColorHex(tintHex, [255, 255, 255]);
+
   for (const p of sparkleParticles) {
     const driftStep =
       (deltaTime / 16) * (0.6 + 0.4 * a.highFreq) * p.driftSpeedMul;
@@ -681,14 +688,13 @@ export function updateAndGetSparkleParticles(
     );
     if (alpha < 0.02) continue;
 
-    const [tr, tg, tb] = parseWeatherColorHex(tintHex, [255, 255, 255]);
     out.push({
       x: p.x,
       y: p.y,
       radius: rad,
-      r: tr,
-      g: tg,
-      b: tb,
+      r: tintR,
+      g: tintG,
+      b: tintB,
       alpha,
       starKind: p.starKind,
       starFilled: p.starFilled,
@@ -943,6 +949,9 @@ export function updateAndGetDustParticles(
   const flow = 0.5 + 0.5 * a.volume;
   const out: Array<{ x: number; y: number; radius: number; r: number; g: number; b: number; alpha: number }> = [];
 
+  const [tintR, tintG, tintB] = parseWeatherColorHex(tintHex, [210, 216, 228]);
+  const tintMix = tintHex ? 0.58 : 0;
+
   for (const p of dustParticles) {
     p.phase += 1.05 * (deltaTime / 1000);
     const localFlow =
@@ -981,11 +990,9 @@ export function updateAndGetDustParticles(
     g = Math.min(255, Math.max(0, g));
     b = Math.min(255, Math.max(0, b));
     if (tintHex) {
-      const [tr, tg, tb] = parseWeatherColorHex(tintHex, [r, g, b]);
-      const mix = 0.58;
-      r = Math.round(r * (1 - mix) + tr * mix);
-      g = Math.round(g * (1 - mix) + tg * mix);
-      b = Math.round(b * (1 - mix) + tb * mix);
+      r = Math.round(r * (1 - tintMix) + tintR * tintMix);
+      g = Math.round(g * (1 - tintMix) + tintG * tintMix);
+      b = Math.round(b * (1 - tintMix) + tintB * tintMix);
     }
     out.push({
       x: p.x,
@@ -2606,165 +2613,74 @@ export function buildMirrorBallFrame(
   mirrorBallSparklePhase += deltaTime * 0.0035 * (1 + a.highFreq * 2 * p.sparkle);
 
   const audioBoost = a.bass * 0.45 + a.volume * 0.18 + a.highFreq * 0.12 * p.sparkle;
-  const lightZ = -minDim * 0.42;
 
-  const lights: MirrorBallLightSource[] = [
-    { x: lx, y: ly, z: lightZ, rgb: p.lightRgb, intensity: p.lightIntensity },
-  ];
-  if (p.secondaryEnabled) {
-    lights.push({
-      x: p.secondaryX * width,
-      y: p.secondaryY * height,
-      z: lightZ * 0.92,
-      rgb: p.secondaryRgb,
-      intensity: p.secondaryIntensity,
-    });
-  }
-
+  // 壁スポット: ボールから放射状に散らす
   const wallSpotsRaw: MirrorBallWallSpotDraw[] = [];
-  const procPerLight = Math.round((14 + p.beamCount * 14) * p.strength);
-  const maxSpots = Math.round((120 + p.beamCount * 28 + p.facetCount * 10) * p.strength);
-
-  for (let li = 0; li < lights.length; li++) {
-    const light = lights[li];
-    const scale = li === 0 ? 1 : 0.72;
-    wallSpotsRaw.push(
-      ...collectRaycastWallSpots(width, height, cx, cy, r, minDim, p, light, audioBoost)
-    );
-    wallSpotsRaw.push(
-      ...collectProceduralWallSpots(
-        width,
-        height,
-        cx,
-        cy,
-        r,
-        minDim,
-        p,
-        light,
-        audioBoost,
-        Math.round(procPerLight * scale)
-      )
-    );
+  const spotCount = Math.round((40 + p.beamCount * 8) * p.strength);
+  for (let i = 0; i < spotCount; i++) {
+    const seed = i * 7.31 + 2.17;
+    const angle = (i / spotCount) * Math.PI * 2 + mirrorBallRotationRad * 0.7;
+    const dist = 0.3 + mirrorBallHash(seed) * 0.7;
+    const sx = cx + Math.cos(angle) * r * dist * 3;
+    const sy = cy + Math.sin(angle) * r * dist * 2.5 + r * 0.5;
+    if (sx < -r || sx > width + r || sy < -r || sy > height + r) continue;
+    const spotR = r * (0.08 + mirrorBallHash(seed + 1) * 0.18) * (1 + audioBoost * 0.3);
+    const spotA = (0.15 + mirrorBallHash(seed + 2) * 0.25) * p.strength * (0.7 + audioBoost * 0.3);
+    const tintMix = mirrorBallHash(seed + 3);
+    const sr = Math.round(p.lightRgb[0] * (1 - tintMix * 0.3) + 255 * tintMix * 0.3);
+    const sg = Math.round(p.lightRgb[1] * (1 - tintMix * 0.2) + 240 * tintMix * 0.2);
+    const sb = Math.round(p.lightRgb[2] * (1 - tintMix * 0.1) + 200 * tintMix * 0.1);
+    wallSpotsRaw.push({ x: sx, y: sy, radius: spotR, r: sr, g: sg, b: sb, a: spotA });
   }
 
-  const wallSpots = capWallSpots(wallSpotsRaw, maxSpots);
+  const wallSpots = capWallSpots(wallSpotsRaw, Math.round(80 * p.strength));
   const beams: MirrorBallBeamDraw[] = [];
 
-  const lightDirs: Array<{ dx: number; dy: number; dz: number; rgb: [number, number, number]; w: number }> = [
-    {
-      dx: cx - lx,
-      dy: cy - ly,
-      dz: r * 0.85,
-      rgb: p.lightRgb,
-      w: p.lightIntensity,
-    },
-  ];
-  if (p.secondaryEnabled) {
-    const sx = p.secondaryX * width;
-    const sy = p.secondaryY * height;
-    lightDirs.push({
-      dx: cx - sx,
-      dy: cy - sy,
-      dz: r * 0.85,
-      rgb: p.secondaryRgb,
-      w: p.secondaryIntensity,
-    });
-  }
-  for (const ld of lightDirs) {
-    const len = Math.hypot(ld.dx, ld.dy, ld.dz) || 1;
-    ld.dx /= len;
-    ld.dy /= len;
-    ld.dz /= len;
-  }
-
-  const seg = Math.max(8, p.facetCount);
-  const latRings = Math.max(4, Math.round(seg / 3.2));
+  // ボール上のグリッド線（回転する鏡面パターン）
   const facets: MirrorBallFacetDraw[] = [];
-
-  for (let lat = 0; lat < latRings; lat++) {
-    const lat0 = -Math.PI * 0.46 + (lat / latRings) * Math.PI * 0.92;
-    const lat1 = -Math.PI * 0.46 + ((lat + 1) / latRings) * Math.PI * 0.92;
-    const latM = (lat0 + lat1) * 0.5;
-    const lonSeg = Math.max(6, Math.round(seg * (0.5 + 0.5 * Math.cos(latM))));
-    for (let lon = 0; lon < lonSeg; lon++) {
-      const u0 = (lon / lonSeg) * Math.PI * 2;
-      const u1 = ((lon + 1) / lonSeg) * Math.PI * 2;
-      const corners: [number, number, number][] = [
-        sphereNormal(u0, lat0),
-        sphereNormal(u1, lat0),
-        sphereNormal(u1, lat1),
-        sphereNormal(u0, lat1),
-      ];
-      let br = 0;
-      let tintR = 0;
-      let tintG = 0;
-      let tintB = 0;
-      let tintW = 0;
-      const proj: [number, number][] = [];
-      for (const [nx0, ny0, nz0] of corners) {
-        const [rx, ry, rz] = rotateY3(nx0, ny0, nz0, mirrorBallRotationRad);
-        const len = Math.hypot(rx, ry, rz) || 1;
-        const nx = rx / len;
-        const ny = ry / len;
-        const nz = rz / len;
-        let spec = 0;
-        for (const ld of lightDirs) {
-          const dot = Math.max(0, nx * ld.dx + ny * ld.dy + nz * ld.dz);
-          const specPow = 2 + p.specular * 46;
-          spec += Math.pow(dot, specPow) * ld.w;
-          if (dot > 0.02) {
-            tintR += ld.rgb[0] * dot * ld.w;
-            tintG += ld.rgb[1] * dot * ld.w;
-            tintB += ld.rgb[2] * dot * ld.w;
-            tintW += dot * ld.w;
-          }
-        }
-        br += spec;
-        proj.push(projectBallPoint(nx, ny, nz, cx, cy, r));
-      }
-      br /= corners.length;
-      const ambient = p.ambient * 0.045;
-      const base = ambient + br * p.reflectivity * p.strength * (1 + audioBoost * 0.18);
-      if (base < 0.04) continue;
-      const tr = tintW > 0 ? tintR / tintW : 175;
-      const tg = tintW > 0 ? tintG / tintW : 178;
-      const tb = tintW > 0 ? tintB / tintW : 188;
-      const edge = 0.5 + 0.5 * Math.sin(u0 * 5 + mirrorBallRotationRad * 2 + lat);
+  const gridLines = Math.max(6, Math.round(p.facetCount / 4));
+  for (let i = 0; i < gridLines; i++) {
+    const lon = (i / gridLines) * Math.PI * 2 + mirrorBallRotationRad;
+    const steps = 16;
+    for (let j = 0; j < steps; j++) {
+      const lat0 = -Math.PI * 0.45 + (j / steps) * Math.PI * 0.9;
+      const lat1 = -Math.PI * 0.45 + ((j + 1) / steps) * Math.PI * 0.9;
+      const [nx0, ny0, nz0] = sphereNormal(lon, lat0);
+      const [nx1, ny1, nz1] = sphereNormal(lon, lat1);
+      if (nz0 < -0.1 && nz1 < -0.1) continue;
+      const [px0, py0] = projectBallPoint(nx0, ny0, nz0, cx, cy, r);
+      const [px1, py1] = projectBallPoint(nx1, ny1, nz1, cx, cy, r);
+      const brightness = 0.3 + 0.4 * Math.max(0, nz0);
       facets.push({
-        points: [
-          proj[0][0], proj[0][1],
-          proj[1][0], proj[1][1],
-          proj[2][0], proj[2][1],
-        ],
-        r: Math.min(255, Math.round(28 + tr * base * edge * 0.55)),
-        g: Math.min(255, Math.round(30 + tg * base * edge * 0.55)),
-        b: Math.min(255, Math.round(38 + tb * base * edge * 0.55)),
-        a: Math.min(1, 0.18 + base * 0.65),
+        points: [px0, py0, px1, py1, px1 + 0.1, py1 + 0.1],
+        r: Math.round(180 * brightness),
+        g: Math.round(185 * brightness),
+        b: Math.round(200 * brightness),
+        a: 0.3 * brightness * p.strength,
       });
     }
   }
 
+  // スパークル（ボール表面のキラキラ）
   const sparkles: MirrorBallSparkleDraw[] = [];
-  const sparkleN = Math.round(3 + p.sparkle * 10 * p.strength);
+  const sparkleN = Math.round(4 + p.sparkle * 12 * p.strength);
   for (let i = 0; i < sparkleN; i++) {
     const phase = mirrorBallSparklePhase + i * 2.11;
     const flicker = Math.pow(0.5 + 0.5 * Math.sin(phase * 3.2), 4);
-    if (flicker < 0.55) continue;
-    const lon = (i / sparkleN) * Math.PI * 2 + mirrorBallRotationRad;
-    const lat = (mirrorBallHash(i * 7.3) - 0.5) * 1.1;
+    if (flicker < 0.5) continue;
+    const lon = (i / sparkleN) * Math.PI * 2 + mirrorBallRotationRad * 0.5;
+    const lat = (mirrorBallHash(i * 7.3) - 0.5) * 1.0;
     const [nx0, ny0, nz0] = sphereNormal(lon, lat);
-    const [rx, ry, rz] = rotateY3(nx0, ny0, nz0, mirrorBallRotationRad);
-    const len = Math.hypot(rx, ry, rz) || 1;
-    const [sx, sy] = projectBallPoint(rx / len, ry / len, rz / len, cx, cy, r);
-    const [lr, lg, lb] = p.lightRgb;
+    if (nz0 < 0.1) continue;
+    const [sx, sy] = projectBallPoint(nx0, ny0, nz0, cx, cy, r);
     sparkles.push({
       x: sx,
       y: sy,
-      radius: Math.max(0.8, r * 0.018 * flicker),
-      r: lr,
-      g: lg,
-      b: lb,
-      a: p.sparkle * flicker * p.strength * 0.35 * p.lightIntensity,
+      radius: Math.max(1, r * 0.025 * flicker),
+      r: p.lightRgb[0],
+      g: p.lightRgb[1],
+      b: p.lightRgb[2],
+      a: p.sparkle * flicker * p.strength * 0.4 * p.lightIntensity,
     });
   }
 
@@ -2797,7 +2713,7 @@ function drawMirrorBallCanvas(
   const [cr, cg, cb] = p.lightRgb;
   ctx.save();
 
-  // 室内の暗さ（背景・スペアナの上、反射スポットの下）
+  // 室内の暗さ
   const roomDim = Math.min(0.55, frame.ambientAlpha);
   if (roomDim > 0.001) {
     ctx.globalCompositeOperation = "multiply";
@@ -2807,76 +2723,77 @@ function drawMirrorBallCanvas(
     ctx.globalCompositeOperation = "source-over";
   }
 
+  // 壁スポット（加算合成）
   ctx.globalCompositeOperation = "lighter";
   for (const w of frame.wallSpots) {
     drawMirrorBallSoftSpot(ctx, w);
   }
 
-  ctx.globalCompositeOperation = "source-over";
-  for (const f of frame.facets) {
-    const [x1, y1, x2, y2, x3, y3] = f.points;
-    ctx.fillStyle = `rgba(${f.r},${f.g},${f.b},${f.a})`;
-    ctx.beginPath();
-    ctx.moveTo(x1, y1);
-    ctx.lineTo(x2, y2);
-    ctx.lineTo(x3, y3);
-    ctx.closePath();
-    ctx.fill();
-    ctx.strokeStyle = `rgba(255,255,255,${f.a * 0.18})`;
-    ctx.lineWidth = Math.max(0.35, frame.ballR * 0.005);
-    ctx.stroke();
-  }
-
-  ctx.globalCompositeOperation = "lighter";
-  for (const s of frame.sparkles) {
-    const g = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, s.radius * 2.2);
-    g.addColorStop(0, `rgba(255,255,255,${s.a})`);
-    g.addColorStop(0.5, `rgba(${s.r},${s.g},${s.b},${s.a * 0.5})`);
-    g.addColorStop(1, `rgba(${s.r},${s.g},${s.b},0)`);
-    ctx.fillStyle = g;
-    ctx.beginPath();
-    ctx.arc(s.x, s.y, s.radius * 2.2, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
+  // ボール本体（球体グラデーション）
   ctx.globalCompositeOperation = "source-over";
   const ballGrad = ctx.createRadialGradient(
-    frame.ballCx - frame.ballR * 0.2,
-    frame.ballCy - frame.ballR * 0.15,
-    frame.ballR * 0.08,
+    frame.ballCx - frame.ballR * 0.25,
+    frame.ballCy - frame.ballR * 0.2,
+    frame.ballR * 0.05,
     frame.ballCx,
     frame.ballCy,
     frame.ballR
   );
-  ballGrad.addColorStop(0, `rgba(200,205,220,${frame.coreAlpha * 0.25})`);
-  ballGrad.addColorStop(0.65, `rgba(55,58,72,0.75)`);
-  ballGrad.addColorStop(1, "rgba(12,12,22,0.88)");
+  ballGrad.addColorStop(0, `rgba(180,185,200,0.9)`);
+  ballGrad.addColorStop(0.4, `rgba(80,85,100,0.85)`);
+  ballGrad.addColorStop(0.8, `rgba(30,32,42,0.9)`);
+  ballGrad.addColorStop(1, "rgba(10,10,18,0.95)");
   ctx.fillStyle = ballGrad;
   ctx.beginPath();
   ctx.arc(frame.ballCx, frame.ballCy, frame.ballR, 0, Math.PI * 2);
   ctx.fill();
 
-  ctx.strokeStyle = "rgba(140,145,165,0.28)";
-  ctx.lineWidth = Math.max(0.6, frame.ballR * 0.01);
+  // グリッド線（鏡面パターン）
+  for (const f of frame.facets) {
+    const [x1, y1, x2, y2] = f.points;
+    ctx.strokeStyle = `rgba(${f.r},${f.g},${f.b},${f.a})`;
+    ctx.lineWidth = Math.max(0.5, frame.ballR * 0.008);
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+  }
+
+  // ボール縁のハイライト
+  ctx.strokeStyle = "rgba(160,165,185,0.35)";
+  ctx.lineWidth = Math.max(0.8, frame.ballR * 0.012);
   ctx.beginPath();
   ctx.arc(frame.ballCx, frame.ballCy, frame.ballR, 0, Math.PI * 2);
   ctx.stroke();
 
+  // スパークル（加算合成）
+  ctx.globalCompositeOperation = "lighter";
+  for (const s of frame.sparkles) {
+    const g = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, s.radius * 2.5);
+    g.addColorStop(0, `rgba(255,255,255,${s.a})`);
+    g.addColorStop(0.4, `rgba(${s.r},${s.g},${s.b},${s.a * 0.6})`);
+    g.addColorStop(1, `rgba(${s.r},${s.g},${s.b},0)`);
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.radius * 2.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // 光源グロー
   const lightGlow = ctx.createRadialGradient(
     frame.lightX,
     frame.lightY,
     0,
     frame.lightX,
     frame.lightY,
-    frame.ballR * 1.35
+    frame.ballR * 1.5
   );
-  lightGlow.addColorStop(0, `rgba(${cr},${cg},${cb},${0.14 * p.lightIntensity * p.strength})`);
-  lightGlow.addColorStop(0.55, `rgba(${cr},${cg},${cb},${0.03 * p.lightIntensity})`);
+  lightGlow.addColorStop(0, `rgba(${cr},${cg},${cb},${0.18 * p.lightIntensity * p.strength})`);
+  lightGlow.addColorStop(0.5, `rgba(${cr},${cg},${cb},${0.04 * p.lightIntensity})`);
   lightGlow.addColorStop(1, "rgba(255,255,255,0)");
-  ctx.globalCompositeOperation = "lighter";
   ctx.fillStyle = lightGlow;
   ctx.beginPath();
-  ctx.arc(frame.lightX, frame.lightY, frame.ballR * 1.35, 0, Math.PI * 2);
+  ctx.arc(frame.lightX, frame.lightY, frame.ballR * 1.5, 0, Math.PI * 2);
   ctx.fill();
 
   ctx.restore();

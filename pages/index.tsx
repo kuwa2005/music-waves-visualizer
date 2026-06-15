@@ -2,6 +2,9 @@ import "../types/window.d";
 import type { NextPage } from "next";
 import styles from "../styles/Home.module.scss";
 
+// WebGL を無効化（Canvas 2D のみ使用）。復活する場合は true に変更
+const WEBGL_ENABLED = false;
+
 import {
   useState,
   useRef,
@@ -2553,11 +2556,15 @@ const Home: NextPage = () => {
 
   const webglBlockedByVideoBackground = backgroundMediaMode === "video";
   const webglSwitchDisabled =
-    isQuickEncoding || isRecording || webglBlockedByVideoBackground;
+    !WEBGL_ENABLED || isQuickEncoding || isRecording || webglBlockedByVideoBackground;
 
   const applyRendererType = useCallback(
     (next: "canvas2d" | "webgl", options?: { silent?: boolean }) => {
       if (next === "webgl") {
+        if (!WEBGL_ENABLED) {
+          if (!options?.silent) openSnackBar("WebGL is currently disabled");
+          return;
+        }
         if (webglBlockedByVideoBackground) {
           if (!options?.silent) openSnackBar(t("snackbar.videoBackgroundCanvasFallback"));
           return;
@@ -3228,7 +3235,7 @@ const Home: NextPage = () => {
     }
 
     const savedRendererType = mwvGetItem("common_rendererType");
-    if (savedRendererType === "canvas2d" || savedRendererType === "webgl") {
+    if (savedRendererType === "canvas2d" || (WEBGL_ENABLED && savedRendererType === "webgl")) {
       setRendererType(savedRendererType);
     }
 
