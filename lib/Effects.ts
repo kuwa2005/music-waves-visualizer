@@ -2222,8 +2222,8 @@ export function buildMirrorBallFrame(
       const sy = cy + Math.sin(angle) * dist * r * 1.8 + r * 0.5;
       if (sx < -r * 2 || sx > width + r * 2 || sy < -r * 2 || sy > height + r * 2) continue;
       const spotR = r * (0.04 + mirrorBallHash(seed + 1) * 0.08) * (1 + audioBoost * 0.3);
-      const spotA = (0.08 + mirrorBallHash(seed + 2) * 0.15) * strength * light.intensity * (0.6 + audioBoost * 0.4);
-      const tintMix = mirrorBallHash(seed + 3) * 0.25;
+      const spotA = (0.25 + mirrorBallHash(seed + 2) * 0.35) * strength * light.intensity * (0.7 + audioBoost * 0.3);
+      const tintMix = mirrorBallHash(seed + 3) * 0.15;
       spots.push({
         x: sx,
         y: sy,
@@ -2250,9 +2250,9 @@ function drawMirrorBallSoftSpot(
   spot: MirrorBallLightDraw
 ): void {
   const g = ctx.createRadialGradient(spot.x, spot.y, 0, spot.x, spot.y, spot.radius * 1.2);
-  g.addColorStop(0, `rgba(255,255,255,${spot.a * 0.9})`);
-  g.addColorStop(0.4, `rgba(${spot.r},${spot.g},${spot.b},${spot.a * 0.5})`);
-  g.addColorStop(0.8, `rgba(${spot.r},${spot.g},${spot.b},${spot.a * 0.1})`);
+  g.addColorStop(0, `rgba(255,255,255,${spot.a})`);
+  g.addColorStop(0.35, `rgba(${spot.r},${spot.g},${spot.b},${spot.a * 0.7})`);
+  g.addColorStop(0.7, `rgba(${spot.r},${spot.g},${spot.b},${spot.a * 0.2})`);
   g.addColorStop(1, `rgba(${spot.r},${spot.g},${spot.b},0)`);
   ctx.fillStyle = g;
   ctx.beginPath();
@@ -2272,11 +2272,11 @@ function drawMirrorBallCanvas(
   ctx.save();
 
   // 室内の暗さ
-  const roomDim = Math.min(0.5, frame.ambientAlpha);
+  const roomDim = Math.min(0.35, frame.ambientAlpha);
   if (roomDim > 0.001) {
     ctx.globalCompositeOperation = "multiply";
-    const shade = Math.round(255 * (1 - roomDim * 0.9));
-    ctx.fillStyle = `rgb(${shade},${shade},${Math.min(255, shade + 8)})`;
+    const shade = Math.round(255 * (1 - roomDim * 0.8));
+    ctx.fillStyle = `rgb(${shade},${shade},${Math.min(255, shade + 5)})`;
     ctx.fillRect(0, 0, width, height);
     ctx.globalCompositeOperation = "source-over";
   }
