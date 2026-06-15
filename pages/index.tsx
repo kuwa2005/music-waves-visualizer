@@ -783,7 +783,7 @@ const Home: NextPage = () => {
     "mirrorBall",
   ];
   /** UI ボタン非表示（描画・保存キー互換は残す） */
-  const EFFECT_TYPES_UI_HIDDEN: EffectType[] = ["mirrorBall"];
+  const EFFECT_TYPES_UI_HIDDEN: EffectType[] = [];
   const EFFECT_TYPES_STRENGTH_LEGACY_HIDDEN: EffectType[] = [
     "vignette",
     "rainbow",
@@ -6596,6 +6596,13 @@ const Home: NextPage = () => {
                     size="small"
                   >
                     {t("effect.laser")}
+                  </Button>
+                  <Button
+                    variant={effectType === "mirrorBall" ? "contained" : "outlined"}
+                    onClick={() => setEffectType("mirrorBall")}
+                    size="small"
+                  >
+                    {t("effect.mirrorBall")}
                   </Button>
                 </Box>
                 <Accordion defaultExpanded sx={{ mt: 2 }}>
