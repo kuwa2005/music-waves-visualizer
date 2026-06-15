@@ -63,3 +63,6 @@ mining.code-workspace
 x.sh
 docs/引継ぎ資料_Windows_Cursor.md
 .cursor/rules/backup-location.mdc
+
+# Windows/WSL zone identifier
+*:Zone.Identifier
