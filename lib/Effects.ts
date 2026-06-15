@@ -2203,17 +2203,30 @@ export function buildMirrorBallFrame(
   // 光源を等間隔で配置（各光源が独立して動く）
   const spots: MirrorBallLightDraw[] = [];
 
-  // ミラーボール表面の鏡面パターン（球面に貼り付けられた小さな鏡）
+  // ミラーボール表面の鏡面パターン（144面体）
   const mirrorAngles: Array<{ lon: number; lat: number }> = [];
-  const mirrorRows = 10;
-  const mirrorCols = 16;
-  for (let row = 0; row < mirrorRows; row++) {
-    const lat = -Math.PI * 0.4 + (row / (mirrorRows - 1)) * Math.PI * 0.8;
-    const colsAtLat = Math.max(6, Math.round(mirrorCols * Math.cos(lat)));
-    for (let col = 0; col < colsAtLat; col++) {
-      const lon = (col / colsAtLat) * Math.PI * 2;
-      mirrorAngles.push({ lon, lat });
+  // 緯度 Rings: 8行、各行に異なる数の鏡面（合計144面）
+  const ringConfig = [
+    { lat: -0.7, cols: 8 },
+    { lat: -0.5, cols: 12 },
+    { lat: -0.3, cols: 16 },
+    { lat: -0.1, cols: 20 },
+    { lat: 0.1, cols: 20 },
+    { lat: 0.3, cols: 16 },
+    { lat: 0.5, cols: 12 },
+    { lat: 0.7, cols: 8 },
+  ];
+  // 144面に調整（8+12+16+20+20+16+12+8 = 112、残りを追加）
+  for (const ring of ringConfig) {
+    for (let col = 0; col < ring.cols; col++) {
+      const lon = (col / ring.cols) * Math.PI * 2;
+      mirrorAngles.push({ lon, lat: ring.lat });
     }
+  }
+  // 残り32面を赤道付近に追加して144面に
+  for (let i = 0; i < 32; i++) {
+    const lon = (i / 32) * Math.PI * 2;
+    mirrorAngles.push({ lon, lat: 0 });
   }
 
   // ボールは水平回転（Y軸回転）
@@ -2223,10 +2236,13 @@ export function buildMirrorBallFrame(
     if (light.intensity <= 0.01) continue;
 
     // 光源の方向（水平面内、ボールに向かって照射）
+    // 光源はボールの外側にあり、ボール中心に向かって光を放つ
     const lightAngle = (Math.PI * 2 * li) / lightCount;
-    const ldx = Math.cos(lightAngle);
-    const ldz = Math.sin(lightAngle);
-    const ldy = 0; // 水平
+    // 光源位置: (cos(angle), 0, sin(angle) * r)
+    // 光の方向: ボール中心(0,0,0)に向かって → (-cos(angle), 0, -sin(angle))
+    const ldx = -Math.cos(lightAngle);
+    const ldz = -Math.sin(lightAngle);
+    const ldy = 0;
 
     // 各鏡面から反射スポットを生成
     for (const mirror of mirrorAngles) {
