@@ -63,7 +63,6 @@ function isLikelyValidMp4(bytes: Uint8Array): boolean {
   );
 }
 
-type FfmpegCoreAssetName = "ffmpeg-core.js" | "ffmpeg-core.wasm" | "ffmpeg-core.worker.js";
 type FfmpegCoreUrls = { coreURL: string; wasmURL: string; workerURL: string; basePath: string };
 
 function normalizeBasePath(base: string): string {
@@ -72,14 +71,24 @@ function normalizeBasePath(base: string): string {
 }
 
 function getFfmpegAssetBaseCandidates(): string[] {
-  const base = normalizeBasePath(process.env.NEXT_PUBLIC_ASSET_BASE_PATH ?? "");
-  const candidates = [
-    `${base}/ffmpeg`,
-    `${base}/ffmpeg-core`,
-    "/ffmpeg",
-    "/ffmpeg-core",
-  ].map((p) => p.replace(/\/{2,}/g, "/"));
-  return Array.from(new Set(candidates));
+  const envBase = normalizeBasePath(process.env.NEXT_PUBLIC_ASSET_BASE_PATH ?? "");
+  let runtimeBase = "";
+  if (typeof window !== "undefined") {
+    try {
+      const nd = (window as any).__NEXT_DATA__;
+      if (nd?.assetPrefix) runtimeBase = normalizeBasePath(nd.assetPrefix);
+    } catch { /* ignore */ }
+  }
+  const bases = [envBase, runtimeBase].filter((b) => b !== "");
+  if (bases.length === 0) bases.push("");
+  const candidates: string[] = [];
+  for (const b of bases) {
+    for (const suffix of ["/ffmpeg", "/ffmpeg-core"]) {
+      const c = `${b}${suffix}`.replace(/\/{2,}/g, "/");
+      if (!candidates.includes(c)) candidates.push(c);
+    }
+  }
+  return candidates;
 }
 
 function toAbsoluteUrl(rel: string): string {
@@ -89,44 +98,9 @@ function toAbsoluteUrl(rel: string): string {
   return rel.replace(/\/{2,}/g, "/");
 }
 
-function getFfmpegAssetUrl(basePath: string, name: FfmpegCoreAssetName): string {
+function getFfmpegAssetUrl(basePath: string, name: string): string {
   const rel = `${basePath}/${name}`.replace(/\/{2,}/g, "/");
   return toAbsoluteUrl(rel);
-}
-
-function startsWithHtml(bytes: Uint8Array): boolean {
-  const view = bytes.subarray(0, 32);
-  const text = new TextDecoder().decode(view).trimStart().toUpperCase();
-  return text.startsWith("<!DOCTYPE") || text.startsWith("<HTML");
-}
-
-function isWasmMagic(bytes: Uint8Array): boolean {
-  return bytes.length >= 4 && bytes[0] === 0x00 && bytes[1] === 0x61 && bytes[2] === 0x73 && bytes[3] === 0x6d;
-}
-
-async function probeAsset(url: string, name: FfmpegCoreAssetName): Promise<void> {
-  const response = await fetch(url, { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error(`${name}: HTTP ${response.status} ${response.statusText}`);
-  }
-  const contentType = (response.headers.get("content-type") || "").toLowerCase();
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  if (!bytes.length) {
-    throw new Error(`${name}: empty response`);
-  }
-  if (name === "ffmpeg-core.wasm") {
-    if (!isWasmMagic(bytes)) {
-      const headText = new TextDecoder().decode(bytes.subarray(0, 24)).replace(/\s+/g, " ");
-      throw new Error(`${name}: invalid wasm magic (head="${headText}")`);
-    }
-    if (contentType.includes("text/html")) {
-      throw new Error(`${name}: received HTML content-type (${contentType})`);
-    }
-    return;
-  }
-  if (startsWithHtml(bytes)) {
-    throw new Error(`${name}: received HTML body`);
-  }
 }
 
 async function resolveFfmpegCoreUrls(): Promise<FfmpegCoreUrls> {
@@ -135,26 +109,11 @@ async function resolveFfmpegCoreUrls(): Promise<FfmpegCoreUrls> {
   for (const basePath of candidates) {
     const coreURL = getFfmpegAssetUrl(basePath, "ffmpeg-core.js");
     const wasmURL = getFfmpegAssetUrl(basePath, "ffmpeg-core.wasm");
-    try {
-      await probeAsset(wasmURL, "ffmpeg-core.wasm");
-      await probeAsset(coreURL, "ffmpeg-core.js");
-      let workerURL = "";
-      try {
-        const workerCandidate = getFfmpegAssetUrl(basePath, "ffmpeg-core.worker.js");
-        await probeAsset(workerCandidate, "ffmpeg-core.worker.js");
-        workerURL = workerCandidate;
-      } catch {
-        mwvLog("ffmpeg: worker.js not available, proceeding without it");
-      }
-      mwvMilestone("ffmpeg: core url selected", { basePath, coreURL, wasmURL, workerURL });
-      return { basePath, coreURL, wasmURL, workerURL };
-    } catch (error) {
-      mwvWarn("ffmpeg: core candidate rejected", { basePath, coreURL, wasmURL, error });
-    }
+    const workerURL = "";
+    mwvMilestone("ffmpeg: core url selected", { basePath, coreURL, wasmURL });
+    return { basePath, coreURL, wasmURL, workerURL };
   }
-  throw new Error(
-    "FFmpegコアの読み込みに失敗しました。広告ブロッカーや拡張機能がFFmpeg関連ファイルを遮断している可能性があります。拡張機能を一時停止するか、シークレットウィンドウで開くか、localhostを許可してください。"
-  );
+  throw new Error("FFmpeg core URL candidates exhausted");
 }
 
 export type EncodeProgressCallbacks = {
@@ -392,11 +351,22 @@ export async function generateMp4Video(
     onLoadStart?.();
     mwvMilestone("ffmpeg: wasm loading…");
     const selectedUrls = await resolveFfmpegCoreUrls();
-    await ffmpeg.load({
-      coreURL: selectedUrls.coreURL,
-      wasmURL: selectedUrls.wasmURL,
-      ...(selectedUrls.workerURL ? { workerURL: selectedUrls.workerURL } : {}),
-    });
+    mwvMilestone("ffmpeg: wasm load start", { coreURL: selectedUrls.coreURL, wasmURL: selectedUrls.wasmURL });
+    try {
+      await ffmpeg.load({
+        coreURL: selectedUrls.coreURL,
+        wasmURL: selectedUrls.wasmURL,
+        ...(selectedUrls.workerURL ? { workerURL: selectedUrls.workerURL } : {}),
+      });
+    } catch (loadErr) {
+      const loadMsg = loadErr instanceof Error ? loadErr.message : String(loadErr);
+      mwvError("ffmpeg: wasm load failed", { error: loadMsg, coreURL: selectedUrls.coreURL, wasmURL: selectedUrls.wasmURL });
+      const hintError = new Error(
+        "MP4変換の初期化に失敗しました。広告ブロッカーやセキュリティ拡張がFFmpegの読み込みを遮断している可能性があります。拡張機能を一時停止、シークレットウィンドウで再試行、またはlocalhost/このサイトを許可してください。"
+      );
+      hintError.cause = loadErr;
+      throw hintError;
+    }
     mwvMilestone("ffmpeg: wasm loaded");
     onLoadComplete?.();
 
@@ -517,18 +487,18 @@ export async function generateMp4Video(
     }
     runStartedAtMs = 0;
     const message = error instanceof Error ? error.message : String(error);
+    mwvError("ffmpeg: encode failed", { message, error });
     if (
-      /ERR_BLOCKED_BY_CLIENT|invalid wasm magic|received HTML|Failed to fetch|ffmpeg-core\.wasm/i.test(
+      /ERR_BLOCKED_BY_CLIENT|invalid wasm|received HTML|Failed to fetch|ffmpeg-core|not a function|createFFmpegCore|SharedArrayBuffer|COOP|COEP|importScripts|failed to import/i.test(
         message
       )
     ) {
       const hintError = new Error(
-        "MP4変換の初期化に失敗しました。広告ブロッカーやセキュリティ拡張がFFmpegのwasm取得を遮断している可能性があります。拡張機能を一時停止、シークレットウィンドウで再試行、またはlocalhost/このサイトを許可してください。"
+        "MP4変換の初期化に失敗しました。広告ブロッカーやセキュリティ拡張がFFmpegの読み込みを遮断している可能性があります。拡張機能を一時停止、シークレットウィンドウで再試行、またはlocalhost/このサイトを許可してください。"
       );
       mwvError("ffmpeg: encode failed (blocked/asset issue)", { original: error, hint: hintError.message });
       throw hintError;
     }
-    mwvError("ffmpeg: encode failed", error);
     throw error;
   } finally {
     try {
