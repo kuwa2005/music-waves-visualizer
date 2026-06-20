@@ -135,15 +135,21 @@ async function resolveFfmpegCoreUrls(): Promise<FfmpegCoreUrls> {
   for (const basePath of candidates) {
     const coreURL = getFfmpegAssetUrl(basePath, "ffmpeg-core.js");
     const wasmURL = getFfmpegAssetUrl(basePath, "ffmpeg-core.wasm");
-    const workerURL = getFfmpegAssetUrl(basePath, "ffmpeg-core.worker.js");
     try {
       await probeAsset(wasmURL, "ffmpeg-core.wasm");
       await probeAsset(coreURL, "ffmpeg-core.js");
-      await probeAsset(workerURL, "ffmpeg-core.worker.js");
+      let workerURL = "";
+      try {
+        const workerCandidate = getFfmpegAssetUrl(basePath, "ffmpeg-core.worker.js");
+        await probeAsset(workerCandidate, "ffmpeg-core.worker.js");
+        workerURL = workerCandidate;
+      } catch {
+        mwvLog("ffmpeg: worker.js not available, proceeding without it");
+      }
       mwvMilestone("ffmpeg: core url selected", { basePath, coreURL, wasmURL, workerURL });
       return { basePath, coreURL, wasmURL, workerURL };
     } catch (error) {
-      mwvWarn("ffmpeg: core candidate rejected", { basePath, coreURL, wasmURL, workerURL, error });
+      mwvWarn("ffmpeg: core candidate rejected", { basePath, coreURL, wasmURL, error });
     }
   }
   throw new Error(
@@ -389,7 +395,7 @@ export async function generateMp4Video(
     await ffmpeg.load({
       coreURL: selectedUrls.coreURL,
       wasmURL: selectedUrls.wasmURL,
-      workerURL: selectedUrls.workerURL,
+      ...(selectedUrls.workerURL ? { workerURL: selectedUrls.workerURL } : {}),
     });
     mwvMilestone("ffmpeg: wasm loaded");
     onLoadComplete?.();
