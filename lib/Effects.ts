@@ -3,6 +3,7 @@
  */
 
 import { drawLaserCanvas } from "./laserEffect";
+import { drawRecordPlayerOverlay, type RecordPlayerRpm, type DiscStyle, type DiscSize } from "./recordPlayer";
 
 export type EffectType =
   | "none"
@@ -21,7 +22,8 @@ export type EffectType =
   | "waterRipple"
   | "scanlines"
   | "mirrorBall"
-  | "laser";
+  | "laser"
+  | "recordPlayer";
 
 export type EffectDensity = 1 | 2 | 3;
 export type AtmosphereVariant = "dust" | "sparks" | "fireflies";
@@ -72,7 +74,7 @@ export interface EffectParams {
   mirrorBallY?: number;
   /** ミラーボール: 回転速度（度/秒、負で逆回転） */
   mirrorBallRotationSpeed?: number;
-  /** ミラーボール: 光源数（1〜10） */
+  /** ミラーボール: 光源数（1〜6） */
   mirrorBallLightCount?: number;
   /** ミラーボール: 半径（画面短辺に対する比率 0.04〜0.35） */
   mirrorBallRadius?: number;
@@ -106,6 +108,12 @@ export interface EffectParams {
   mirrorBallSecondaryIntensity?: number;
   /** ミラーボール: 低音で回転をブースト（BPM検出は未実装のため代替） */
   mirrorBallAudioSyncRotation?: boolean;
+  /** レコードプレイヤー: 回転速度 */
+  recordPlayerRpm?: RecordPlayerRpm;
+  /** レコードプレイヤー: ディスクスタイル */
+  recordPlayerDiscStyle?: DiscStyle;
+  /** レコードプレイヤー: ディスクサイズ */
+  recordPlayerDiscSize?: DiscSize;
 }
 
 /** 音源連動用メトリクス（0〜1正規化） */
@@ -2147,6 +2155,11 @@ export interface MirrorBallFrameDraw {
 }
 
 let mirrorBallRotationRad = 0;
+/** 光源のYオフセット（再生開始時に1回だけ生成、再生中は固定） */
+let mirrorBallLightYOffsets: number[] = [];
+/** 光源のZオフセット（0〜1: 0=近い/前面、1=遠い/背面） */
+let mirrorBallLightZOffsets: number[] = [];
+let mirrorBallLightYGeneratedCount = 0;
 
 function mirrorBallHash(n: number): number {
   const x = Math.sin(n * 127.1 + 311.7) * 43758.5453;
@@ -2179,8 +2192,21 @@ export function buildMirrorBallFrame(
 
   const audioBoost = a.bass * 0.4 + a.volume * 0.2 + a.highFreq * 0.15;
 
-  // 光源数（1〜10、デフォルト4）
-  const lightCount = Math.max(1, Math.min(10, effect.mirrorBallLightCount ?? 4));
+  // 光源数（1〜6、デフォルト4）
+  const lightCount = Math.max(1, Math.min(6, effect.mirrorBallLightCount ?? 4));
+
+  // 光源Y/Zオフセットを生成（初回のみ、再生中は固定）
+  if (mirrorBallLightYGeneratedCount !== lightCount) {
+    mirrorBallLightYGeneratedCount = lightCount;
+    mirrorBallLightYOffsets = [];
+    mirrorBallLightZOffsets = [];
+    for (let i = 0; i < lightCount; i++) {
+      // Y: -1.0 〜 1.0 の範囲でランダム（上下に広く配置）
+      mirrorBallLightYOffsets.push((mirrorBallHash(i * 37.7 + 123.4) - 0.5) * 2.0);
+      // Z: 0.0 〜 1.0（0=前面、1=背面。距離による光の広がり調整用）
+      mirrorBallLightZOffsets.push(mirrorBallHash(i * 53.1 + 789.2));
+    }
+  }
 
   // 各光源の色と強さを読み取り
   const lights: Array<{ color: [number, number, number]; intensity: number }> = [];
@@ -2235,14 +2261,16 @@ export function buildMirrorBallFrame(
     const light = lights[li];
     if (light.intensity <= 0.01) continue;
 
-    // 光源の方向（水平面内、ボールに向かって照射）
+    // 光源の方向（3D空間内、ボールに向かって照射）
     // 光源はボールの外側にあり、ボール中心に向かって光を放つ
     const lightAngle = (Math.PI * 2 * li) / lightCount;
-    // 光源位置: (cos(angle), 0, sin(angle) * r)
-    // 光の方向: ボール中心(0,0,0)に向かって → (-cos(angle), 0, -sin(angle))
-    const ldx = -Math.cos(lightAngle);
-    const ldz = -Math.sin(lightAngle);
-    const ldy = 0;
+    const lightZ = mirrorBallLightZOffsets[li] ?? 0.5;
+    const zDist = 1.0 + lightZ * 1.5; // 1.0〜2.5 の距離
+    // 光源位置: (cos(angle) * zDist, y_offset, sin(angle) * zDist)
+    // 光の方向: ボール中心(0,0,0)に向かって
+    const ldx = -Math.cos(lightAngle) / zDist;
+    const ldz = -Math.sin(lightAngle) / zDist;
+    const ldy = -(mirrorBallLightYOffsets[li] ?? 0) * 0.8;
 
     // 各鏡面から反射スポットを生成
     for (const mirror of mirrorAngles) {
@@ -2266,9 +2294,11 @@ export function buildMirrorBallFrame(
       const rdz = ldz - 2 * ndotl * rnz;
 
       // 反射方向を壁面座標に投影（画面全体に広がるように）
-      const wallDist = 2.0;
-      const sx = cx + (rdx / Math.max(0.1, Math.abs(rdz) + 0.05)) * r * wallDist;
-      const sy = height * 0.5 + (rdy * r * wallDist * 1.5); // 画面中央を基準に上下に広がる
+      const wallDist = 2.5;
+      const zFactor = 1.0 + lightZ * 0.8; // Z座標に応じた広がり
+      const sx = cx + (rdx / Math.max(0.1, Math.abs(rdz) + 0.05)) * r * wallDist * zFactor;
+      // ボール位置(cy)を基準に上下に広がる。垂直スケールを大きく
+      const sy = cy + (rdy * r * wallDist * 2.2 * zFactor);
 
       // 画面外のスポットはスキップ
       if (sx < -r * 2 || sx > width + r * 2 || sy < -r * 2 || sy > height + r * 2) continue;
@@ -2472,6 +2502,9 @@ export function drawEffectOverlayCanvas(
         break;
       case "laser":
         drawLaserCanvas(ctx, width, height, effect.density, overlayDelta);
+        break;
+      case "recordPlayer":
+        drawRecordPlayerOverlay(ctx, width, height, true, overlayDelta);
         break;
       default:
         break;

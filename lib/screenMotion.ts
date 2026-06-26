@@ -179,8 +179,11 @@ export function resolveForwardScalePercentAtProgress(
   settings: ScreenMotionSettings,
   cyclePhase01: number
 ): number {
+  if (!settings.motionEnabled) {
+    return SCREEN_MOTION_ZOOM_MIN_PERCENT;
+  }
   const baseZoom = resolveStaticImageZoomPercent(settings);
-  if (!settings.motionEnabled || settings.panForwardPercent <= 0) {
+  if (settings.panForwardPercent <= 0) {
     return baseZoom;
   }
   const panAmt = clampNum(settings.panForwardPercent, SCREEN_MOTION_PAN_MIN, SCREEN_MOTION_PAN_MAX, 0) / 100;

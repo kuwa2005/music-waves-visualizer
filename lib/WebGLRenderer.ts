@@ -77,6 +77,7 @@ const EFFECT_TYPE_TO_GL: Record<EffectType, number> = {
   scanlines: 0,
   mirrorBall: 0,
   laser: 0,
+  recordPlayer: 0,
   filmGrain: 1,
   vignette: 2,
   rainbow: 3,
@@ -1823,6 +1824,7 @@ function renderFrame(): void {
 
     const settings: SpectrumSettings = latestSpectrumSettings ?? {
       opacity: 0.9,
+      sensitivity: 1,
       lineWidthWaveform: 3.2,
       lineWidthCircle: 3.2,
       lineWidthSymWave: 3.6,
@@ -1852,6 +1854,8 @@ function renderFrame(): void {
       ].includes(latestEffect.type);
     if (needsFreqForEffect) {
       analyser.getByteFrequencyData(freqForEffect);
+      const specSens = latestSpectrumSettings?.sensitivity ?? 1;
+      if (specSens !== 1) { for (let i = 0; i < freqForEffect.length; i++) freqForEffect[i] = Math.max(0, Math.min(255, freqForEffect[i] * specSens)); }
     }
 
     const getAudioReactive = (): AudioReactiveData => {
@@ -1909,31 +1913,38 @@ function renderFrame(): void {
         break;
       case 0:
         analyser.getByteFrequencyData(bufferData);
+        { const ss = latestSpectrumSettings?.sensitivity ?? 1; if (ss !== 1) { for (let i = 0; i < bufferData.length; i++) bufferData[i] = Math.max(0, Math.min(255, bufferData[i] * ss)); } }
         drawMode0(glContext, bufferData, canvasWidth, canvasHeight, effAdj, settings);
         break;
       case 1:
         analyser.getByteTimeDomainData(bufferData);
+        { const ss = latestSpectrumSettings?.sensitivity ?? 1; if (ss !== 1) { for (let i = 0; i < bufferData.length; i++) { const dev = (bufferData[i] - 128) * ss; bufferData[i] = Math.max(0, Math.min(255, 128 + dev)); } } }
         drawMode1(glContext, bufferData, canvasWidth, canvasHeight, effAdj, settings);
         break;
       case 2:
         analyser.getByteFrequencyData(bufferData);
+        { const ss = latestSpectrumSettings?.sensitivity ?? 1; if (ss !== 1) { for (let i = 0; i < bufferData.length; i++) bufferData[i] = Math.max(0, Math.min(255, bufferData[i] * ss)); } }
         drawMode2(glContext, bufferData, canvasWidth, canvasHeight, effAdj, settings);
         break;
       case 3:
         analyser.getByteFrequencyData(bufferData);
+        { const ss = latestSpectrumSettings?.sensitivity ?? 1; if (ss !== 1) { for (let i = 0; i < bufferData.length; i++) bufferData[i] = Math.max(0, Math.min(255, bufferData[i] * ss)); } }
         drawMode3(glContext, bufferData, canvasWidth, canvasHeight, effAdj, settings);
         break;
       case 4:
         analyser.getByteFrequencyData(bufferData);
+        { const ss = latestSpectrumSettings?.sensitivity ?? 1; if (ss !== 1) { for (let i = 0; i < bufferData.length; i++) bufferData[i] = Math.max(0, Math.min(255, bufferData[i] * ss)); } }
         drawMode4(glContext, bufferData, canvasWidth, canvasHeight, effAdj, settings);
         break;
       case 5:
         analyser.getByteTimeDomainData(bufferData);
+        { const ss = latestSpectrumSettings?.sensitivity ?? 1; if (ss !== 1) { for (let i = 0; i < bufferData.length; i++) { const dev = (bufferData[i] - 128) * ss; bufferData[i] = Math.max(0, Math.min(255, 128 + dev)); } } }
         drawMode5(glContext, bufferData, canvasWidth, canvasHeight, effAdj, settings);
         break;
       case 6:
         if (!needsFreqForEffect) {
           analyser.getByteFrequencyData(bufferData);
+          { const ss = latestSpectrumSettings?.sensitivity ?? 1; if (ss !== 1) { for (let i = 0; i < bufferData.length; i++) bufferData[i] = Math.max(0, Math.min(255, bufferData[i] * ss)); } }
         } else {
           bufferData.set(freqForEffect);
         }
@@ -1941,42 +1952,52 @@ function renderFrame(): void {
         break;
       case 7:
         analyser.getByteFrequencyData(bufferData);
+        { const ss = latestSpectrumSettings?.sensitivity ?? 1; if (ss !== 1) { for (let i = 0; i < bufferData.length; i++) bufferData[i] = Math.max(0, Math.min(255, bufferData[i] * ss)); } }
         drawMode7Area(glContext, bufferData, canvasWidth, canvasHeight, effAdj, settings);
         break;
       case 8:
         analyser.getByteFrequencyData(bufferData);
+        { const ss = latestSpectrumSettings?.sensitivity ?? 1; if (ss !== 1) { for (let i = 0; i < bufferData.length; i++) bufferData[i] = Math.max(0, Math.min(255, bufferData[i] * ss)); } }
         drawMode8LoudnessPulse(glContext, bufferData, canvasWidth, canvasHeight, effAdj, settings);
         break;
       case 9:
         analyser.getByteFrequencyData(bufferData);
+        { const ss = latestSpectrumSettings?.sensitivity ?? 1; if (ss !== 1) { for (let i = 0; i < bufferData.length; i++) bufferData[i] = Math.max(0, Math.min(255, bufferData[i] * ss)); } }
         drawMode9Vu(glContext, bufferData, canvasWidth, canvasHeight, effAdj, settings);
         break;
       case 10:
         analyser.getByteFrequencyData(bufferData);
+        { const ss = latestSpectrumSettings?.sensitivity ?? 1; if (ss !== 1) { for (let i = 0; i < bufferData.length; i++) bufferData[i] = Math.max(0, Math.min(255, bufferData[i] * ss)); } }
         drawMode10Ring(glContext, bufferData, canvasWidth, canvasHeight, effAdj, settings);
         break;
       case 11:
         analyser.getByteFrequencyData(bufferData);
+        { const ss = latestSpectrumSettings?.sensitivity ?? 1; if (ss !== 1) { for (let i = 0; i < bufferData.length; i++) bufferData[i] = Math.max(0, Math.min(255, bufferData[i] * ss)); } }
         drawMode11Orb(glContext, bufferData, canvasWidth, canvasHeight, effAdj, settings);
         break;
       case 12:
         analyser.getByteFrequencyData(bufferData);
+        { const ss = latestSpectrumSettings?.sensitivity ?? 1; if (ss !== 1) { for (let i = 0; i < bufferData.length; i++) bufferData[i] = Math.max(0, Math.min(255, bufferData[i] * ss)); } }
         drawMode12Breathing(glContext, bufferData, canvasWidth, canvasHeight, effAdj, settings);
         break;
       case 13:
         analyser.getByteFrequencyData(bufferData);
+        { const ss = latestSpectrumSettings?.sensitivity ?? 1; if (ss !== 1) { for (let i = 0; i < bufferData.length; i++) bufferData[i] = Math.max(0, Math.min(255, bufferData[i] * ss)); } }
         drawMode13Particles(glContext, bufferData, canvasWidth, canvasHeight, effAdj, settings);
         break;
       case 14:
         analyser.getByteFrequencyData(bufferData);
+        { const ss = latestSpectrumSettings?.sensitivity ?? 1; if (ss !== 1) { for (let i = 0; i < bufferData.length; i++) bufferData[i] = Math.max(0, Math.min(255, bufferData[i] * ss)); } }
         drawMode14Morph(glContext, bufferData, canvasWidth, canvasHeight, effAdj, settings);
         break;
       case 15:
         analyser.getByteTimeDomainData(bufferData);
+        { const ss = latestSpectrumSettings?.sensitivity ?? 1; if (ss !== 1) { for (let i = 0; i < bufferData.length; i++) { const dev = (bufferData[i] - 128) * ss; bufferData[i] = Math.max(0, Math.min(255, 128 + dev)); } } }
         drawMode15Oscilloscope(glContext, bufferData, canvasWidth, canvasHeight, effAdj, settings);
         break;
       case 16:
         analyser.getByteTimeDomainData(bufferData);
+        { const ss = latestSpectrumSettings?.sensitivity ?? 1; if (ss !== 1) { for (let i = 0; i < bufferData.length; i++) { const dev = (bufferData[i] - 128) * ss; bufferData[i] = Math.max(0, Math.min(255, 128 + dev)); } } }
         drawMode16Lissajous(glContext, bufferData, canvasWidth, canvasHeight, effAdj, settings);
         break;
     }

@@ -14,7 +14,9 @@
     "build:html:lil-la": "NEXT_PUBLIC_SITE_URL=https://lil.la npm run build:html",
     "release:zip": "bash scripts/make-release-zip.sh",
     "start": "next start",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@emotion/react": "^11.14.0",
@@ -40,6 +42,7 @@
     "postcss": "^8.5.10",
     "sass": "^1.101.0",
     "tailwindcss": "^4.2.4",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.9"
   }
 }

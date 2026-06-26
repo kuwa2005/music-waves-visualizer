@@ -252,6 +252,7 @@ function getAnimationFactor(style: SubtitleStyle, cue: SubtitleCue, t: number): 
 /** タイトル用（字幕と同系の装飾 + 字間） */
 export type TitleStyle = SubtitleStyle & {
   letterSpacingPx: number;
+  positionXOffsetPx: number;
 };
 
 export const DEFAULT_TITLE_STYLE: TitleStyle = {
@@ -262,6 +263,7 @@ export const DEFAULT_TITLE_STYLE: TitleStyle = {
   animationType: "none",
   animationDurationSec: 0.35,
   letterSpacingPx: 0,
+  positionXOffsetPx: 0,
 };
 
 export type TitleOverlaySettings = {
@@ -305,6 +307,7 @@ export type TextOverlayDrawState = {
   layer: TextOverlayLayer;
   alpha: number;
   dy: number;
+  dx: number;
   scale: number;
 };
 
@@ -678,17 +681,17 @@ export function compositeTextOverlayToCanvas2D(
   ctx: CanvasRenderingContext2D,
   state: TextOverlayDrawState
 ): void {
-  const { layer, alpha, dy, scale } = state;
+  const { layer, alpha, dy, dx, scale } = state;
   if (alpha <= 0.001) return;
 
   ctx.save();
   ctx.globalAlpha = alpha;
-  if (scale !== 1 || dy !== 0) {
-    ctx.translate(layer.anchorX, layer.anchorY + dy);
+  if (scale !== 1 || dy !== 0 || dx !== 0) {
+    ctx.translate(layer.anchorX + dx, layer.anchorY + dy);
     ctx.scale(scale, scale);
     ctx.translate(-layer.anchorX, -layer.anchorY);
   }
-  ctx.drawImage(layer.canvas, layer.x, layer.y, layer.w, layer.h);
+  ctx.drawImage(layer.canvas, layer.x + dx, layer.y, layer.w, layer.h);
   ctx.restore();
 }
 
@@ -738,7 +741,7 @@ export function resolveSubtitleOverlayDraw(
     }
     const layer = resolveSubtitleLayer(layerKey, lines, style, canvasWidth, canvasHeight);
     if (!layer) return null;
-    const state: TextOverlayDrawState = { layer, alpha: 1, dy: 0, scale: 1 };
+    const state: TextOverlayDrawState = { layer, alpha: 1, dy: 0, dx: 0, scale: 1 };
     lastSubtitleStaticKey = layerKey;
     lastSubtitleStaticDraw = state;
     scheduleSubtitlePrefetch(cues, lastCueSearchHint, style, canvasWidth, canvasHeight);
@@ -751,7 +754,7 @@ export function resolveSubtitleOverlayDraw(
   const layer = resolveSubtitleLayer(layerKey, lines, style, canvasWidth, canvasHeight);
   if (!layer) return null;
   scheduleSubtitlePrefetch(cues, lastCueSearchHint, style, canvasWidth, canvasHeight);
-  return { layer, ...anim };
+  return { layer, ...anim, dx: 0 };
 }
 
 export function resolveTitleOverlayDraw(
@@ -789,7 +792,7 @@ export function resolveTitleOverlayDraw(
   );
   if (!layer) return null;
   titleLayerCache = layer;
-  return { layer, ...anim };
+  return { layer, ...anim, dx: style.positionXOffsetPx ?? 0 };
 }
 
 export function renderTitleOverlayCanvas(

@@ -68,6 +68,7 @@ import {
   clearImageCache,
   getFPS,
   stopCanvas2DAnimation,
+  resetSpectrumRuntimeState,
   GLYCO_COLOR_SETS,
   GLYCO_GRADIENT_SETS,
   legacySpectrumPresetToHex,
@@ -755,12 +756,12 @@ const Home: NextPage = () => {
   const [canvasSize, setCanvasSize] = useState<CanvasSize>("auto");
   
   // Mode adjustment parameters
-  // offsetX, offsetYはパーセンテージ（-150%〜150%）
+  // offsetX, offsetYはパーセンテージ（-300%〜300%）
   type ModeAdjustments = {
     scaleX: number;
     scaleY: number;
-    offsetX: number; // パーセンテージ（-150〜150）
-    offsetY: number; // パーセンテージ（-150〜150）
+    offsetX: number; // パーセンテージ（-300〜300）
+    offsetY: number; // パーセンテージ（-300〜300）
   };
   const [modeAdjustments, setModeAdjustments] = useState<ModeAdjustments>({
     scaleX: 1.0,
@@ -811,6 +812,7 @@ const Home: NextPage = () => {
     "waterRipple",
     "laser",
     "mirrorBall",
+    "recordPlayer",
   ];
   const defaultEffectDensities = (): Partial<Record<EffectType, EffectDensity>> => {
     const o: Partial<Record<EffectType, EffectDensity>> = {};
@@ -876,6 +878,11 @@ const Home: NextPage = () => {
   );
   const [mirrorBall, setMirrorBall] = useState<MirrorBallAdjust>(DEFAULT_MIRROR_BALL);
 
+  // レコードプレイヤーエフェクト設定
+  const [recordPlayerRpm, setRecordPlayerRpm] = useState<number>(6);
+  const [recordPlayerDiscStyle, setRecordPlayerDiscStyle] = useState<"full" | "groove">("groove");
+  const [recordPlayerDiscSize, setRecordPlayerDiscSize] = useState<"compact" | "edge">("compact");
+
   const [settingsTab, setSettingsTab] = useState(0);
   const [screenMotion, setScreenMotion] = useState<ScreenMotionSettings>(DEFAULT_SCREEN_MOTION);
 
@@ -907,6 +914,7 @@ const Home: NextPage = () => {
 
   // スペクトラム調整
   const [spectrumOpacityPercent, setSpectrumOpacityPercent] = useState<number>(10);  // 透過率0-100%、0=完全表示
+  const [spectrumSensitivity, setSpectrumSensitivity] = useState<number>(1);  // スペアナ感度倍率 0〜2
   const [lineWidthWaveform, setLineWidthWaveform] = useState<number>(3.2);  // mode1
   const [lineWidthCircle, setLineWidthCircle] = useState<number>(3.2);      // mode2
   const [lineWidthSymWave, setLineWidthSymWave] = useState<number>(3.6);    // mode5
@@ -1050,6 +1058,10 @@ const Home: NextPage = () => {
         (base as any)[`mirrorBallLight${i}Color`] = (mirrorBall as any)[`light${i}Color`];
         (base as any)[`mirrorBallLight${i}Intensity`] = (mirrorBall as any)[`light${i}Intensity`];
       }
+    } else if (effectType === "recordPlayer") {
+      base.recordPlayerRpm = recordPlayerRpm;
+      base.recordPlayerDiscStyle = recordPlayerDiscStyle;
+      base.recordPlayerDiscSize = recordPlayerDiscSize;
     }
     return base;
   }, [
@@ -1074,6 +1086,9 @@ const Home: NextPage = () => {
     atmosphereVariant,
     atmosphereStrength,
     mirrorBall,
+    recordPlayerRpm,
+    recordPlayerDiscStyle,
+    recordPlayerDiscSize,
   ]);
 
   const [recordVideoBitrateMbps, setRecordVideoBitrateMbps] = useState<number>(8);
@@ -1100,6 +1115,7 @@ const Home: NextPage = () => {
     mwvSetItem("common_glycoColorSet", glycoColorSet);
     mwvSetItem("common_glycoRotationDeg", String(clampGlycoRotationDeg(glycoRotationDeg)));
     mwvSetItem("common_spectrumOpacityPercent", String(spectrumOpacityPercent));
+    mwvSetItem("common_spectrumSensitivity", String(spectrumSensitivity));
     mwvSetItem("common_spectrumColorHex", spectrumColorHex);
     mwvSetItem("common_galleryTransitionMode", galleryTransitionMode);
     mwvSetItem("common_spaceParticleColor", spaceParticleColor);
@@ -1147,6 +1163,7 @@ const Home: NextPage = () => {
     glycoColorSet,
     glycoRotationDeg,
     spectrumOpacityPercent,
+    spectrumSensitivity,
     spectrumColorHex,
     galleryTransitionMode,
     spaceParticleColor,
@@ -1195,6 +1212,21 @@ const Home: NextPage = () => {
     if (typeof window === "undefined") return;
     mwvSetItem("common_mirrorBall", JSON.stringify(mirrorBall));
   }, [mirrorBall]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    mwvSetItem("common_recordPlayerRpm", String(recordPlayerRpm));
+  }, [recordPlayerRpm]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    mwvSetItem("common_recordPlayerDiscStyle", recordPlayerDiscStyle);
+  }, [recordPlayerDiscStyle]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    mwvSetItem("common_recordPlayerDiscSize", recordPlayerDiscSize);
+  }, [recordPlayerDiscSize]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1320,7 +1352,7 @@ const Home: NextPage = () => {
 
   const clampModeAdjustments = useCallback((adj: ModeAdjustments): ModeAdjustments => {
     const clampOffset = (v: number) =>
-      Math.min(150, Math.max(-150, Math.round(Number.isFinite(v) ? v : 0)));
+      Math.min(300, Math.max(-300, Math.round(Number.isFinite(v) ? v : 0)));
     return {
       scaleX: Math.min(5, Math.max(0.1, Number.isFinite(adj.scaleX) ? adj.scaleX : 1)),
       scaleY: Math.min(5, Math.max(0.1, Number.isFinite(adj.scaleY) ? adj.scaleY : 1)),
@@ -1377,6 +1409,7 @@ const Home: NextPage = () => {
         glycoColorSet,
         glycoRotationDeg,
         spectrumOpacityPercent,
+        spectrumSensitivity,
         spectrumColorHex,
         spectrumRainbowColorful,
         circleRotationRpm,
@@ -1579,6 +1612,13 @@ const Home: NextPage = () => {
           if (!isNaN(v) && v >= 0 && v <= 100) {
             mwvSetItem("common_spectrumOpacityPercent", String(v));
             setSpectrumOpacityPercent(v);
+          }
+        }
+        if (c.spectrumSensitivity !== undefined) {
+          const v = Number(c.spectrumSensitivity);
+          if (!isNaN(v) && v >= 0 && v <= 2) {
+            mwvSetItem("common_spectrumSensitivity", String(v));
+            setSpectrumSensitivity(v);
           }
         }
         if (typeof c.spectrumColorHex === "string" && /^#[0-9a-fA-F]{6}$/.test(c.spectrumColorHex)) {
@@ -2596,6 +2636,7 @@ const Home: NextPage = () => {
             isPlaySoundRef.current = false;
             setIsPlaySound(false);
             stopCanvas2DAnimation();
+            resetSpectrumRuntimeState();
             stopWebGLAnimation();
           };
 
@@ -2944,6 +2985,12 @@ const Home: NextPage = () => {
         const o = parseFloat(oldOpacity);
         if (!isNaN(o) && o >= 0.1 && o <= 1) setSpectrumOpacityPercent(Math.round((1 - o) * 100));
       }
+    }
+
+    const savedSensitivity = mwvGetItem("common_spectrumSensitivity");
+    if (savedSensitivity) {
+      const n = parseFloat(savedSensitivity);
+      if (!isNaN(n) && n >= 0 && n <= 2) setSpectrumSensitivity(n);
     }
 
     const savedSpectrumHex = mwvGetItem("common_spectrumColorHex");
@@ -3396,6 +3443,7 @@ const Home: NextPage = () => {
     // 前のアニメーションを停止
     // 描画を完全に停止・クリア
     stopCanvas2DAnimation();
+    resetSpectrumRuntimeState();
     stopWebGLAnimation();
 
     // レンダラータイプに応じて描画関数を選択
@@ -3403,6 +3451,7 @@ const Home: NextPage = () => {
     const isEffectActive = isPlaySound || isRecording || isPlaybackFadingOut;
     const spectrumSettings = {
       opacity: 1 - spectrumOpacityPercent / 100,
+      sensitivity: spectrumSensitivity,
       lineWidthWaveform,
       lineWidthCircle,
       lineWidthSymWave,
@@ -3476,6 +3525,7 @@ const Home: NextPage = () => {
 
     return () => {
       stopCanvas2DAnimation();
+      resetSpectrumRuntimeState();
       stopWebGLAnimation();
     };
   }, [
@@ -3491,6 +3541,7 @@ const Home: NextPage = () => {
     glycoColorSet,
     glycoRotationDeg,
     spectrumOpacityPercent,
+    spectrumSensitivity,
     lineWidthWaveform,
     lineWidthCircle,
     lineWidthSymWave,
@@ -4453,6 +4504,7 @@ const Home: NextPage = () => {
       isPlaySoundRef.current = false;
       setIsPlaySound(false);
       stopCanvas2DAnimation();
+      resetSpectrumRuntimeState();
       stopWebGLAnimation();
     };
     const clipGain = clipGainRef.current;
@@ -4517,6 +4569,7 @@ const Home: NextPage = () => {
     isPlaySoundRef.current = false;
     setIsPlaySound(false);
     stopCanvas2DAnimation();
+    resetSpectrumRuntimeState();
     stopWebGLAnimation();
   }, [clearPlaybackStopFinalizeTimer, clearPlaybackWindowTimer]);
 
@@ -4762,6 +4815,7 @@ const Home: NextPage = () => {
         isPlaySoundRef.current = false;
         setIsPlaySound(false);
         stopCanvas2DAnimation();
+        resetSpectrumRuntimeState();
         stopWebGLAnimation();
       };
       const gain = clipGainRef.current;
@@ -5276,6 +5330,7 @@ const Home: NextPage = () => {
     mediaElementSourceRef.current = null;
     // 描画を完全停止し、キャンバスを背景だけの状態にクリア
     stopCanvas2DAnimation();
+    resetSpectrumRuntimeState();
     stopWebGLAnimation();
     if (canvasRef.current) {
       const ctx = canvasRef.current.getContext("2d", { alpha: true });
@@ -5399,23 +5454,58 @@ const Home: NextPage = () => {
     </Box>
   );
 
+  const [srtAuthorEditingField, setSrtAuthorEditingField] = useState<Record<string, string>>({});
+
   const renderSrtAuthorTimeField = (
     cue: SubtitleCue,
     index: number,
     field: SrtAuthorCueTimeKey,
     label: string
-  ) => (
+  ) => {
+    const key = `${index}-${field}`;
+    const isEditing = key in srtAuthorEditingField;
+    const displayValue = isEditing
+      ? srtAuthorEditingField[key]
+      : (Number.isFinite(cue[field]) ? cue[field].toFixed(2) : "");
+    return (
     <Box sx={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 18px", gap: 0.25, width: { xs: "100%", sm: 94 } }}>
       <TextField
         size="small"
         type="text"
         inputProps={{ inputMode: "decimal" }}
         label={label}
-        value={Number.isFinite(cue[field]) ? cue[field].toFixed(2) : ""}
+        value={displayValue}
+        onFocus={() => {
+          setSrtAuthorEditingField((prev) => ({ ...prev, [key]: Number.isFinite(cue[field]) ? String(cue[field]) : "" }));
+        }}
         onChange={(e) => {
+          setSrtAuthorEditingField((prev) => ({ ...prev, [key]: e.target.value }));
+        }}
+        onBlur={(e) => {
           const v = parseFloat(e.target.value.replace(",", "."));
-          if (!Number.isFinite(v)) return;
-          updateSrtAuthorCueTime(index, field, v);
+          if (Number.isFinite(v)) {
+            updateSrtAuthorCueTime(index, field, v);
+          }
+          setSrtAuthorEditingField((prev) => {
+            const next = { ...prev };
+            delete next[key];
+            return next;
+          });
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            const v = parseFloat((srtAuthorEditingField[key] ?? "").replace(",", "."));
+            if (Number.isFinite(v)) {
+              updateSrtAuthorCueTime(index, field, v);
+            }
+            setSrtAuthorEditingField((prev) => {
+              const next = { ...prev };
+              delete next[key];
+              return next;
+            });
+            (e.target as HTMLInputElement).blur();
+          }
         }}
         sx={{
           minWidth: 0,
@@ -5434,7 +5524,8 @@ const Home: NextPage = () => {
         {renderSrtAuthorTimeStepButton(index, field, -SRT_AUTHOR_TIME_STEP_SEC, `${label} -${SRT_AUTHOR_TIME_STEP_SEC}`)}
       </Box>
     </Box>
-  );
+    );
+  };
 
   return (
     <ThemeProvider theme={muiTheme}>
@@ -5819,6 +5910,21 @@ const Home: NextPage = () => {
                         max={100}
                         step={5}
                         onChange={(_, v) => setSpectrumOpacityPercent(v as number)}
+                      />
+                    </Box>
+                    <Box sx={{ mb: 2 }}>
+                      <Typography gutterBottom>{t("spectrumWave.sensitivity", { value: spectrumSensitivity.toFixed(1) })}</Typography>
+                      <Slider
+                        value={spectrumSensitivity}
+                        min={0}
+                        max={2}
+                        step={0.1}
+                        marks={[
+                          { value: 0, label: "0" },
+                          { value: 1, label: "1" },
+                          { value: 2, label: "2" },
+                        ]}
+                        onChange={(_, v) => setSpectrumSensitivity(v as number)}
                       />
                     </Box>
                     <Divider sx={{ my: 2 }} />
@@ -6417,13 +6523,13 @@ const Home: NextPage = () => {
                       onChangeCommitted={handleOffsetSliderCommitted}
                       {...spectrumOffsetSliderGuideProps}
                       onResetToDefault={() => handleAdjustmentChange("offsetX", DEFAULT_ADJUSTMENTS.offsetX)}
-                      min={-150}
-                      max={150}
+                      min={-300}
+                      max={300}
                       step={1}
                       marks={[
-                        { value: -150, label: "-150%" },
+                        { value: -300, label: "-300%" },
                         { value: 0, label: "0%" },
-                        { value: 150, label: "150%" },
+                        { value: 300, label: "300%" },
                       ]}
                     />
                     <Typography gutterBottom sx={{ mt: 3 }}>
@@ -6438,13 +6544,13 @@ const Home: NextPage = () => {
                       onChangeCommitted={handleOffsetSliderCommitted}
                       {...spectrumOffsetSliderGuideProps}
                       onResetToDefault={() => handleAdjustmentChange("offsetY", DEFAULT_ADJUSTMENTS.offsetY)}
-                      min={-150}
-                      max={150}
+                      min={-300}
+                      max={300}
                       step={1}
                       marks={[
-                        { value: -150, label: "-150%" },
+                        { value: -300, label: "-300%" },
                         { value: 0, label: "0%" },
-                        { value: 150, label: "150%" },
+                        { value: 300, label: "300%" },
                       ]}
                     />
                   </AccordionDetails>
@@ -6473,6 +6579,8 @@ const Home: NextPage = () => {
                   <Button variant={effectType === "rain" ? "contained" : "outlined"} onClick={() => setEffectType("rain")} size="small">
                     {t("effect.rain")}
                   </Button>
+                </Box>
+                <Box sx={{ display: "flex", gap: 1, justifyContent: "center", flexWrap: "wrap", alignItems: "center", mt: 1 }}>
                   <Button variant={effectType === "snow" ? "contained" : "outlined"} onClick={() => setEffectType("snow")} size="small">
                     {t("effect.snow")}
                   </Button>
@@ -6496,6 +6604,13 @@ const Home: NextPage = () => {
                     size="small"
                   >
                     {t("effect.mirrorBall")}
+                  </Button>
+                  <Button
+                    variant={effectType === "recordPlayer" ? "contained" : "outlined"}
+                    onClick={() => setEffectType("recordPlayer")}
+                    size="small"
+                  >
+                    {t("effect.recordPlayer")}
                   </Button>
                 </Box>
                 <Accordion defaultExpanded sx={{ mt: 2 }}>
@@ -7156,9 +7271,9 @@ const Home: NextPage = () => {
                         <Slider
                           value={mirrorBall.lightCount}
                           min={1}
-                          max={4}
+                          max={6}
                           step={1}
-                          marks={[1, 2, 3, 4].map((v) => ({ value: v, label: String(v) }))}
+                          marks={[1, 2, 3, 4, 5, 6].map((v) => ({ value: v, label: String(v) }))}
                           onChange={(_, v) => setMirrorBall((p) => ({ ...p, lightCount: v as number }))}
                         />
                         {Array.from({ length: mirrorBall.lightCount }, (_, i) => {
@@ -7202,6 +7317,85 @@ const Home: NextPage = () => {
                         })}
                       </Box>
                     )}
+                    {effectType === "recordPlayer" && (
+                      <Box sx={{ width: "100%", maxWidth: 480, mt: 1.5, mx: "auto" }}>
+                        <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 1 }}>
+                          {t("effect.recordPlayerRpm")}
+                        </Typography>
+                        <Box sx={{ display: "flex", gap: 1, mb: 1, flexWrap: "wrap" }}>
+                          {[
+                            { value: 3, key: "effect.recordPlayerRpmSlow" },
+                            { value: 6, key: "effect.recordPlayerRpmNormal" },
+                            { value: 9, key: "effect.recordPlayerRpmFast" },
+                            { value: 33, key: "effect.recordPlayerRpm33" },
+                            { value: 45, key: "effect.recordPlayerRpm45" },
+                          ].map(({ value, key }) => (
+                            <Button
+                              key={value}
+                              variant={recordPlayerRpm === value ? "contained" : "outlined"}
+                              size="small"
+                              onClick={() => setRecordPlayerRpm(value)}
+                              sx={{ minWidth: 60 }}
+                            >
+                              {t(key)}
+                            </Button>
+                          ))}
+                        </Box>
+                        <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 2 }}>
+                          <Typography variant="caption" color="textSecondary">
+                            {t("effect.recordPlayerRpmCustom")}:
+                          </Typography>
+                          <TextField
+                            size="small"
+                            type="number"
+                            value={recordPlayerRpm}
+                            onChange={(e) => {
+                              const v = parseFloat(e.target.value);
+                              if (!isNaN(v) && v > 0 && v <= 120) setRecordPlayerRpm(v);
+                            }}
+                            inputProps={{ min: 0.1, max: 120, step: 0.25 }}
+                            sx={{ width: 80, "& .MuiInputBase-root": { height: 32 } }}
+                          />
+                          <Typography variant="caption" color="textSecondary">RPM</Typography>
+                        </Box>
+                        <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 1 }}>
+                          {t("effect.recordPlayerDiscStyle")}
+                        </Typography>
+                        <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
+                          {([
+                            { value: "full" as const, key: "effect.recordPlayerDiscStyleFull" },
+                            { value: "groove" as const, key: "effect.recordPlayerDiscStyleGroove" },
+                          ]).map(({ value, key }) => (
+                            <Button
+                              key={value}
+                              variant={recordPlayerDiscStyle === value ? "contained" : "outlined"}
+                              size="small"
+                              onClick={() => setRecordPlayerDiscStyle(value)}
+                            >
+                              {t(key)}
+                            </Button>
+                          ))}
+                        </Box>
+                        <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 1, mt: 1.5 }}>
+                          {t("effect.recordPlayerDiscSize")}
+                        </Typography>
+                        <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
+                          {([
+                            { value: "compact" as const, key: "effect.recordPlayerDiscSizeCompact" },
+                            { value: "edge" as const, key: "effect.recordPlayerDiscSizeEdge" },
+                          ]).map(({ value, key }) => (
+                            <Button
+                              key={value}
+                              variant={recordPlayerDiscSize === value ? "contained" : "outlined"}
+                              size="small"
+                              onClick={() => setRecordPlayerDiscSize(value)}
+                            >
+                              {t(key)}
+                            </Button>
+                          ))}
+                        </Box>
+                      </Box>
+                    )}
                   </AccordionDetails>
                 </Accordion>
               </Box>
@@ -7218,6 +7412,14 @@ const Home: NextPage = () => {
                 <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 2, textAlign: "center" }}>
                   {renderSentenceLines(t("screenTab.scopeNote"))}
                 </Typography>
+                {effectType === "recordPlayer" && (
+                  <Box sx={{ mb: 2, p: 1.5, bgcolor: "warning.light", borderRadius: 1 }}>
+                    <Typography variant="caption" sx={{ fontWeight: 500 }}>
+                      {t("screenTab.recordPlayerDisabled")}
+                    </Typography>
+                  </Box>
+                )}
+                <Box sx={{ opacity: effectType === "recordPlayer" ? 0.4 : 1, pointerEvents: effectType === "recordPlayer" ? "none" : "auto" }}>
                 <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600 }}>
                   {t("screenTab.fadeSection")}
                 </Typography>
@@ -7579,6 +7781,7 @@ const Home: NextPage = () => {
                   }
                   sx={{ ml: 4, mr: 1 }}
                 />
+                </Box>
               </Box>
             )}
 
@@ -7614,6 +7817,14 @@ const Home: NextPage = () => {
                   max={98}
                   step={1}
                   onChange={(_, v) => setTitleStyle((prev) => ({ ...prev, positionYPercent: v as number }))}
+                />
+                <Typography gutterBottom>{t("titleTab.positionXOffset", { value: titleStyle.positionXOffsetPx.toFixed(0) })}</Typography>
+                <Slider
+                  value={titleStyle.positionXOffsetPx}
+                  min={-500}
+                  max={500}
+                  step={1}
+                  onChange={(_, v) => setTitleStyle((prev) => ({ ...prev, positionXOffsetPx: v as number }))}
                 />
                 <FormControl size="small" fullWidth sx={{ mt: 1.5, mb: 1.5 }}>
                   <InputLabel>{t("titleTab.align")}</InputLabel>

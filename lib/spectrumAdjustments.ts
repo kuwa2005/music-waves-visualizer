@@ -66,7 +66,7 @@ export function overlayPercentToModeOffsets(
   adj: ModeAdjustments,
   mode: number
 ): Pick<ModeAdjustments, "offsetX" | "offsetY"> {
-  const clampPct = (v: number) => Math.max(-150, Math.min(150, Math.round(v)));
+  const clampPct = (v: number) => Math.max(-300, Math.min(300, Math.round(v)));
   if (canvasWidth <= 0 || canvasHeight <= 0) {
     return { offsetX: 0, offsetY: 0 };
   }

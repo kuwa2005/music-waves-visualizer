@@ -1,4 +1,5 @@
 import { drawEffectOverlayCanvas, type EffectParams, type AudioReactiveData } from "./Effects";
+import { drawRecordPlayerBackground, drawRecordPlayerOverlay, updateTonearmState, clearRecordPlayerCache } from "./recordPlayer";
 import {
   clearTextOverlayCaches,
   renderSubtitleOverlayCanvas,
@@ -38,6 +39,8 @@ export type SpectrumColorPresetKey = "white" | "cyan" | "magenta" | "green" | "g
 
 export type SpectrumSettings = {
   opacity: number;
+  /** スペアナ感度倍率（0〜2）。0=無反応 */
+  sensitivity: number;
   lineWidthWaveform: number;
   lineWidthCircle: number;
   lineWidthSymWave: number;
@@ -637,6 +640,26 @@ export function stopCanvas2DAnimation(): void {
   drawBarsLastFrameTime = 0;
 }
 
+/** 再生停止時にスペアナのモジュール状態をリセット（2回目再生時の描画遅延防止） */
+export function resetSpectrumRuntimeState(): void {
+  (drawBars as any)._waveFamilyState = undefined;
+  (drawBars as any)._mode15Scope = undefined;
+  (drawBars as any)._mode15ScopeTrail = undefined;
+  (drawBars as any)._mode16Lis = undefined;
+  (drawBars as any)._mode16LisTrail = undefined;
+  (drawBars as any)._glycoPeak = undefined;
+  (drawBars as any)._radialState = undefined;
+  (drawBars as any)._particleSpectrumState = undefined;
+  (drawBars as any)._mode8Pulse = undefined;
+  (drawBars as any)._mode9Vu = undefined;
+  (drawBars as any)._mode10Ring = undefined;
+  (drawBars as any)._mode11Orb = undefined;
+  (drawBars as any)._mode12Bg = undefined;
+  (drawBars as any)._mode13Level = undefined;
+  (drawBars as any)._mode13Particles = undefined;
+  (drawBars as any)._mode14Morph = undefined;
+}
+
 // オフスクリーンキャンバスのキャッシュ（画像処理の最適化）
 interface ImageCache {
   canvas: HTMLCanvasElement;
@@ -826,6 +849,7 @@ export const drawBars = (
 ) => {
   const settings: SpectrumSettings = spectrumSettings ?? {
     opacity: 0.9,
+    sensitivity: 1,
     lineWidthWaveform: 3.2,
     lineWidthCircle: 3.2,
     lineWidthSymWave: 3.6,
@@ -1013,14 +1037,53 @@ export const drawBars = (
     if (imageTimelineFadeAlpha < 0.999) {
       ctx.globalAlpha = imageTimelineFadeAlpha;
     }
-    const offscreenCanvas = drawImageToOffscreen(imageCtx, canvasWidth, canvasHeight);
-    ctx.drawImage(offscreenCanvas, 0, 0);
+    if (effect?.type === "recordPlayer" && (isEffectActive || imageCtx)) {
+      const timing = settings.getPlaybackTiming?.();
+      const elapsedSec = timing?.elapsedSec ?? 0;
+      drawRecordPlayerBackground(
+        ctx,
+        imageCtx,
+        canvasWidth,
+        canvasHeight,
+        effect.recordPlayerRpm ?? 33,
+        effect.recordPlayerDiscStyle ?? "groove",
+        effect.recordPlayerDiscSize ?? "compact",
+        elapsedSec
+      );
+    } else {
+      const offscreenCanvas = drawImageToOffscreen(imageCtx, canvasWidth, canvasHeight);
+      ctx.drawImage(offscreenCanvas, 0, 0);
+    }
     ctx.restore();
+
+    ctx.restore();
+
   } else if (settings.clearBackgroundTransparent) {
     ctx.clearRect(0, 0, canvasWidth, canvasHeight);
   } else {
     ctx.fillStyle = "rgba(34, 34, 34, 1.0)";
     ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+  }
+
+  // recordPlayer ターンテーブルハードウェアオーバーレイ（背景の直後に描画、スペアナより下）
+  if (effect?.type === "recordPlayer" && imageCtx) {
+    ctx.save();
+    if (imageTimelineFadeAlpha < 0.999) {
+      ctx.globalAlpha = imageTimelineFadeAlpha;
+    }
+    const nowMs = performance.now();
+    const deltaMs = Math.min(nowMs - ((drawBars as any)._recordPlayerLastDrawMs ?? 0), 100);
+    (drawBars as any)._recordPlayerLastDrawMs = nowMs;
+
+    // 再生進行度を計算（0〜1）
+    const timing = settings.getPlaybackTiming?.();
+    const playbackProgress = (timing && timing.durationSec > 0)
+      ? Math.min(1, timing.elapsedSec / timing.durationSec)
+      : null;
+    updateTonearmState(!!isEffectActive, playbackProgress, deltaMs);
+
+    drawRecordPlayerOverlay(ctx, canvasWidth, canvasHeight, !!isEffectActive, deltaMs, effect.recordPlayerDiscSize ?? "compact");
+    ctx.restore();
   }
 
   ctx.save();
@@ -1098,6 +1161,8 @@ export const drawBars = (
     mode === 16;
   if (needsSharedFreq) {
     analyser.getByteFrequencyData(freqForEffect);
+    const specSens = settings.sensitivity ?? 1;
+    if (specSens !== 1) { for (let i = 0; i < freqForEffect.length; i++) freqForEffect[i] = Math.max(0, Math.min(255, freqForEffect[i] * specSens)); }
   }
 
   // 音声メトリクス（エフェクト連動用）: 0〜1正規化
@@ -1140,6 +1205,8 @@ export const drawBars = (
     // OFF: スペアナ描画なし。早期 return しない（下の restore → エフェクトと WebGL case -1 を揃える）
   } else if (mode === 0) {
     analyser.getByteFrequencyData(bufferData);
+    const specSens = settings.sensitivity ?? 1;
+    if (specSens !== 1) { for (let i = 0; i < bufferData.length; i++) bufferData[i] = Math.max(0, Math.min(255, bufferData[i] * specSens)); }
     const barsLength = 128;
     const barPitch = canvasWidth / barsLength;
     const barWidth = Math.max(1, barPitch * 0.72);
@@ -1158,6 +1225,8 @@ export const drawBars = (
     }
 } else if (mode === 1) {
     analyser.getByteTimeDomainData(bufferData); //Waveform Data
+    const specSens = settings.sensitivity ?? 1;
+    if (specSens !== 1) { for (let i = 0; i < bufferData.length; i++) { const dev = (bufferData[i] - 128) * specSens; bufferData[i] = Math.max(0, Math.min(255, 128 + dev)); } }
     ctx.strokeStyle = `rgba(${pr}, ${pg}, ${pb}, ${settings.opacity})`;
     ctx.lineWidth = BASE_LINE_WIDTH_WAVEFORM * settings.lineWidthWaveform;
     ctx.beginPath();
@@ -1175,6 +1244,8 @@ export const drawBars = (
     ctx.stroke();
 } else if (mode === 2) {
     analyser.getByteFrequencyData(bufferData); //spectrum data
+    const specSens = settings.sensitivity ?? 1;
+    if (specSens !== 1) { for (let i = 0; i < bufferData.length; i++) bufferData[i] = Math.max(0, Math.min(255, bufferData[i] * specSens)); }
     ctx.fillStyle = `rgba(${pr}, ${pg}, ${pb}, ${settings.opacity})`;
 
     ctx.scale(0.5, 0.5);
@@ -1209,6 +1280,8 @@ export const drawBars = (
   } else if (mode === 3) {
     // モード3: 上下対称バー（横軸は対数周波数ビン＝モード6と同系。線形だと右側がナイキスト寄りで無反応に近くなる）
     analyser.getByteFrequencyData(bufferData);
+    const specSens = settings.sensitivity ?? 1;
+    if (specSens !== 1) { for (let i = 0; i < bufferData.length; i++) bufferData[i] = Math.max(0, Math.min(255, bufferData[i] * specSens)); }
     const barsLength = 128;
     const barWidth = canvasWidth / barsLength;
     const centerY = canvasHeight / 2;
@@ -1247,6 +1320,8 @@ export const drawBars = (
   } else if (mode === 4) {
     // モード4: ドット表示（32列×16行）。列→FFT は対数ビン（グライコと同系）で帯域を横全体に載せる
     analyser.getByteFrequencyData(bufferData);
+    const specSens = settings.sensitivity ?? 1;
+    if (specSens !== 1) { for (let i = 0; i < bufferData.length; i++) bufferData[i] = Math.max(0, Math.min(255, bufferData[i] * specSens)); }
     const dotsPerRow = 32;
     const dotsPerCol = 16;
     const dotSizeX = canvasWidth / dotsPerRow;
@@ -1284,6 +1359,8 @@ export const drawBars = (
   } else if (mode === 5) {
     // モード5: 波形（上下対称）
     analyser.getByteTimeDomainData(bufferData);
+    const specSens = settings.sensitivity ?? 1;
+    if (specSens !== 1) { for (let i = 0; i < bufferData.length; i++) { const dev = (bufferData[i] - 128) * specSens; bufferData[i] = Math.max(0, Math.min(255, 128 + dev)); } }
     ctx.strokeStyle = `rgba(${pr}, ${pg}, ${pb}, ${settings.opacity})`;
     ctx.lineWidth = settings.lineWidthSymWave;
     ctx.beginPath();
@@ -1311,6 +1388,8 @@ export const drawBars = (
   } else if (mode === 15) {
     // モード15: Oscilloscope（発光する波形線）
     analyser.getByteTimeDomainData(bufferData);
+    const specSens = settings.sensitivity ?? 1;
+    if (specSens !== 1) { for (let i = 0; i < bufferData.length; i++) { const dev = (bufferData[i] - 128) * specSens; bufferData[i] = Math.max(0, Math.min(255, 128 + dev)); } }
     const lp = settings.loudnessParams ?? { gain: 1.6, gamma: 0.75, attack: 0.28, release: 0.12 };
     // freqForEffect は常に取っているので音圧はそちらから（見た目強め）
     const target = computeLoudnessTarget(freqForEffect, lp.gamma, lp.gain);
@@ -1380,6 +1459,8 @@ export const drawBars = (
   } else if (mode === 16) {
     // モード16: Lissajous / Spiro（幾何学曲線）
     analyser.getByteTimeDomainData(bufferData);
+    const specSens = settings.sensitivity ?? 1;
+    if (specSens !== 1) { for (let i = 0; i < bufferData.length; i++) { const dev = (bufferData[i] - 128) * specSens; bufferData[i] = Math.max(0, Math.min(255, 128 + dev)); } }
     const lp = settings.loudnessParams ?? { gain: 1.45, gamma: 0.78, attack: 0.26, release: 0.1 };
     const target = computeLoudnessTarget(freqForEffect, lp.gamma, lp.gain);
     const st = (drawBars as any)._mode16Lis ?? { level: 0 };
@@ -1453,6 +1534,8 @@ export const drawBars = (
   } else if (mode === 17 || mode === 18 || mode === 19) {
     analyser.getByteTimeDomainData(bufferData);
     analyser.getByteFrequencyData(freqForEffect);
+    const specSens = settings.sensitivity ?? 1;
+    if (specSens !== 1) { for (let i = 0; i < bufferData.length; i++) { const dev = (bufferData[i] - 128) * specSens; bufferData[i] = Math.max(0, Math.min(255, 128 + dev)); } for (let i = 0; i < freqForEffect.length; i++) freqForEffect[i] = Math.max(0, Math.min(255, freqForEffect[i] * specSens)); }
     const wp = settings.waveFamilyParams ?? {
       height: 0.34,
       width: 0.92,
@@ -1516,6 +1599,8 @@ export const drawBars = (
     ctx.shadowBlur = 0;
   } else if (mode === 20) {
     analyser.getByteFrequencyData(freqForEffect);
+    const specSens = settings.sensitivity ?? 1;
+    if (specSens !== 1) { for (let i = 0; i < freqForEffect.length; i++) freqForEffect[i] = Math.max(0, Math.min(255, freqForEffect[i] * specSens)); }
     const pp = settings.particleSpectrumParams ?? {
       pattern: "soft",
       count: 70,
@@ -1605,6 +1690,8 @@ export const drawBars = (
     (drawBars as any)._particleSpectrumState = state;
   } else if (mode === 21) {
     analyser.getByteFrequencyData(freqForEffect);
+    const specSens = settings.sensitivity ?? 1;
+    if (specSens !== 1) { for (let i = 0; i < freqForEffect.length; i++) freqForEffect[i] = Math.max(0, Math.min(255, freqForEffect[i] * specSens)); }
     const rp = settings.radialSpectrumParams ?? {
       bars: 112,
       length: 0.72,
@@ -1694,6 +1781,8 @@ export const drawBars = (
   } else if (mode === 7) {
     // モード7: 周波数スペクトラム面（下辺固定の塗りつぶし＋上縁ライン）
     analyser.getByteFrequencyData(bufferData);
+    const specSens = settings.sensitivity ?? 1;
+    if (specSens !== 1) { for (let i = 0; i < bufferData.length; i++) bufferData[i] = Math.max(0, Math.min(255, bufferData[i] * specSens)); }
     const barsLength = 128;
     const smoothed = new Float32Array(barsLength);
     for (let i = 0; i < barsLength; i++) {
@@ -1731,6 +1820,8 @@ export const drawBars = (
   } else if (mode === 8) {
     // モード8: 音圧パルス（周波数分解なし、全帯域の音圧でリング/グローが脈動）
     analyser.getByteFrequencyData(bufferData);
+    const specSens = settings.sensitivity ?? 1;
+    if (specSens !== 1) { for (let i = 0; i < bufferData.length; i++) bufferData[i] = Math.max(0, Math.min(255, bufferData[i] * specSens)); }
     const lp = settings.loudnessParams ?? { gain: 1.35, gamma: 0.82, attack: 0.22, release: 0.08 };
     const target = computeLoudnessTarget(bufferData, lp.gamma, lp.gain);
 
@@ -1767,6 +1858,8 @@ export const drawBars = (
   } else if (mode === 9) {
     // モード9: VUメーター（2ch風）+ ピークホールド
     analyser.getByteFrequencyData(bufferData);
+    const specSens = settings.sensitivity ?? 1;
+    if (specSens !== 1) { for (let i = 0; i < bufferData.length; i++) bufferData[i] = Math.max(0, Math.min(255, bufferData[i] * specSens)); }
     const lp = settings.loudnessParams ?? { gain: 1.25, gamma: 0.85, attack: 0.28, release: 0.12 };
     let leftSum = 0;
     let rightSum = 0;
@@ -1812,6 +1905,8 @@ export const drawBars = (
   } else if (mode === 10) {
     // モード10: 円リング脈動（半径/線幅/グロー）
     analyser.getByteFrequencyData(bufferData);
+    const specSens = settings.sensitivity ?? 1;
+    if (specSens !== 1) { for (let i = 0; i < bufferData.length; i++) bufferData[i] = Math.max(0, Math.min(255, bufferData[i] * specSens)); }
     const lp = settings.loudnessParams ?? { gain: 1.35, gamma: 0.82, attack: 0.22, release: 0.08 };
     const target = computeLoudnessTarget(bufferData, lp.gamma, lp.gain);
     const st = (drawBars as any)._mode10Ring ?? { level: 0 };
@@ -1839,6 +1934,8 @@ export const drawBars = (
   } else if (mode === 11) {
     // モード11: 中央オーブ（発光球）
     analyser.getByteFrequencyData(bufferData);
+    const specSens = settings.sensitivity ?? 1;
+    if (specSens !== 1) { for (let i = 0; i < bufferData.length; i++) bufferData[i] = Math.max(0, Math.min(255, bufferData[i] * specSens)); }
     const lp = settings.loudnessParams ?? { gain: 1.4, gamma: 0.8, attack: 0.22, release: 0.08 };
     const target = computeLoudnessTarget(bufferData, lp.gamma, lp.gain);
     const st = (drawBars as any)._mode11Orb ?? { level: 0 };
@@ -1860,6 +1957,8 @@ export const drawBars = (
   } else if (mode === 12) {
     // モード12: 背景ブリージング（明度/彩度）
     analyser.getByteFrequencyData(bufferData);
+    const specSens = settings.sensitivity ?? 1;
+    if (specSens !== 1) { for (let i = 0; i < bufferData.length; i++) bufferData[i] = Math.max(0, Math.min(255, bufferData[i] * specSens)); }
     const lp = settings.loudnessParams ?? { gain: 1.15, gamma: 0.9, attack: 0.18, release: 0.08 };
     const target = computeLoudnessTarget(bufferData, lp.gamma, lp.gain);
     const st = (drawBars as any)._mode12Bg ?? { level: 0 };
@@ -1878,6 +1977,8 @@ export const drawBars = (
   } else if (mode === 13) {
     // モード13: パーティクル密度制御
     analyser.getByteFrequencyData(bufferData);
+    const specSens = settings.sensitivity ?? 1;
+    if (specSens !== 1) { for (let i = 0; i < bufferData.length; i++) bufferData[i] = Math.max(0, Math.min(255, bufferData[i] * specSens)); }
     const lp = settings.loudnessParams ?? { gain: 1.3, gamma: 0.85, attack: 0.22, release: 0.1 };
     const target = computeLoudnessTarget(bufferData, lp.gamma, lp.gain);
     const stL = (drawBars as any)._mode13Level ?? { level: 0 };
@@ -1923,6 +2024,8 @@ export const drawBars = (
   } else if (mode === 14) {
     // モード14: ジオメトリ連続変形（単一形状）
     analyser.getByteFrequencyData(bufferData);
+    const specSens = settings.sensitivity ?? 1;
+    if (specSens !== 1) { for (let i = 0; i < bufferData.length; i++) bufferData[i] = Math.max(0, Math.min(255, bufferData[i] * specSens)); }
     const lp = settings.loudnessParams ?? { gain: 1.25, gamma: 0.86, attack: 0.22, release: 0.1 };
     const target = computeLoudnessTarget(bufferData, lp.gamma, lp.gain);
     const st = (drawBars as any)._mode14Morph ?? { level: 0 };
@@ -2129,7 +2232,8 @@ export const drawBars = (
   ctx.restore();
 
   // エフェクトオーバーレイ（背景→スペアナの上。字幕/UIより下）
-  if (effect && effect.type !== "none") {
+  // recordPlayer は背景描画パスで済むため、他のエフェクトオーバーレイはスキップ
+  if (effect && effect.type !== "none" && effect.type !== "recordPlayer") {
     ctx.save();
     if (imageTimelineFadeAlpha < 0.999) {
       ctx.globalAlpha = imageTimelineFadeAlpha;
