@@ -253,6 +253,7 @@ const SRT_AUTHOR_TIME_REPEAT_INTERVAL_MS = 45;
 /** 動画背景プレビュー時の描画上限。30だとスペクトラムがカクつくため60に引き上げ（録画は RECORDING_MAX_FPS）。 */
 const VIDEO_BACKGROUND_PREVIEW_FPS = 60;
 const RECORDING_MAX_FPS = 60;
+const DEFAULT_PREVIEW_FPS = 60;
 type SrtAuthorCueTimeKey = "startSec" | "endSec";
 
 function normalizeHexColorInput(input: string): string {
@@ -3486,7 +3487,7 @@ const Home: NextPage = () => {
       getTargetFps: () => {
         if (isRecordingRef.current) return RECORDING_MAX_FPS;
         if (backgroundMediaMode === "video") return VIDEO_BACKGROUND_PREVIEW_FPS;
-        return null;
+        return DEFAULT_PREVIEW_FPS;
       },
       screenMotion,
       getPlaybackTiming: () =>

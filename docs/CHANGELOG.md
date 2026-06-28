@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Frame rate instability during preview** ([#43](https://github.com/kuwa2005/music-waves-visualizer/issues/43)): `getTargetFps` returned `null` for normal preview (no recording, no video background), which disabled the frame throttle entirely. Frame rate then followed the browser display refresh rate (e.g. 120 Hz) causing unstable / stuttering visuals. Fixed by returning `DEFAULT_PREVIEW_FPS` (60) as the fallback target.
+
 ### Fixed (2026-06 — rendering & subtitle performance, PR [#41](https://github.com/kuwa2005/music-waves-visualizer/pull/41))
 
 - **WebGL background scratch**: Reuse `bgTempCanvas` / `texSubImage2D` for gallery transitions and `screenMotion` instead of allocating a canvas every frame (`lib/WebGLRenderer.ts`).
