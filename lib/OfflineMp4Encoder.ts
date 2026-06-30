@@ -324,6 +324,16 @@ export class OfflineMp4Encoder {
     });
     this.videoEncoder.configure(configuredVideoConfig);
 
+    // configure() は同期だが、ブラウザ内部で非同期にエラーが発生する場合がある。
+    // 1ティック待ってエラーチェックし、クローズされた状態で encode に入るのを防ぐ。
+    await new Promise((r) => setTimeout(r, 0));
+    if (this.videoEncoderError) {
+      throw this.videoEncoderError;
+    }
+    if (!this.videoEncoder || this.videoEncoder.state !== "configured") {
+      throw new Error("VideoEncoder failed to configure with codec: " + selectedCodec.label);
+    }
+
     const keyFrameInterval = Math.max(1, Math.round(frameRate * 2));
     const startTime = performance.now();
     let lastProgressUpdate = 0;
@@ -383,9 +393,13 @@ export class OfflineMp4Encoder {
       }
     }
 
-    if (this.videoEncoder && this.videoEncoder.state !== "closed") {
-      await this.videoEncoder.flush();
-      this.videoEncoder.close();
+    if (this.videoEncoder) {
+      try {
+        await this.videoEncoder.flush();
+      } catch { /* already closed */ }
+      try {
+        this.videoEncoder.close();
+      } catch { /* already closed */ }
     }
     this.videoEncoder = null;
 
