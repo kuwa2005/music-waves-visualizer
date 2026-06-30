@@ -315,6 +315,12 @@ let lastTime = performance.now();
 /** Canvas 2D オーバーレイ用フレーム間隔（ms） */
 let lastOverlayDrawTime = performance.now();
 
+/** オフラインエンコード開始時に時刻状態をリセット（合成時刻 0 起点） */
+export function resetEffectsTimeState(): void {
+  lastTime = 0;
+  lastOverlayDrawTime = 0;
+}
+
 /**
  * Canvas 2Dで宇宙空間エフェクトを描画
  * @param variant space=従来, spaceConstant=等速, spaceAudio=音源連動
@@ -330,10 +336,14 @@ export function drawSpaceEffectCanvas(
   audio?: AudioReactiveData,
   tintHex?: string,
   centerXNorm: number = 0.5,
-  centerYNorm: number = 0.5
+  centerYNorm: number = 0.5,
+  frameDeltaMs?: number
 ): void {
   const now = performance.now();
-  const deltaTime = Math.min(now - lastTime, 50);
+  const deltaTime =
+    frameDeltaMs != null && frameDeltaMs >= 0
+      ? Math.min(frameDeltaMs, 50)
+      : Math.min(Math.max(now - lastTime, 0), 50);
   lastTime = now;
 
   const particles = updateAndGetSpaceParticles(
@@ -2388,12 +2398,16 @@ export function drawEffectOverlayCanvas(
   width: number,
   height: number,
   effect: EffectParams,
-  audio?: AudioReactiveData
+  audio?: AudioReactiveData,
+  frameDeltaMs?: number
 ): void {
   if (effect.type === "none" || width <= 0 || height <= 0) return;
   const a = audio ?? SILENT_AUDIO_REACTIVE;
   const nowOverlay = performance.now();
-  const overlayDelta = Math.min(Math.max(nowOverlay - lastOverlayDrawTime, 0), 50);
+  const overlayDelta =
+    frameDeltaMs != null && frameDeltaMs >= 0
+      ? Math.min(frameDeltaMs, 50)
+      : Math.min(Math.max(nowOverlay - lastOverlayDrawTime, 0), 50);
   lastOverlayDrawTime = nowOverlay;
   try {
     if (effect.type === "space") {
@@ -2408,7 +2422,8 @@ export function drawEffectOverlayCanvas(
         undefined,
         effect.effectTintColor,
         effect.spaceCenterX ?? 0.5,
-        effect.spaceCenterY ?? 0.5
+        effect.spaceCenterY ?? 0.5,
+        overlayDelta
       );
       return;
     }
@@ -2424,7 +2439,8 @@ export function drawEffectOverlayCanvas(
         undefined,
         effect.effectTintColor,
         effect.spaceCenterX ?? 0.5,
-        effect.spaceCenterY ?? 0.5
+        effect.spaceCenterY ?? 0.5,
+        overlayDelta
       );
       return;
     }
@@ -2440,7 +2456,8 @@ export function drawEffectOverlayCanvas(
         a,
         effect.effectTintColor,
         effect.spaceCenterX ?? 0.5,
-        effect.spaceCenterY ?? 0.5
+        effect.spaceCenterY ?? 0.5,
+        overlayDelta
       );
       return;
     }

@@ -64,17 +64,33 @@ export function estimateActualRecordedSec(
 }
 
 /**
- * MP4 の -t / afade 用秒数。計画長・実録画・WebM プローブのうち有効な最小値。
+ * MP4 の -t / afade 用秒数。
+ * 通常は計画長・実録画・WebM プローブの最小値。
+ * 自然終了（playback_ended 等）で計画尺まで再生した場合は計画長を優先し、
+ * 映像トラックだけ短い誤プローブで切り詰めない。
  */
 export function resolveMp4EncodeDurationSec(
   plannedSec: number,
   actualRecordingSec?: number | null,
-  webmProbeSec?: number | null
+  webmProbeSec?: number | null,
+  snapshot?: RecordEncodeSnapshot | null
 ): number {
-  const caps: number[] = [];
   const planned = sanitizePositiveSec(plannedSec);
   const actual = sanitizePositiveSec(actualRecordingSec);
   const probed = sanitizePositiveSec(webmProbeSec);
+
+  if (snapshot && planned != null) {
+    const naturalEnd =
+      snapshot.stopReason === "playback_ended" ||
+      snapshot.stopReason === "video_ended" ||
+      snapshot.stopReason === "clip_window";
+    const stopAt = snapshotStopAtSec(snapshot);
+    if (naturalEnd && stopAt != null && stopAt >= planned - 0.2) {
+      return planned;
+    }
+  }
+
+  const caps: number[] = [];
   if (planned != null) caps.push(planned);
   if (actual != null) caps.push(actual);
   if (probed != null) caps.push(probed);

@@ -17,11 +17,13 @@ import {
 } from "react";
 import {
   Button,
+  ButtonGroup,
   Accordion,
   AccordionSummary,
   AccordionDetails,
   FormControl,
   InputLabel,
+  Menu,
   MenuItem,
   Select,
   SelectChangeEvent,
@@ -58,6 +60,7 @@ import {
   Undo,
   Lightbulb,
   LightbulbOutlined,
+  ArrowDropDown,
 } from "@mui/icons-material";
 import i18n from "i18next";
 import { CustomSnackbar } from "../components/CustomSnackbar";
@@ -111,6 +114,7 @@ import {
   type QuickEncoderConfig
 } from "../lib/QuickVideoEncoder";
 import { isWebCodecsSupported, checkHardwareEncoderSupport } from "../lib/WebCodecsEncoder";
+import { OfflineMp4Encoder, isOfflineEncodeSupported, type OfflineEncoderProgress } from "../lib/OfflineMp4Encoder";
 import { generateMp4Video, type Mp4AudioFadeEncode } from "../lib/Ffmpeg";
 import {
   estimateActualRecordedSec,
@@ -119,6 +123,8 @@ import {
   type RecordStopReason,
 } from "../lib/mp4EncodeDuration";
 import { imageElementToThumbnailJpeg } from "../lib/mp4Thumbnail";
+import { ensureAudioContextRunning } from "../lib/audioContext";
+import { resolveMediaRecorderMimeType } from "../lib/mediaRecorderMimeType";
 import { mwvError, mwvLog, mwvMilestone } from "../lib/mwvConsole";
 import {
   gateImageFile,
@@ -473,6 +479,15 @@ const Home: NextPage = () => {
   const quickEncoderRef = useRef<QuickVideoEncoder | null>(null);
   const quickEncodeCancelRef = useRef(false);
 
+  // オフラインMP4エンコード関連State
+  const [isOfflineEncoding, setIsOfflineEncoding] = useState<boolean>(false);
+  const [offlineEncodingProgress, setOfflineEncodingProgress] = useState<OfflineEncoderProgress | null>(null);
+  const offlineEncoderRef = useRef<OfflineMp4Encoder | null>(null);
+  const offlineEncodeCancelRef = useRef(false);
+
+  // 動画生成ボタンのスプリットメニュー
+  const [encodeMenuAnchor, setEncodeMenuAnchor] = useState<null | HTMLElement>(null);
+
   // GPU関連State
   const [gpuInfo, setGpuInfo] = useState<GpuInfo | null>(null);
   const [rendererType, setRendererType] = useState<'canvas2d' | 'webgl'>('canvas2d');
@@ -643,13 +658,13 @@ const Home: NextPage = () => {
     if (playbackFrozenTimeSecRef.current != null) {
       return playbackFrozenTimeSecRef.current;
     }
-    if (!isPlaySoundRef.current && !isRecording && !isPlaybackFadingOutRef.current) return 0;
+    if (!isPlaySoundRef.current && !isRecordingRef.current && !isPlaybackFadingOutRef.current) return 0;
     const v = videoElementRef.current;
     if (v && Number.isFinite(v.currentTime)) {
       if (!v.paused) {
         return Math.max(0, v.currentTime);
       }
-      if (isPlaySoundRef.current && !isRecording) {
+      if (isPlaySoundRef.current && !isRecordingRef.current) {
         return Math.max(0, v.currentTime);
       }
     }
@@ -658,7 +673,16 @@ const Home: NextPage = () => {
       return Math.max(0, audioPlaybackOffsetSecRef.current + elapsed);
     }
     return 0;
-  }, [isRecording]);
+  }, []);
+
+  const getIsRecordingActive = useCallback(
+    (): boolean =>
+      isRecordingRef.current &&
+      (isPlaySoundRef.current ||
+        isPlaybackFadingOutRef.current ||
+        mediaRecorderRef.current?.state === "recording"),
+    []
+  );
 
   const syncBackgroundOnlyVideo = useCallback(() => {
     const v = backgroundOnlyVideoRef.current;
@@ -3489,6 +3513,11 @@ const Home: NextPage = () => {
         if (backgroundMediaMode === "video") return VIDEO_BACKGROUND_PREVIEW_FPS;
         return DEFAULT_PREVIEW_FPS;
       },
+      getIsRecordingActive: () =>
+        isRecordingRef.current &&
+        (isPlaySoundRef.current ||
+          isPlaybackFadingOutRef.current ||
+          mediaRecorderRef.current?.state === "recording"),
       screenMotion,
       getPlaybackTiming: () =>
         resolveImageFadePlaybackTiming(
@@ -3976,8 +4005,8 @@ const Home: NextPage = () => {
         );
       const outputDurationSec =
         actualRecordedSec != null && actualRecordedSec > 0
-          ? resolveMp4EncodeDurationSec(plannedSec, actualRecordedSec)
-          : resolveMp4EncodeDurationSec(plannedSec, null);
+          ? resolveMp4EncodeDurationSec(plannedSec, actualRecordedSec, null, snapshot)
+          : resolveMp4EncodeDurationSec(plannedSec, null, null, snapshot);
       const stopAtSec = snapshot ? (snapshot.stopAtSec ?? snapshot.playbackEndSec) : null;
       mwvMilestone("record: MP4 encode duration", {
         recordStopReason: snapshot?.stopReason ?? null,
@@ -3989,7 +4018,7 @@ const Home: NextPage = () => {
       });
       if (!(outputDurationSec > 0)) return null;
       const fadeInSec = parseFadeSecStr(audioFadeInSecStr);
-      if (fadeInSec <= 0 && fadeOutSec <= 0) return null;
+      // フェード無しでも尺メタデータは返す（ffmpeg の -t / -shortest 制御に必要）
       return {
         fadeInSec,
         fadeOutSec,
@@ -3997,6 +4026,8 @@ const Home: NextPage = () => {
         plannedSec,
         actualRecordedSec: actualRecordedSec ?? undefined,
         recordStopReason: snapshot?.stopReason,
+        stopAtSec: stopAtSec ?? undefined,
+        fadeTailSec: snapshot?.fadeTailSec ?? fadeOutSec,
       };
     },
     [
@@ -4660,6 +4691,17 @@ const Home: NextPage = () => {
     clearPlaybackStopFinalizeTimer,
   ]);
 
+  type PlaySoundOptions = {
+    /** 呼び出し元で resume 済みのとき二重 resume を避ける */
+    audioContextAlreadyRunning?: boolean;
+    /** setupAudioSourceForPlayback 直後（start 前）に呼ぶ */
+    onAudioSourceReady?: (node: AudioBufferSourceNode) => void;
+    /** 再生が実際に始まったあと（recorder 起動タイミング用） */
+    onPlaybackStarted?: () => void;
+    /** 再生開始に失敗したとき（録画セットアップの巻き戻し用） */
+    onPlaybackFailed?: () => void;
+  };
+
   const finishVideoWindowPlayback = useCallback(() => {
     if (isRecordingRef.current) {
       saveRecordEncodeSnapshot("clip_window", getCurrentPlaybackTimeSec(), 0);
@@ -4667,8 +4709,22 @@ const Home: NextPage = () => {
     finalizePlaybackStop();
   }, [finalizePlaybackStop, getCurrentPlaybackTimeSec, saveRecordEncodeSnapshot]);
 
+  const scheduleClipWindowStop = useCallback(
+    (clip: ResolvedClip) => {
+      if (clip.full === false && clip.duration > 0) {
+        clearPlaybackWindowTimer();
+        const durationSec = clip.duration;
+        playbackWindowTimerRef.current = window.setTimeout(() => {
+          playbackWindowTimerRef.current = null;
+          finishVideoWindowPlayback();
+        }, durationSec * 1000);
+      }
+    },
+    [clearPlaybackWindowTimer, finishVideoWindowPlayback]
+  );
+
   // PlaySoundEvent
-  const onPlaySound = () => {
+  const onPlaySound = (options?: PlaySoundOptions) => {
     if (isPlaySound || isPlaybackFadingOutRef.current) {
       if (isPlaybackFadingOutRef.current) return;
       if (isRecordingRef.current) {
@@ -4693,51 +4749,96 @@ const Home: NextPage = () => {
       openSnackBar(t("snackbar.shortClipInvalid"));
       return;
     }
-    mwvLog("preview: 再生開始", {
-      clipFull: clip.full,
-      duration: clip.full === false ? clip.duration : "full",
-      hasVideo: Boolean(videoElementRef.current),
-    });
-    setupAudioSourceForPlayback(clip);
 
-    if (videoElementRef.current) {
-      audioPlaybackStartCtxTimeRef.current = null;
-      videoElementRef.current.play().then(() => {
-        applyPlaybackGainFade(clip);
-        if (clip.full === false && clip.duration > 0) {
-          clearPlaybackWindowTimer();
-          const durationSec = clip.duration;
-          playbackWindowTimerRef.current = window.setTimeout(() => {
-            playbackWindowTimerRef.current = null;
-            finishVideoWindowPlayback();
-          }, durationSec * 1000);
-        }
-      });
-    } else if (audioBufferSrcRef.current) {
-      audioPlaybackStartCtxTimeRef.current = audioCtxRef.current.currentTime;
-      if (clip.full === false) {
-        audioBufferSrcRef.current.start(0, clip.start, clip.duration);
-      } else {
-        audioBufferSrcRef.current.start(0);
+    const markPlaybackActive = () => {
+      isPlaySoundRef.current = true;
+      setIsPlaySound(true);
+
+      const canvas = canvasRef.current;
+      if (canvas && subtitleEnabledRef.current && subtitleCuesRef.current.length > 0) {
+        primeSubtitlePrefetch(canvas.width, canvas.height, {
+          enabled: false,
+          getEnabled: () => subtitleEnabledRef.current,
+          cues: EMPTY_SUBTITLE_CUES,
+          getCues: () => subtitleCuesRef.current,
+          getCurrentTimeSec: getCurrentPlaybackTimeSec,
+          style: subtitleStyle,
+          displayTimingOffsetSec: subtitleDisplayTimingOffsetSec,
+        });
       }
-      applyPlaybackGainFade(clip);
-    }
+    };
 
-    isPlaySoundRef.current = true;
-    setIsPlaySound(true);
-
-    const canvas = canvasRef.current;
-    if (canvas && subtitleEnabledRef.current && subtitleCuesRef.current.length > 0) {
-      primeSubtitlePrefetch(canvas.width, canvas.height, {
-        enabled: false,
-        getEnabled: () => subtitleEnabledRef.current,
-        cues: EMPTY_SUBTITLE_CUES,
-        getCues: () => subtitleCuesRef.current,
-        getCurrentTimeSec: getCurrentPlaybackTimeSec,
-        style: subtitleStyle,
-        displayTimingOffsetSec: subtitleDisplayTimingOffsetSec,
+    const beginPlayback = () => {
+      mwvLog("preview: 再生開始", {
+        clipFull: clip.full,
+        duration: clip.full === false ? clip.duration : "full",
+        hasVideo: Boolean(videoElementRef.current),
       });
-    }
+      setupAudioSourceForPlayback(clip);
+
+      if (!videoElementRef.current && audioBufferSrcRef.current) {
+        options?.onAudioSourceReady?.(audioBufferSrcRef.current);
+      }
+
+      if (videoElementRef.current) {
+        audioPlaybackStartCtxTimeRef.current = null;
+        const video = videoElementRef.current;
+        void video.play().then(() => {
+          applyPlaybackGainFade(clip);
+          scheduleClipWindowStop(clip);
+          markPlaybackActive();
+          options?.onPlaybackStarted?.();
+        }).catch((err) => {
+          mwvError("preview: 動画再生開始に失敗", err);
+          openSnackBar("動画の再生を開始できませんでした");
+          options?.onPlaybackFailed?.();
+        });
+        return;
+      }
+
+      if (audioBufferSrcRef.current && audioCtxRef.current) {
+        audioPlaybackStartCtxTimeRef.current = audioCtxRef.current.currentTime;
+        try {
+          if (clip.full === false) {
+            audioBufferSrcRef.current.start(0, clip.start, clip.duration);
+          } else {
+            audioBufferSrcRef.current.start(0);
+          }
+        } catch (err) {
+          mwvError("preview: 音声再生開始に失敗", err);
+          openSnackBar("音声の再生を開始できませんでした");
+          options?.onPlaybackFailed?.();
+          return;
+        }
+        applyPlaybackGainFade(clip);
+        scheduleClipWindowStop(clip);
+        markPlaybackActive();
+        options?.onPlaybackStarted?.();
+        return;
+      }
+
+      mwvError("preview: 再生ソースなし");
+      openSnackBar("再生できる音声・動画がありません");
+      options?.onPlaybackFailed?.();
+    };
+
+    const startPlayback = () => {
+      if (!options?.audioContextAlreadyRunning) {
+        void ensureAudioContextRunning(audioCtxRef.current).then((ok) => {
+          if (!ok) {
+            mwvError("preview: AudioContext resume failed", { state: audioCtxRef.current?.state });
+            openSnackBar("音声出力を開始できませんでした。ブラウザで音声が許可されているか確認してください。");
+            options?.onPlaybackFailed?.();
+            return;
+          }
+          beginPlayback();
+        });
+        return;
+      }
+      beginPlayback();
+    };
+
+    startPlayback();
   };
   onPlaySoundPlaybackRef.current = onPlaySound;
 
@@ -4898,8 +4999,30 @@ const Home: NextPage = () => {
       mode,
       spectrumOpacityPercent,
     });
-    // 録画セットアップ（MediaRecorder初期化）
-    setTimeout(() => {
+
+    // クリック直後に AudioContext を起動（100ms 遅延だとユーザージェスチャーが切れて再生できない）
+    void ensureAudioContextRunning(audioCtxRef.current).then((ctxOk) => {
+      if (!ctxOk) {
+        mwvError("record: AudioContext resume failed", { state: audioCtxRef.current?.state });
+        openSnackBar("音声出力を開始できませんでした。ブラウザで音声が許可されているか確認してください。");
+        return;
+      }
+      if (!canvasRef.current) {
+        openSnackBar(t("snackbar.canvasNotReady"));
+        return;
+      }
+
+      const abortRecordBeforeStart = () => {
+        recordSafeStopRef.current = null;
+        mediaRecorderRef.current = null;
+        setRecordingActive(false);
+        if (isPlaySoundRef.current || isPlaybackFadingOutRef.current) {
+          finalizePlaybackStop();
+        }
+        setRecordMovieDisabled(false);
+      };
+
+      // 録画セットアップ（MediaRecorder初期化）
       const audioStream = streamDestinationRef.current.stream;
       const canvasStream = canvasRef.current.captureStream(RECORDING_MAX_FPS);
       const outputStream = new MediaStream();
@@ -4909,8 +5032,9 @@ const Home: NextPage = () => {
         });
       });
       const videoBps = Math.round(recordVideoBitrateMbps * 1_000_000);
+      const mimeType = resolveMediaRecorderMimeType();
       const recorderOptions: MediaRecorderOptions = {
-        mimeType: "video/webm;codecs=h264",
+        mimeType,
       };
       if (videoBps >= 1_000_000 && videoBps <= 80_000_000) {
         recorderOptions.videoBitsPerSecond = videoBps;
@@ -4921,11 +5045,20 @@ const Home: NextPage = () => {
       try {
         recorder = new MediaRecorder(outputStream, recorderOptions);
       } catch {
-        recorder = new MediaRecorder(outputStream, { mimeType: "video/webm" });
+        try {
+          recorder = new MediaRecorder(outputStream, { mimeType: "video/webm" });
+        } catch {
+          recorder = new MediaRecorder(outputStream);
+        }
       }
       const recordedBlobs: Blob[] = [];
       recorder.addEventListener("dataavailable", (e) => {
-        recordedBlobs.push(e.data);
+        if (e.data.size > 0) {
+          recordedBlobs.push(e.data);
+        }
+      });
+      recorder.addEventListener("error", (event) => {
+        mwvError("record: MediaRecorder error", event);
       });
       const safeStopRecorder = () => {
         if (recorder.state !== "recording") {
@@ -5115,39 +5248,36 @@ const Home: NextPage = () => {
         setRecordMovieDisabled(true);
       };
 
-      // MP4入力時のみ、recorder.start の負荷が再生中に入ると瞬断しやすい。
-      // 先に recorder を起動してから再生を始め、瞬断を再生中に発生させない。
-      if (videoElementRef.current) {
-        startRecorder();
-        window.setTimeout(() => {
-          onPlaySound();
-        }, 120);
-      } else {
-        onPlaySound();
-        if (audioBufferSrcRef.current) {
-          const node = audioBufferSrcRef.current;
-          const priorOnEnded = node.onended;
-          node.onended = (ev: Event) => {
+      // 再生を先に開始してから recorder を起動（AudioContext のユーザー操作要件・0:00 停止を回避）
+      onPlaySound({
+        audioContextAlreadyRunning: true,
+        onAudioSourceReady: (node) => {
+          node.onended = () => {
             mwvMilestone("record: 音声再生終了（録画停止へ）");
             saveRecordEncodeSnapshot("playback_ended", getCurrentPlaybackTimeSec(), 0);
-            try {
-              if (typeof priorOnEnded === "function") {
-                priorOnEnded.call(node, ev);
-              }
-            } catch {
-              /* ignore */
-            }
+            audioPlaybackStartCtxTimeRef.current = null;
             safeStopRecorder();
             setRecordingActive(false);
             isPlaySoundRef.current = false;
             setIsPlaySound(false);
           };
-        } else {
-          mwvError("record: 音声のみ録画だが audioBufferSrcRef が無い（onPlaySound 後）");
-        }
-        window.setTimeout(startRecorder, 80);
-      }
-    }, 100); // 100ms待機して録画用canvasのアニメーション開始を保証
+        },
+        onPlaybackStarted: () => {
+          window.setTimeout(() => {
+            if (!isPlaySoundRef.current) {
+              mwvError("record: 再生が開始されなかったため録画を中止");
+              abortRecordBeforeStart();
+              return;
+            }
+            startRecorder();
+          }, 80);
+        },
+        onPlaybackFailed: () => {
+          mwvError("record: 再生開始に失敗したため録画を中止");
+          abortRecordBeforeStart();
+        },
+      });
+    });
   };
 
   const onQuickEncodeMovie = async () => {
@@ -5287,6 +5417,153 @@ const Home: NextPage = () => {
     openSnackBar("高速生成をキャンセルしています...");
   };
 
+  // オフラインMP4エンコード（プレビュー停止・高速出力）
+  const onOfflineEncodeMovie = async () => {
+    if (!decodedAudioBufferRef.current) {
+      openSnackBar("音声ファイルが読み込まれていません");
+      return;
+    }
+
+    if (!isOfflineEncodeSupported()) {
+      openSnackBar("お使いのブラウザはオフラインエンコードに対応していません");
+      return;
+    }
+
+    const audioBuffer = decodedAudioBufferRef.current;
+
+    // プレビューを停止
+    if (isPlaySoundRef.current) {
+      isPlaySoundRef.current = false;
+      setIsPlaySound(false);
+      if (audioBufferSrcRef.current) {
+        try { audioBufferSrcRef.current.stop(0); } catch { /* ignore */ }
+        audioBufferSrcRef.current = null;
+      }
+    }
+
+    offlineEncodeCancelRef.current = false;
+    setIsOfflineEncoding(true);
+    setOfflineEncodingProgress({
+      stage: "analyzing",
+      progress: 0,
+      message: "準備中...",
+    });
+
+    try {
+      const { width, height } = getCanvasDimensions(activeCanvasLayout);
+      const clip = resolvePlaybackWindow();
+      const encoderConfig = {
+        width,
+        height,
+        frameRate: 60,
+        videoBitrate: Math.round(recordVideoBitrateMbps * 1_000_000),
+        mode,
+        adjustments: modeAdjustments,
+        backgroundImage: imageCtx,
+        effect: effectForCanvas,
+        // クリップ範囲
+        clipStartSec: !clip.full && "start" in clip ? clip.start : undefined,
+        clipDurationSec: !clip.full && "duration" in clip ? clip.duration : undefined,
+        // 音声フェード
+        audioFadeInSec: parseFadeSecStr(audioFadeInSecStr),
+        audioFadeOutSec: parseFadeSecStr(audioFadeOutSecStr),
+        spectrumSettings: {
+          opacity: 1 - spectrumOpacityPercent / 100,
+          sensitivity: spectrumSensitivity,
+          lineWidthWaveform,
+          lineWidthCircle,
+          lineWidthSymWave,
+          dotSizeLevel,
+          circleRotationRpm,
+          glycoColorSet,
+          glycoRotationDeg,
+          spectrumColorHex,
+          spectrumRainbowColorful,
+          loudnessParams: loudnessParamsByMode[mode],
+          wmpTrailParams: wmpTrailParamsByMode[mode],
+          waveFamilyParams,
+          particleSpectrumParams,
+          radialSpectrumParams,
+          retroEqParams,
+          subtitleOverlay: subtitleEnabled && subtitleCuesRef.current.length > 0 ? {
+            enabled: true,
+            cues: (() => {
+              const clipOffset = !clip.full && "start" in clip ? clip.start : 0;
+              return clipOffset > 0
+                ? subtitleCuesRef.current.map(c => ({ ...c, startSec: c.startSec - clipOffset, endSec: c.endSec - clipOffset }))
+                : subtitleCuesRef.current;
+            })(),
+            style: subtitleStyle,
+            displayTimingOffsetSec: subtitleDisplayTimingOffsetSec,
+            getCurrentTimeSec: () => 0,
+          } : undefined,
+          titleOverlay: titleEnabled && titleText ? {
+            enabled: true,
+            text: titleText,
+            style: titleStyle,
+            isPlaying: true,
+            playbackTimeSec: 0,
+          } : undefined,
+          screenMotion,
+        },
+      };
+
+      const encoder = new OfflineMp4Encoder(encoderConfig, (progress) => {
+        if (!offlineEncodeCancelRef.current) {
+          setOfflineEncodingProgress(progress);
+        }
+      });
+      offlineEncoderRef.current = encoder;
+
+      const { blob: outputBlob, format } = await encoder.encode(audioBuffer, audioCtxRef.current!);
+
+      if (offlineEncodeCancelRef.current || encoder.isCancelled()) {
+        throw new Error("Cancelled");
+      }
+
+      if (format !== "mp4") {
+        throw new Error("offline_encode_not_mp4");
+      }
+
+      if (!outputBlob || outputBlob.size < 8192) {
+        throw new Error(`empty_output (${outputBlob?.size ?? 0} bytes)`);
+      }
+
+      // ダウンロード
+      const movieBase = "movie_offline_" + Math.random().toString(36).slice(-8);
+      const downloadFileName = buildDownloadMp4Name(audioFileName, movieBase);
+      const objectURL = URL.createObjectURL(outputBlob);
+      const a = document.createElement("a");
+      a.href = objectURL;
+      a.download = downloadFileName;
+      a.click();
+      a.remove();
+
+      const formatMsg = "MP4";
+      openSnackBar(`${formatMsg}の生成が完了しました`);
+    } catch (error) {
+      if (error instanceof Error && error.message === "Cancelled") {
+        openSnackBar("オフラインエンコードをキャンセルしました");
+      } else {
+        mwvError("offline-encode error", error);
+        const msg = (error as Error).message || "unknown_error";
+        openSnackBar(t("snackbar.convertFailed", { error: msg }));
+      }
+    } finally {
+      offlineEncodeCancelRef.current = false;
+      offlineEncoderRef.current?.cleanup();
+      offlineEncoderRef.current = null;
+      setIsOfflineEncoding(false);
+      setOfflineEncodingProgress(null);
+    }
+  };
+
+  const onCancelOfflineEncode = () => {
+    offlineEncodeCancelRef.current = true;
+    offlineEncoderRef.current?.cancel();
+    openSnackBar("オフラインエンコードをキャンセルしています...");
+  };
+
   // クリア（ページロード時の状態に戻す）
   const onClear = () => {
     ++loadSubtitleSeqRef.current;
@@ -5303,6 +5580,13 @@ const Home: NextPage = () => {
     quickEncoderRef.current = null;
     setIsQuickEncoding(false);
     setQuickEncodingProgress(null);
+    offlineEncodeCancelRef.current = true;
+    offlineEncoderRef.current?.cancel();
+    offlineEncoderRef.current?.cleanup();
+    offlineEncoderRef.current = null;
+    setIsOfflineEncoding(false);
+    setOfflineEncodingProgress(null);
+    setEncodeMenuAnchor(null);
     disposeStandaloneBackgroundVideo();
     setBackgroundMediaMode("none");
     setBackgroundVideoFileName("");
@@ -6733,6 +7017,8 @@ const Home: NextPage = () => {
                             max={0.95}
                             step={0.01}
                             onChange={(_, v) => setSpaceCenterX(v as number)}
+                            onPointerDown={beginSpaceCenterGuide}
+                            onPointerUp={endSpaceCenterGuide}
                           />
                           <Typography variant="caption" color="textSecondary" display="block">
                             {t("effect.spaceCenterY", { value: Math.round(spaceCenterY * 100) })}
@@ -6743,6 +7029,8 @@ const Home: NextPage = () => {
                             max={0.92}
                             step={0.01}
                             onChange={(_, v) => setSpaceCenterY(v as number)}
+                            onPointerDown={beginSpaceCenterGuide}
+                            onPointerUp={endSpaceCenterGuide}
                           />
                         </Box>
                         <Box sx={{ width: "100%", maxWidth: 440, mt: 2, mx: "auto" }}>
@@ -7980,6 +8268,34 @@ const Home: NextPage = () => {
                   label={t("subtitle.showOnScreen")}
                   sx={{ mb: 1.5, display: "flex", alignItems: "center" }}
                 />
+                <Box
+                  sx={{
+                    mb: 1.5,
+                    p: 1.2,
+                    border: "1px solid",
+                    borderColor: "divider",
+                    borderRadius: 1,
+                    fontSize: 12,
+                    lineHeight: 1.6,
+                  }}
+                >
+                  <Typography variant="caption" sx={{ fontWeight: 600, display: "block", mb: 0.5 }}>
+                    {t("subtitle.sunoBookmarklet")}
+                  </Typography>
+                  <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 0.5 }}>
+                    {t("subtitle.sunoBookmarkletHint")}
+                  </Typography>
+                  <Typography variant="caption">
+                    <a
+                      href="https://kuwa2005.github.io/suno-line-srt-bookmarklet/"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{ color: "#1976d2" }}
+                    >
+                      https://kuwa2005.github.io/suno-line-srt-bookmarklet/
+                    </a>
+                  </Typography>
+                </Box>
                 <Box sx={{ display: "flex", gap: 1, alignItems: "center", flexWrap: "wrap", mb: 1.5 }}>
                   <Button variant="outlined" component="label" size="small">
                     {t("subtitle.selectSrt")}
@@ -7992,13 +8308,15 @@ const Home: NextPage = () => {
                 </Box>
                 <Box
                   sx={{
-                    border: "1px dashed",
-                    borderColor: "divider",
+                    border: "2px dashed",
+                    borderColor: "primary.main",
                     borderRadius: 1,
                     p: 1.2,
                     mb: 1.5,
                     fontSize: 12,
                     color: "text.secondary",
+                    backgroundColor: "action.hover",
+                    textAlign: "center",
                   }}
                   onDragOver={(e) => e.preventDefault()}
                   onDrop={async (e) => {
@@ -8995,7 +9313,7 @@ const Home: NextPage = () => {
                 ref={canvasRef}
                 data-size={activeCanvasLayout}
               ></canvas>
-              {isSpaceEffect && showSpaceCenterGuide && (
+              {isSpaceEffect && (
                 <div className={styles.spaceCenterGuideLayer}>
                   <div
                     className={styles.spaceCenterGuideDot}
@@ -9043,26 +9361,99 @@ const Home: NextPage = () => {
             />
           </Box>
 
+          {isOfflineEncoding && offlineEncodingProgress && (
+            <Box sx={{ width: "100%", mt: 2, mb: 1, p: 1.5, borderRadius: 1, bgcolor: "action.hover" }}>
+              <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", mb: 0.5 }}>
+                <Typography variant="body2" color="textSecondary" sx={{ fontWeight: 500 }}>
+                  {offlineEncodingProgress.message}
+                </Typography>
+                <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
+                  {offlineEncodingProgress.progress > 5 && offlineEncodingProgress.fps != null && (
+                    <Typography variant="caption" color="textSecondary" sx={{ fontFamily: "monospace" }}>
+                      {offlineEncodingProgress.fps} fps
+                    </Typography>
+                  )}
+                  {offlineEncodingProgress.progress > 0 && offlineEncodingProgress.progress <= 5 && (
+                    <Typography variant="caption" color="textSecondary" sx={{ fontFamily: "monospace" }}>
+                      計測中
+                    </Typography>
+                  )}
+                  <Typography variant="body2" color="textSecondary" sx={{ fontWeight: 600, minWidth: 40, textAlign: "right" }}>
+                    {Math.round(offlineEncodingProgress.progress)}%
+                  </Typography>
+                </Box>
+              </Box>
+              <LinearProgress
+                variant="determinate"
+                value={offlineEncodingProgress.progress}
+                sx={{ height: 6, borderRadius: 3, mb: 1 }}
+                color="secondary"
+              />
+              <Box sx={{ display: "flex", justifyContent: "flex-end" }}>
+                <Button
+                  variant="outlined"
+                  color="error"
+                  size="small"
+                  onClick={onCancelOfflineEncode}
+                  sx={{ textTransform: "none", fontSize: "0.75rem" }}
+                >
+                  キャンセル
+                </Button>
+              </Box>
+            </Box>
+          )}
+
           <div className={`${styles.menu__right} mt-3 rounded-xl bg-slate-50/70 p-3 dark:bg-slate-800/80`}>
             <Box sx={{ display: "flex", gap: 1.5, justifyContent: "center", flexWrap: "wrap", mt: 1 }}>
             <Button
               variant="outlined"
               startIcon={<VideoLibrary />}
               disabled={playSoundDisabled || isQuickEncoding || isPlaybackFadingOut}
-              onClick={onPlaySound}
+              onClick={() => onPlaySound()}
               size="medium"
             >
               {isPlaySound || isPlaybackFadingOut ? t("buttons.stop") : t("buttons.preview")}
             </Button>
-            <Button
-              variant="outlined"
-              startIcon={<FiberManualRecord />}
-              disabled={recordMovieDisabled || isPlaySound || isQuickEncoding}
-              onClick={onRecordMovie}
-              size="medium"
+            <ButtonGroup variant="outlined" disabled={recordMovieDisabled || isPlaySound || isQuickEncoding || isOfflineEncoding}>
+              <Button
+                startIcon={<FiberManualRecord />}
+                onClick={onRecordMovie}
+                size="medium"
+                sx={{ minWidth: 200 }}
+              >
+                {t("buttons.generateVideo")}
+              </Button>
+              <Button
+                size="medium"
+                aria-label="エンコードオプション"
+                onClick={(e) => setEncodeMenuAnchor(e.currentTarget)}
+                sx={{ px: 0.75 }}
+              >
+                <ArrowDropDown />
+              </Button>
+            </ButtonGroup>
+            <Menu
+              anchorEl={encodeMenuAnchor}
+              open={Boolean(encodeMenuAnchor)}
+              onClose={() => setEncodeMenuAnchor(null)}
             >
-              {t("buttons.generateVideo")}
-            </Button>
+              <MenuItem onClick={() => { setEncodeMenuAnchor(null); onRecordMovie(); }}>
+                <FiberManualRecord sx={{ mr: 1, fontSize: 18 }} />
+                {t("buttons.generateVideo")}
+              </MenuItem>
+              <MenuItem
+                onClick={() => { setEncodeMenuAnchor(null); onOfflineEncodeMovie(); }}
+                disabled={!isOfflineEncodeSupported()}
+              >
+                <VideoLibrary sx={{ mr: 1, fontSize: 18 }} />
+                <Box>
+                  <Typography variant="body2">{t("buttons.offlineEncode")}</Typography>
+                  <Typography variant="caption" color="textSecondary">
+                    {t("buttons.offlineEncodeDesc")}
+                  </Typography>
+                </Box>
+              </MenuItem>
+            </Menu>
             <Button
               variant="outlined"
               color="inherit"

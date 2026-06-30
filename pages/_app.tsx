@@ -2,7 +2,10 @@ import Head from "next/head";
 import type { AppProps } from "next/app";
 import React, { useEffect, useMemo } from "react";
 import "../styles/globals.scss";
+import { MaintenanceBanner } from "../components/MaintenanceBanner";
 import i18n from "../lib/i18n";
+import { MAINTENANCE_MODE } from "../lib/maintenance";
+import { MAINTENANCE_BANNER_HEIGHT_PX } from "../components/MaintenanceBanner";
 import { mwvError } from "../lib/mwvConsole";
 
 const assetBasePath: string = process.env.NEXT_PUBLIC_ASSET_BASE_PATH ?? "";
@@ -113,7 +116,16 @@ const App = ({ Component, pageProps }: AppProps) => {
         <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLd }} />
       </Head>
 
-      <Component {...pageProps} />
+      <MaintenanceBanner />
+      <div
+        style={
+          MAINTENANCE_MODE
+            ? { paddingTop: MAINTENANCE_BANNER_HEIGHT_PX }
+            : undefined
+        }
+      >
+        <Component {...pageProps} />
+      </div>
     </>
   );
 };

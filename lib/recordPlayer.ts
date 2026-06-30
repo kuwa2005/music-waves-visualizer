@@ -78,6 +78,7 @@ export function clearRecordPlayerCache(): void {
   state.armLowerStartTimeMs = 0;
   state.armIsLowered = false;
   state.wasPlaying = false;
+  state.lastTimestampMs = 0;
 }
 
 function getImageKey(image: HTMLImageElement): string {

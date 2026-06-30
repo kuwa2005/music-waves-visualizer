@@ -134,11 +134,83 @@ declare global {
     static isConfigSupported(config: VideoDecoderConfig): Promise<{ supported: boolean; config: VideoDecoderConfig }>;
   }
 
+  // AudioEncoder
+  interface AudioEncoderConfig {
+    codec: string;
+    sampleRate: number;
+    numberOfChannels: number;
+    bitrate?: number;
+  }
+
+  interface AudioEncoderSupport {
+    supported: boolean;
+    config: AudioEncoderConfig;
+  }
+
+  interface EncodedAudioChunkMetadata {
+    decoderConfig?: {
+      codec: string;
+      sampleRate: number;
+      numberOfChannels: number;
+      description?: BufferSource;
+    };
+  }
+
+  interface AudioEncoderInit {
+    output: (chunk: EncodedAudioChunk, metadata?: EncodedAudioChunkMetadata) => void;
+    error: (error: Error) => void;
+  }
+
+  class AudioEncoder {
+    constructor(init: AudioEncoderInit);
+    configure(config: AudioEncoderConfig): void;
+    encode(data: AudioData): void;
+    flush(): Promise<void>;
+    close(): void;
+    reset(): void;
+    readonly state: 'unconfigured' | 'configured' | 'closed';
+    readonly encodeQueueSize: number;
+    static isConfigSupported(config: AudioEncoderConfig): Promise<AudioEncoderSupport>;
+  }
+
+  interface AudioDataInit {
+    format: 'f32-planar' | 'f32' | 's16' | 's16-planar' | 's32' | 's32-planar' | 'u8' | 'u8-planar';
+    sampleRate: number;
+    numberOfFrames: number;
+    numberOfChannels: number;
+    timestamp: number;
+    data: BufferSource;
+  }
+
+  class AudioData {
+    constructor(init: AudioDataInit);
+    close(): void;
+  }
+
+  interface EncodedAudioChunkInit {
+    type: 'key' | 'delta';
+    timestamp: number;
+    duration?: number;
+    data: BufferSource;
+  }
+
+  class EncodedAudioChunk {
+    constructor(init: EncodedAudioChunkInit);
+    readonly type: 'key' | 'delta';
+    readonly timestamp: number;
+    readonly duration: number | null;
+    readonly byteLength: number;
+    copyTo(destination: BufferSource): void;
+  }
+
   // Window interface extension
   interface Window {
     VideoEncoder: typeof VideoEncoder;
     VideoDecoder: typeof VideoDecoder;
     VideoFrame: typeof VideoFrame;
     EncodedVideoChunk: typeof EncodedVideoChunk;
+    AudioEncoder: typeof AudioEncoder;
+    AudioData: typeof AudioData;
+    EncodedAudioChunk: typeof EncodedAudioChunk;
   }
 }

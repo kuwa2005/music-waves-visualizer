@@ -2312,7 +2312,8 @@ export const drawBarsWebGL = (
   latestAnalyser = analyser;
   latestAdjustments = adjustments;
   latestEffect = effect;
-  latestEffectActive = isEffectActive ?? false;
+  latestEffectActive =
+    (isEffectActive ?? false) || spectrumSettings?.getIsRecordingActive?.() === true;
   latestSpectrumSettings = spectrumSettings;
 
   // 既にアニメーション中: パラメータ更新後すぐ1フレーム描画（offset/scale 変更を即反映）

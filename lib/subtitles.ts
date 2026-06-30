@@ -37,7 +37,7 @@ export const DEFAULT_SUBTITLE_STYLE: SubtitleStyle = {
   displayType: "outline",
   color: "#FFFFFF",
   fontSize: 42,
-  fontFamily: "sans-serif",
+  fontFamily: "\"Noto Sans CJK JP\", \"Noto Sans KR\", \"Noto Sans SC\", \"Noto Sans TC\", \"Hiragino Sans\", \"Yu Gothic\", \"Microsoft YaHei\", \"Malgun Gothic\", sans-serif",
   bold: true,
   italic: false,
   strokeColor: "#000000",

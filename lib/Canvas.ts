@@ -87,12 +87,16 @@ export type SpectrumSettings = {
   getTargetFps?: () => number | null | undefined;
   /** targetFps / getTargetFps を適用するかをフレームごとに判定する。 */
   isTargetFpsEnabled?: () => boolean;
+  /** オフライン描画時のフレーム間隔（ms）。未指定時は再生タイムラインまたは 60fps 基準。 */
+  getFrameDeltaMs?: () => number;
   /** 画面タブ: 静止画背景モーション・演出 */
   screenMotion?: ScreenMotionSettings;
   /** モーション進行用の再生位置 */
   getPlaybackTiming?: () => PlaybackTiming;
   /** 早期停止中の画像フェード状態 */
   getStopGracefulImageFade?: () => import("./screenMotion").StopGracefulImageFade | null;
+  /** 録画中は再生停止後も captureStream 用に描画ループを維持 */
+  getIsRecordingActive?: () => boolean;
   /** 波形型ビジュアライザー（mode17-19） */
   waveFamilyParams?: {
     height: number;
@@ -171,6 +175,29 @@ export function resolveSpectrumTargetFps(settings: SpectrumSettings): number | n
   if (settings.isTargetFpsEnabled?.() === false) return null;
   const targetFps = settings.getTargetFps ? settings.getTargetFps() : settings.targetFps;
   return typeof targetFps === "number" && targetFps > 0 ? targetFps : null;
+}
+
+const SPECTRUM_REFERENCE_FRAME_MS = 1000 / SPECTRUM_THROTTLE_TARGET_FPS;
+
+let spectrumTimelineLastSec: number | undefined;
+
+/** 減衰・パーティクル更新用のフレーム間隔（ms）。オフラインは固定間隔、プレビューは再生時刻差分。 */
+export function resolveSpectrumFrameDeltaMs(settings: SpectrumSettings): number {
+  if (settings.getFrameDeltaMs) {
+    return Math.max(0, Math.min(100, settings.getFrameDeltaMs()));
+  }
+  const timing = settings.getPlaybackTiming?.();
+  if (timing && Number.isFinite(timing.elapsedSec)) {
+    const prev = spectrumTimelineLastSec ?? timing.elapsedSec;
+    const deltaSec = Math.max(0, timing.elapsedSec - prev);
+    spectrumTimelineLastSec = timing.elapsedSec;
+    return Math.min(100, deltaSec * 1000);
+  }
+  return SPECTRUM_REFERENCE_FRAME_MS;
+}
+
+export function resetSpectrumTimelineState(): void {
+  spectrumTimelineLastSec = undefined;
 }
 
 export function updateSpectrumFrameThrottle(
@@ -658,6 +685,7 @@ export function resetSpectrumRuntimeState(): void {
   (drawBars as any)._mode13Level = undefined;
   (drawBars as any)._mode13Particles = undefined;
   (drawBars as any)._mode14Morph = undefined;
+  resetSpectrumTimelineState();
 }
 
 // オフスクリーンキャンバスのキャッシュ（画像処理の最適化）
@@ -920,6 +948,7 @@ export const drawBars = (
       backgroundDimAmount: 0,
     },
   };
+  const effectActive = Boolean(isEffectActive) || settings.getIsRecordingActive?.() === true;
   const scheduleNextFrame = () => {
     animationFrameId = requestAnimationFrame(function () {
       drawBars(canvas, imageCtx, mode, analyser, adjustments, effect, isEffectActive, spectrumSettings);
@@ -973,7 +1002,7 @@ export const drawBars = (
   if (
     imageCtx &&
     analyser &&
-    isEffectActive &&
+    effectActive &&
     settings.screenMotion &&
     (settings.screenMotion.brightnessOnPeak ||
       settings.screenMotion.shakeOnChorus ||
@@ -1037,7 +1066,7 @@ export const drawBars = (
     if (imageTimelineFadeAlpha < 0.999) {
       ctx.globalAlpha = imageTimelineFadeAlpha;
     }
-    if (effect?.type === "recordPlayer" && (isEffectActive || imageCtx)) {
+    if (effect?.type === "recordPlayer" && (effectActive || imageCtx)) {
       const timing = settings.getPlaybackTiming?.();
       const elapsedSec = timing?.elapsedSec ?? 0;
       drawRecordPlayerBackground(
@@ -1080,16 +1109,16 @@ export const drawBars = (
     const playbackProgress = (timing && timing.durationSec > 0)
       ? Math.min(1, timing.elapsedSec / timing.durationSec)
       : null;
-    updateTonearmState(!!isEffectActive, playbackProgress, deltaMs);
+    updateTonearmState(!!effectActive, playbackProgress, deltaMs);
 
-    drawRecordPlayerOverlay(ctx, canvasWidth, canvasHeight, !!isEffectActive, deltaMs, effect.recordPlayerDiscSize ?? "compact");
+    drawRecordPlayerOverlay(ctx, canvasWidth, canvasHeight, !!effectActive, deltaMs, effect.recordPlayerDiscSize ?? "compact");
     ctx.restore();
   }
 
   ctx.save();
 
   // プレビュー/録画中のみスペクトラム＆エフェクトを描画（停止中は背景のみ・負荷なし）
-  if (!isEffectActive) {
+  if (!effectActive) {
     ctx.restore();
     return;
   }
@@ -1113,10 +1142,12 @@ export const drawBars = (
   }
 
   // 折れ線/波形モード: スペアナ本体のみ間引く（エフェクト・字幕は毎フレーム＝WebGLと同じ）
+  // オフライン描画（isTargetFpsEnabled=false）では合成時刻で毎フレーム描画
+  const skipModeSpectrumThrottle = settings.isTargetFpsEnabled?.() === false;
   const now = performance.now();
   const interval = 1000 / SPECTRUM_THROTTLE_TARGET_FPS;
   let skipSpectrumDraw = false;
-  if (mode === 1) {
+  if (!skipModeSpectrumThrottle && mode === 1) {
     const last = (drawBars as any)._lastTimeMode1 ?? 0;
     if (now - last < interval) {
       skipSpectrumDraw = true;
@@ -1124,7 +1155,7 @@ export const drawBars = (
       (drawBars as any)._lastTimeMode1 = now;
     }
   }
-  if (mode === 5) {
+  if (!skipModeSpectrumThrottle && mode === 5) {
     const last = (drawBars as any)._lastTimeMode5 ?? 0;
     if (now - last < interval) {
       skipSpectrumDraw = true;
@@ -1622,10 +1653,8 @@ export const drawBars = (
     const mid = bandEnergy(freqForEffect, 56, 220) * pp.midRatio;
     const high = bandEnergy(freqForEffect, 220, Math.min(freqForEffect.length, 640)) * pp.highRatio;
     const energy = Math.min(1.8, (low * 0.45 + mid * 0.35 + high * 0.35) * Math.max(0.25, pp.boost));
-    const state = (drawBars as any)._particleSpectrumState ?? { arr: [] as any[], lastMs: performance.now() };
-    const now2 = performance.now();
-    const dt = Math.min(40, now2 - state.lastMs);
-    state.lastMs = now2;
+    const state = (drawBars as any)._particleSpectrumState ?? { arr: [] as any[] };
+    const dt = Math.min(40, resolveSpectrumFrameDeltaMs(settings));
     const baseCount = Math.max(8, Math.min(300, Math.round(pp.count * (0.2 + energy))));
     while (state.arr.length < baseCount) {
       state.arr.push({
@@ -1716,12 +1745,14 @@ export const drawBars = (
     const kickBand = bandEnergy(freqForEffect, 2, 28) * rp.lowSensitivity;
     const st = (drawBars as any)._radialState ?? { pulse: 0, rot: 0, kickBurst: 0 };
     const release = Math.max(0.02, Math.min(0.3, rp.returnSpeed));
-    st.pulse += (kickBand - st.pulse) * 0.35;
-    st.kickBurst = Math.max(0, st.kickBurst - (0.05 + release * 0.9));
+    const frameScale =
+      resolveSpectrumFrameDeltaMs(settings) / SPECTRUM_REFERENCE_FRAME_MS;
+    st.pulse += (kickBand - st.pulse) * 0.35 * frameScale;
+    st.kickBurst = Math.max(0, st.kickBurst - (0.05 + release * 0.9) * frameScale);
     if (kickBand > 0.34 && kickBand > st.pulse * 0.98) {
       st.kickBurst = Math.max(st.kickBurst, Math.min(1, (kickBand - 0.34) * 2.4));
     }
-    st.rot += (rp.rotate ? rp.rotateSpeed : 0) * 0.0032;
+    st.rot += (rp.rotate ? rp.rotateSpeed : 0) * 0.0032 * frameScale;
     (drawBars as any)._radialState = st;
     const kickImpulse = st.kickBurst * st.kickBurst;
     const pulseScale = 1 + (st.pulse * 0.35 + kickImpulse) * rp.kickScale;
@@ -2247,7 +2278,7 @@ export const drawBars = (
         weatherAmount: effect.weatherAmount != null ? effect.weatherAmount * 0.78 : effect.weatherAmount,
       };
     }
-    drawEffectOverlayCanvas(ctx, canvasWidth, canvasHeight, effectForOverlay, getAudioReactive());
+    drawEffectOverlayCanvas(ctx, canvasWidth, canvasHeight, effectForOverlay, getAudioReactive(), resolveSpectrumFrameDeltaMs(settings));
     ctx.restore();
   }
 
@@ -2273,4 +2304,128 @@ export const drawBars = (
   }
 
   return scheduleNextFrame();
+};
+
+/**
+ * オフライン用の1フレーム同期描画。
+ * drawBars と同等の描画を行うが、requestAnimationFrame に依存しない。
+ * analyser にはフレームごとの周波数/波形データを事前にセットしておくこと。
+ */
+export function renderFrameSync(
+  canvas: HTMLCanvasElement,
+  imageCtx: HTMLImageElement | null,
+  mode: number,
+  analyser: AnalyserNode,
+  adjustments?: ModeAdjustments,
+  effect?: EffectParams,
+  isEffectActive?: boolean,
+  spectrumSettings?: SpectrumSettings
+): void {
+  const settings: SpectrumSettings = spectrumSettings ?? {
+    opacity: 0.9,
+    sensitivity: 1,
+    lineWidthWaveform: 3.2,
+    lineWidthCircle: 3.2,
+    lineWidthSymWave: 3.6,
+  };
+
+  const ctx = canvas.getContext("2d", {
+    alpha: true,
+    desynchronized: false,
+    willReadFrequently: false,
+  });
+  if (!ctx) return;
+
+  const canvasWidth = canvas.width;
+  const canvasHeight = canvas.height;
+
+  const adj = adjustments || { scaleX: 1.0, scaleY: 1.0, offsetX: 0, offsetY: 0 };
+
+  // 背景描画
+  ctx.fillStyle = "rgba(34, 34, 34, 1.0)";
+  ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+
+  if (imageCtx) {
+    const rawWidth = imageCtx.naturalWidth || imageCtx.width || 1;
+    const rawHeight = imageCtx.naturalHeight || imageCtx.height || 1;
+    const scale = Math.max(canvasWidth / rawWidth, canvasHeight / rawHeight);
+    ctx.drawImage(
+      imageCtx,
+      0, 0, rawWidth, rawHeight,
+      (canvasWidth - rawWidth * scale) / 2,
+      (canvasHeight - rawHeight * scale) / 2,
+      rawWidth * scale,
+      rawHeight * scale
+    );
+  }
+
+  // スペクトラム描画
+  const [pr, pg, pb] = getSpectrumPrimaryRgb(settings);
+  const visualOpacity = getVisualOpacity(settings.opacity);
+  const offsetXPixels = (canvasWidth * adj.offsetX) / 100;
+  const offsetYPixels = (canvasHeight * adj.offsetY) / 100;
+
+  ctx.save();
+  ctx.translate(canvasWidth / 2 + offsetXPixels, canvasHeight / 2 + offsetYPixels);
+  ctx.scale(adj.scaleX, adj.scaleY);
+  ctx.translate(-canvasWidth / 2, -canvasHeight / 2);
+
+  const bufferLength = analyser.frequencyBinCount;
+  const bufferData = new Uint8Array(bufferLength);
+
+  if (mode === 0) {
+    analyser.getByteFrequencyData(bufferData);
+    const barsLength = 128;
+    const barPitch = canvasWidth / barsLength;
+    const barWidth = Math.max(1, barPitch * 0.72);
+    for (let i = 0; i < barsLength; i++) {
+      const g = spectrumLinearBarLowGain(i, barsLength);
+      const barHeight = Math.min(255, bufferData[i] * g);
+      const barX = i * barPitch;
+      const barY = canvasHeight - barHeight;
+      ctx.fillStyle = `rgba(${pr}, ${pg}, ${pb}, ${0.84 * visualOpacity})`;
+      ctx.fillRect(barX, barY, barWidth, barHeight);
+    }
+  } else if (mode === 1) {
+    analyser.getByteTimeDomainData(bufferData);
+    ctx.strokeStyle = `rgba(${pr}, ${pg}, ${pb}, ${settings.opacity})`;
+    ctx.lineWidth = BASE_LINE_WIDTH_WAVEFORM * settings.lineWidthWaveform;
+    ctx.beginPath();
+    const centerY = canvasHeight / 2;
+    const scaleY = canvasHeight / 2 / 128;
+    for (let i = 0; i < bufferLength; i++) {
+      const x = (i / bufferLength) * canvasWidth;
+      const y = centerY - (bufferData[i] - 128) * scaleY;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  } else if (mode === 2) {
+    analyser.getByteFrequencyData(bufferData);
+    ctx.fillStyle = `rgba(${pr}, ${pg}, ${pb}, ${settings.opacity})`;
+    ctx.save();
+    ctx.scale(0.5, 0.5);
+    ctx.translate(canvasWidth, canvasHeight);
+    const bass = Math.floor(bufferData[1]);
+    const radius = -(bass * 0.25 + 200);
+    for (let i = 0; i < 256; i++) {
+      if (bufferData[i] > 0) {
+        ctx.fillRect(0, radius, BASE_LINE_WIDTH_CIRCLE * settings.lineWidthCircle, -bufferData[i]);
+        ctx.rotate(((180 / 128) * Math.PI) / 180);
+      }
+    }
+    ctx.restore();
+  } else {
+    // その他のモード: 簡易バー
+    analyser.getByteFrequencyData(bufferData);
+    const barsLength = 128;
+    const barPitch = canvasWidth / barsLength;
+    for (let i = 0; i < barsLength; i++) {
+      const barHeight = (bufferData[i] / 255) * canvasHeight;
+      const hue = (i / barsLength) * 360;
+      ctx.fillStyle = `hsl(${hue}, 100%, 50%)`;
+      ctx.fillRect(i * barPitch, canvasHeight - barHeight, barPitch - 1, barHeight);
+    }
+  }
+
+  ctx.restore();
 };

@@ -38,6 +38,17 @@ describe("resolveMp4EncodeDurationSec", () => {
     expect(resolveMp4EncodeDurationSec(120, 90, 100)).toBe(90);
   });
 
+  it("自然終了時は計画長を優先する", () => {
+    expect(
+      resolveMp4EncodeDurationSec(10, 10, 7, {
+        stopReason: "playback_ended",
+        stopAtSec: 10,
+        fadeTailSec: 0,
+        playbackEndSec: 10,
+      })
+    ).toBe(10);
+  });
+
   it("ignores null/undefined/invalid values", () => {
     expect(resolveMp4EncodeDurationSec(60, null, undefined)).toBe(60);
   });

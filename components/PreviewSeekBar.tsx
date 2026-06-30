@@ -64,9 +64,15 @@ export function PreviewSeekBar({
       video.addEventListener("seeked", bump);
     }
     let raf = 0;
-    if ((isPlaySound || isPlaybackFadingOut) && !video) {
+    if ((isPlaySound || isPlaybackFadingOut || isRecording) && !video) {
       const loop = () => {
-        if (isPlaySoundRef.current || isPlaybackFadingOutRef.current) bump();
+        if (
+          isPlaySoundRef.current ||
+          isPlaybackFadingOutRef.current ||
+          isRecording
+        ) {
+          bump();
+        }
         raf = requestAnimationFrame(loop);
       };
       raf = requestAnimationFrame(loop);
@@ -82,6 +88,7 @@ export function PreviewSeekBar({
     playSoundDisabled,
     isPlaySound,
     isPlaybackFadingOut,
+    isRecording,
     audioFileName,
     videoRef,
     isPlaySoundRef,

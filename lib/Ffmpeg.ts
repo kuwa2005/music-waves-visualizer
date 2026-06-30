@@ -3,6 +3,8 @@ import { buildFfmpegAfadeFilter } from "./clipAudioFade";
 import {
   parseFfmpegDurationFromLogs,
   resolveMp4EncodeDurationSec,
+  type RecordEncodeSnapshot,
+  type RecordStopReason,
 } from "./mp4EncodeDuration";
 import { MP4_THUMB_MAX_LONG_EDGE } from "./mp4Thumbnail";
 import { mwvError, mwvLog, mwvMilestone, mwvVerbose, mwvWarn } from "./mwvConsole";
@@ -15,7 +17,9 @@ export type Mp4AudioFadeEncode = {
   outputDurationSec: number;
   plannedSec?: number;
   actualRecordedSec?: number;
-  recordStopReason?: string;
+  recordStopReason?: RecordStopReason;
+  stopAtSec?: number;
+  fadeTailSec?: number;
 };
 
 function buildMp4AudioFilterChain(
@@ -39,6 +43,11 @@ function buildMp4AudioFilterChain(
 function sanitizeTrimDurationSec(outputDurationSec: number): number {
   if (!Number.isFinite(outputDurationSec) || outputDurationSec <= 0) return 0;
   return outputDurationSec;
+}
+
+function mp4RemuxTailArgs(trimSec: number): string[] {
+  // 明示 -t があるときは -shortest を付けない（映像トラックが短い誤検出で音声を切らない）
+  return trimSec > 0 ? [] : ["-shortest"];
 }
 
 function mp4EncodeInputArgs(
@@ -375,8 +384,17 @@ export async function generateMp4Video(
     const plannedSec = sanitizeTrimDurationSec(audioFade?.plannedSec ?? audioFade?.outputDurationSec ?? 0);
     const webmProbeSec = await probeInputDurationSec(ffmpeg, webmName);
     const actualHint = audioFade?.actualRecordedSec ?? null;
+    const encodeSnapshot: RecordEncodeSnapshot | null =
+      audioFade?.recordStopReason != null && audioFade.stopAtSec != null
+        ? {
+            stopReason: audioFade.recordStopReason,
+            stopAtSec: audioFade.stopAtSec,
+            fadeTailSec: audioFade.fadeTailSec ?? 0,
+            playbackEndSec: audioFade.stopAtSec,
+          }
+        : null;
     const trimSec = audioFade
-      ? resolveMp4EncodeDurationSec(plannedSec, actualHint, webmProbeSec)
+      ? resolveMp4EncodeDurationSec(plannedSec, actualHint, webmProbeSec, encodeSnapshot)
       : 0;
     const afadeSegmentSec = trimSec > 0 ? trimSec : 0;
     const encodeAudioFade: Mp4AudioFadeEncode | null =
@@ -420,7 +438,7 @@ export async function generateMp4Video(
           "aac",
           "-b:a",
           ab,
-          "-shortest",
+          ...mp4RemuxTailArgs(trimSec),
           mp4Name,
         ]);
       } catch (error) {
@@ -429,7 +447,7 @@ export async function generateMp4Video(
           ...mp4EncodeInputArgs(webmName, trimSec),
           "-vcodec",
           "copy",
-          "-shortest",
+          ...mp4RemuxTailArgs(trimSec),
           mp4Name,
         ]);
       }
@@ -438,7 +456,7 @@ export async function generateMp4Video(
         ...mp4EncodeInputArgs(webmName, trimSec),
         "-vcodec",
         "copy",
-        "-shortest",
+        ...mp4RemuxTailArgs(trimSec),
         mp4Name,
       ]);
     }
