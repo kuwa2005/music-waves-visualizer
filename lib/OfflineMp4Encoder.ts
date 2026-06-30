@@ -351,7 +351,15 @@ export class OfflineMp4Encoder {
       );
       const videoFrame = await this.captureVideoFrame(canvas, timestamp, durationUs);
       try {
-        this.videoEncoder!.encode(videoFrame, { keyFrame: frameIdx % keyFrameInterval === 0 });
+        if (this.videoEncoderError) {
+          videoFrame.close();
+          throw this.videoEncoderError;
+        }
+        if (!this.videoEncoder || this.videoEncoder.state !== "configured") {
+          videoFrame.close();
+          throw new Error("VideoEncoder is not in configured state");
+        }
+        this.videoEncoder.encode(videoFrame, { keyFrame: frameIdx % keyFrameInterval === 0 });
         encodedVideoFrames++;
       } catch (encodeErr) {
         videoFrame.close();
@@ -489,10 +497,12 @@ export class OfflineMp4Encoder {
   private async drainVideoEncoder(): Promise<void> {
     const enc = this.videoEncoder;
     if (!enc || enc.state !== "configured") return;
+    if (this.videoEncoderError) return;
     while (enc.encodeQueueSize > ENCODER_QUEUE_HIGH_WATER) {
+      if (this.videoEncoderError || enc.state !== "configured") return;
       await new Promise<void>((resolve) => {
         const pump = () => {
-          if (!this.videoEncoder || this.videoEncoder.state !== "configured" || this.videoEncoder.encodeQueueSize <= ENCODER_QUEUE_HIGH_WATER) {
+          if (!this.videoEncoder || this.videoEncoder.state !== "configured" || this.videoEncoderError || this.videoEncoder.encodeQueueSize <= ENCODER_QUEUE_HIGH_WATER) {
             resolve();
           } else {
             requestAnimationFrame(pump);
