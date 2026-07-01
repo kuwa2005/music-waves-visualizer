@@ -526,3 +526,98 @@ export async function generateMp4Video(
     }
   }
 }
+
+/**
+ * 非 H.264 MP4 を H.264 に再エンコードする（SNS 互換性確保用）
+ */
+export async function reencodeMp4ToH264(
+  mp4Data: Uint8Array,
+  callbacks?: EncodeProgressCallbacks
+): Promise<Uint8Array> {
+  const { onLoadStart, onLoadComplete, onProgress } = callbacks || {};
+  mwvMilestone("ffmpeg: reencode to H.264 start", { mp4Bytes: mp4Data.byteLength });
+
+  const ffmpeg = new FFmpeg();
+  const ffmpegAny = ffmpeg as any;
+  const inputName = "input_reencode.mp4";
+  const outputName = "output_h264.mp4";
+  let ratioFromFfmpeg = 0;
+  let runStartedAtMs = 0;
+  let smoothedDisplay = 0;
+  let progressTick: number | null = null;
+
+  const emitMergedProgress = () => {
+    if (!onProgress || runStartedAtMs <= 0) return;
+    const elapsedSec = (performance.now() - runStartedAtMs) / 1000;
+    const t = Math.min(1, elapsedSec / 30);
+    const timeRatio = Math.min(0.88, 0.9 * Math.pow(t, 0.48));
+    const target = Math.max(ratioFromFfmpeg, timeRatio);
+    const blend = target - smoothedDisplay > 0.22 ? 0.2 : 0.14;
+    smoothedDisplay += (target - smoothedDisplay) * blend;
+    smoothedDisplay = Math.max(0, Math.min(0.9, smoothedDisplay));
+    onProgress(smoothedDisplay);
+  };
+
+  if (typeof ffmpegAny.on === "function") {
+    if (mwvVerbose()) {
+      ffmpegAny.on("log", ({ message }: { message?: string }) => {
+        if (message) mwvLog("ffmpeg reencode:", message);
+      });
+    }
+    ffmpegAny.on("progress", ({ progress }: { progress?: number }) => {
+      if (typeof progress === "number" && Number.isFinite(progress)) {
+        ratioFromFfmpeg = Math.max(ratioFromFfmpeg, capFfmpegRatioForMerge(progress));
+      }
+      emitMergedProgress();
+    });
+  }
+
+  try {
+    onLoadStart?.();
+    const selectedUrls = await resolveFfmpegCoreUrls();
+    await ffmpeg.load({
+      coreURL: selectedUrls.coreURL,
+      wasmURL: selectedUrls.wasmURL,
+      ...(selectedUrls.workerURL ? { workerURL: selectedUrls.workerURL } : {}),
+    });
+    onLoadComplete?.();
+
+    await ffmpeg.writeFile(inputName, mp4Data);
+
+    ratioFromFfmpeg = 0;
+    smoothedDisplay = 0;
+    runStartedAtMs = performance.now();
+    if (onProgress) {
+      progressTick = window.setInterval(emitMergedProgress, 400);
+      emitMergedProgress();
+    }
+
+    await execFfmpeg(ffmpeg, [
+      "-i", inputName,
+      "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency", "-crf", "23",
+      "-c:a", "copy",
+      "-movflags", "+faststart",
+      outputName,
+    ]);
+
+    onProgress?.(0.99);
+    const fileData = await ffmpeg.readFile(outputName);
+    const result = readFfmpegBytes(fileData as Uint8Array | string);
+
+    if (!isLikelyValidMp4(result)) {
+      throw new Error("invalid_h264_output");
+    }
+
+    onProgress?.(1);
+    mwvMilestone("ffmpeg: reencode to H.264 done", { mp4Bytes: result.length });
+    return result;
+  } catch (error) {
+    mwvError("ffmpeg: reencode to H.264 failed", error);
+    throw error;
+  } finally {
+    if (progressTick != null) {
+      window.clearInterval(progressTick);
+    }
+    try { ffmpeg.terminate(); } catch { /* ignore */ }
+  }
+}

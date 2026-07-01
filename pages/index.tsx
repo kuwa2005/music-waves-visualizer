@@ -115,7 +115,7 @@ import {
 } from "../lib/QuickVideoEncoder";
 import { isWebCodecsSupported, checkHardwareEncoderSupport } from "../lib/WebCodecsEncoder";
 import { OfflineMp4Encoder, isOfflineEncodeSupported, type OfflineEncoderProgress } from "../lib/OfflineMp4Encoder";
-import { generateMp4Video, type Mp4AudioFadeEncode } from "../lib/Ffmpeg";
+import { generateMp4Video, reencodeMp4ToH264, type Mp4AudioFadeEncode } from "../lib/Ffmpeg";
 import {
   estimateActualRecordedSec,
   resolveMp4EncodeDurationSec,
@@ -5515,7 +5515,7 @@ const Home: NextPage = () => {
       });
       offlineEncoderRef.current = encoder;
 
-      const { blob: outputBlob, format } = await encoder.encode(audioBuffer, audioCtxRef.current!);
+      const { blob: outputBlob, format, codec } = await encoder.encode(audioBuffer, audioCtxRef.current!);
 
       if (offlineEncodeCancelRef.current || encoder.isCancelled()) {
         throw new Error("Cancelled");
@@ -5529,10 +5529,26 @@ const Home: NextPage = () => {
         throw new Error(`empty_output (${outputBlob?.size ?? 0} bytes)`);
       }
 
+      let finalBlob = outputBlob;
+      if (codec !== "avc") {
+        setOfflineEncodingProgress({ stage: "finalizing", progress: 0, message: "H.264 に変換中..." });
+        mwvMilestone("offline-encode: non-H.264 codec detected, re-encoding", { codec });
+        const mp4Array = new Uint8Array(await outputBlob.arrayBuffer());
+        const h264Array = await reencodeMp4ToH264(mp4Array, {
+          onProgress: (ratio) => {
+            setOfflineEncodingProgress({ stage: "finalizing", progress: Math.round(ratio * 100), message: "H.264 に変換中..." });
+          },
+        });
+        if (offlineEncodeCancelRef.current || encoder.isCancelled()) {
+          throw new Error("Cancelled");
+        }
+        finalBlob = new Blob([new Uint8Array(h264Array)], { type: "video/mp4" });
+      }
+
       // ダウンロード
       const movieBase = "movie_offline_" + Math.random().toString(36).slice(-8);
       const downloadFileName = buildDownloadMp4Name(audioFileName, movieBase);
-      const objectURL = URL.createObjectURL(outputBlob);
+      const objectURL = URL.createObjectURL(finalBlob);
       const a = document.createElement("a");
       a.href = objectURL;
       a.download = downloadFileName;

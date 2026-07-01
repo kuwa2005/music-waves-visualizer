@@ -119,7 +119,7 @@ export class OfflineMp4Encoder {
   async encode(
     audioBuffer: AudioBuffer,
     audioContext: AudioContext
-  ): Promise<{ blob: Blob; format: "mp4" | "webm" }> {
+  ): Promise<{ blob: Blob; format: "mp4" | "webm"; codec: "avc" | "vp9" | "av1" }> {
     const { width, height, frameRate, videoBitrate, mode, adjustments, backgroundImage, effect, spectrumSettings } = this.config;
     const { clipStartSec, clipDurationSec, audioFadeInSec, audioFadeOutSec } = this.config;
 
@@ -247,7 +247,7 @@ export class OfflineMp4Encoder {
     audioDurationUs: number;
     audioBuffer: AudioBuffer;
     audioContext: AudioContext;
-  }): Promise<{ blob: Blob; format: "mp4" | "webm" }> {
+  }): Promise<{ blob: Blob; format: "mp4" | "webm"; codec: "avc" | "vp9" | "av1" }> {
     const {
       canvas, mockAnalyser, frequencyFrames, timeDomainFrames,
       backgroundImage, mode, adjustments, effect, spectrumSettings,
@@ -434,7 +434,7 @@ export class OfflineMp4Encoder {
     });
     this.onProgress?.({ stage: "finalizing", progress: 100, message: "完了" });
 
-    return { blob: mp4Blob, format: "mp4" };
+    return { blob: mp4Blob, format: "mp4", codec: selectedCodec.muxerCodec };
   }
 
   private async findSupportedVideoEncoderConfig(
