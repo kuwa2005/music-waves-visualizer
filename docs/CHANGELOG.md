@@ -2,35 +2,35 @@
 
 ## [Unreleased]
 
-### Added
+### 追加
 
-- **Subtitle X offset** (`lib/subtitles.ts`, `pages/index.tsx`): Position X offset slider (0–10%) for subtitles, stored independently per alignment (left/center/right). Prevents text from clipping at canvas edges when using left or right alignment.
+- **字幕の位置オフセット(X)** (`lib/subtitles.ts`, `pages/index.tsx`): 字幕の水平位置オフセットスライダー（0〜10%）を追加。左/中央/右の揃え方向ごとに独立した値を保存。左寄せ・右寄せ時にテキストがキャンバス端からはみ出す問題を防止。
 
-### Fixed
+### 修正
 
-- **Frame rate instability during preview** ([#43](https://github.com/kuwa2005/music-waves-visualizer/issues/43)): `getTargetFps` returned `null` for normal preview (no recording, no video background), which disabled the frame throttle entirely. Frame rate then followed the browser display refresh rate (e.g. 120 Hz) causing unstable / stuttering visuals. Fixed by returning `DEFAULT_PREVIEW_FPS` (60) as the fallback target.
+- **プレビュー時のフレームレート不安定化** ([#43](https://github.com/kuwa2005/music-waves-visualizer/issues/43)): 通常プレビュー（録画・動画背景なし）で `getTargetFps` が `null` を返し、フレームスロットルが無効化。フレームレートがブラウザのディスプレイリフレッシュレート（例: 120 Hz）に追従し、視覚的に不安定になっていた。`DEFAULT_PREVIEW_FPS`（60）をフォールバックとして返すよう修正。
 
-### Fixed (2026-06 — rendering & subtitle performance, PR [#41](https://github.com/kuwa2005/music-waves-visualizer/pull/41))
+### 修正（2026-06 — レンダリング・字幕パフォーマンス、PR [#41](https://github.com/kuwa2005/music-waves-visualizer/pull/41)）
 
-- **WebGL background scratch**: Reuse `bgTempCanvas` / `texSubImage2D` for gallery transitions and `screenMotion` instead of allocating a canvas every frame (`lib/WebGLRenderer.ts`).
-- **FFT scratch buffers**: Canvas 2D and WebGL share per-frame `Uint8Array` reuse for `getByteFrequencyData` (`canvasFft*Scratch` / `fft*Scratch`).
-- **Water droplet WebGL**: `waterRipple` droplet lines batched into a single draw call via `LineBatch` (`lib/WebGLRenderer.ts`).
-- **Video background preview**: 30 fps throttle; mode 6 retro EQ no longer fetches FFT twice per frame when effects are off.
-- **Subtitle architecture** (`lib/subtitles.ts`, `lib/WebGLRenderer.ts`, `pages/index.tsx`):
-  - Layer cache + idle **prefetch** of the next cue; WebGL **dual-slot** texture upload with idle prefetch.
-  - **Binary search** + hint for active-cue lookup; `parseSrtAsync` with streaming yield for large SRT.
-  - **`loadSubtitleSeqRef`** sequence guard on async parse / author-panel apply.
-  - SRT load no longer restarts preview animation unnecessarily.
-- **Developer mode metrics**: Settings tab shows subtitle layer build, prefetch, and WebGL subtitle/title texture upload ms (1 s refresh). See [DEVELOPER_MODE.md](./DEVELOPER_MODE.md).
+- **WebGL背景のスクラッチ**: ギャラリー切替・`screenMotion` で毎フレームキャンバス生成 Instead、`bgTempCanvas` / `texSubImage2D` を再利用（`lib/WebGLRenderer.ts`）。
+- **FFTスクラッチバッファ**: Canvas 2D と WebGL がフレームごとの `Uint8Array` 再利用を共有（`canvasFft*Scratch` / `fft*Scratch`）。
+- **水滴WebGL**: `waterRipple` のドロップレット行を `LineBatch` で単一DrawCallにバッチ化（`lib/WebGLRenderer.ts`）。
+- **動画背景プレビュー**: 30fps スロットル；モード6 retro EQ がエフェクトOFF時にFFTを2重取得する問題を修正。
+- **字幕アーキテクチャ** (`lib/subtitles.ts`, `lib/WebGLRenderer.ts`, `pages/index.tsx`):
+  - レイヤーキャッシュ + 次のキューのアイドル**プリフェッチ**；WebGL**デュアルスロット**テクスチャアップロード。
+  - **バイナリサーチ** + ヒントによるアクティブキュー検索；大容量SRT向け `parseSrtAsync` ストリーミングyield。
+  - `loadSubtitleSeqRef` シーケンスガード（非同期パース / 編集パネル適用）。
+  - SRT読み込み時にプレビューアニメーションを不必要に再開しないよう修正。
+- **開発者モード指標**: 設定タブで字幕レイヤー構築・プリフェッチ・WebGL字幕/タイトルテクスチャアップロードのミリ秒表示（1秒更新）。→ [DEVELOPER_MODE.md](./DEVELOPER_MODE.md)
 
-### Documentation
+### ドキュメント
 
-- [SESSION_20260601.md](./SESSION_20260601.md) §2026-06-13, [DEVELOPER_MODE.md](./DEVELOPER_MODE.md) (subtitle/title perf HUD).
+- [SESSION_20260601.md](./SESSION_20260601.md) §2026-06-13、[DEVELOPER_MODE.md](./DEVELOPER_MODE.md)（字幕/タイトルperf HUD）。
 
-### Known / deferred (open issues)
+### 既知の問題（未解決）
 
-- [#34](https://github.com/kuwa2005/music-waves-visualizer/issues/34) — separate audio/video MP4 sync drift (unchanged scope).
-- [#36](https://github.com/kuwa2005/music-waves-visualizer/issues/36) — WebGL video background (still Canvas 2D fallback).
+- [#34](https://github.com/kuwa2005/music-waves-visualizer/issues/34) — 映像/音声MP4の同期ドリフト（変更なし）。
+- [#36](https://github.com/kuwa2005/music-waves-visualizer/issues/36) — WebGL動画背景（まだCanvas 2Dフォールバック）。
 - Remaining perf backlog: `filmGrain` per-frame `createImageData`, `mirrorBall` WebGL draw-call count — [#42](https://github.com/kuwa2005/music-waves-visualizer/issues/42).
 
 ## [1.0.6] - 2026-06-05
