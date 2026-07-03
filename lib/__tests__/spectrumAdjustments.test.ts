@@ -6,6 +6,9 @@ import {
   overlayPercentToModeOffsets,
   getSpectrumPivotOverlayPercent,
   getSpaceCenterOverlayPercent,
+  canvasOverlayPercentToStageStyle,
+  clientPointToCanvasOverlayPercent,
+  type PreviewGuideLayoutRects,
 } from "../spectrumAdjustments";
 import type { ModeAdjustments } from "../Canvas";
 
@@ -105,5 +108,56 @@ describe("getSpaceCenterOverlayPercent", () => {
     const pct = getSpaceCenterOverlayPercent(1, 1);
     expect(pct.leftPercent).toBe(95);
     expect(pct.topPercent).toBeCloseTo(92);
+  });
+});
+
+describe("canvasOverlayPercentToStageStyle", () => {
+  const centeredLayout: PreviewGuideLayoutRects = {
+    stageWidth: 800,
+    stageHeight: 500,
+    canvasOffsetX: 80,
+    canvasOffsetY: 0,
+    canvasDisplayWidth: 640,
+    canvasDisplayHeight: 360,
+  };
+
+  it("maps canvas center to stage position when canvas is narrower and centered", () => {
+    const style = canvasOverlayPercentToStageStyle(50, 50, centeredLayout);
+    expect(parseFloat(style.left)).toBeCloseTo(50);
+    expect(parseFloat(style.top)).toBeCloseTo(36);
+  });
+
+  it("maps canvas origin to canvas offset on stage", () => {
+    const style = canvasOverlayPercentToStageStyle(0, 0, centeredLayout);
+    expect(parseFloat(style.left)).toBeCloseTo(10);
+    expect(parseFloat(style.top)).toBeCloseTo(0);
+  });
+
+  it("matches canvas percent when stage and canvas share the same box", () => {
+    const layout: PreviewGuideLayoutRects = {
+      stageWidth: 480,
+      stageHeight: 270,
+      canvasOffsetX: 0,
+      canvasOffsetY: 0,
+      canvasDisplayWidth: 480,
+      canvasDisplayHeight: 270,
+    };
+    const style = canvasOverlayPercentToStageStyle(25, 75, layout);
+    expect(parseFloat(style.left)).toBeCloseTo(25);
+    expect(parseFloat(style.top)).toBeCloseTo(75);
+  });
+});
+
+describe("clientPointToCanvasOverlayPercent", () => {
+  const canvasRect = { left: 100, top: 50, width: 400, height: 200 };
+
+  it("maps pointer at canvas center", () => {
+    const pct = clientPointToCanvasOverlayPercent(300, 150, canvasRect);
+    expect(pct?.leftPercent).toBeCloseTo(50);
+    expect(pct?.topPercent).toBeCloseTo(50);
+  });
+
+  it("returns null for zero-sized canvas", () => {
+    expect(clientPointToCanvasOverlayPercent(0, 0, { left: 0, top: 0, width: 0, height: 0 })).toBeNull();
   });
 });

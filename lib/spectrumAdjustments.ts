@@ -105,3 +105,58 @@ export function getSpaceCenterOverlayPercent(
   const y = Math.max(0.08, Math.min(0.92, centerYNorm));
   return { leftPercent: x * 100, topPercent: y * 100 };
 }
+
+/** プレビュー stage 内での canvas 表示矩形（stage 左上基準） */
+export type PreviewGuideLayoutRects = {
+  stageWidth: number;
+  stageHeight: number;
+  canvasOffsetX: number;
+  canvasOffsetY: number;
+  canvasDisplayWidth: number;
+  canvasDisplayHeight: number;
+};
+
+export function getPreviewGuideLayoutRects(
+  stageEl: HTMLElement,
+  canvasEl: HTMLElement
+): PreviewGuideLayoutRects | null {
+  const stageRect = stageEl.getBoundingClientRect();
+  const canvasRect = canvasEl.getBoundingClientRect();
+  if (stageRect.width <= 0 || stageRect.height <= 0) return null;
+  if (canvasRect.width <= 0 || canvasRect.height <= 0) return null;
+  return {
+    stageWidth: stageRect.width,
+    stageHeight: stageRect.height,
+    canvasOffsetX: canvasRect.left - stageRect.left,
+    canvasOffsetY: canvasRect.top - stageRect.top,
+    canvasDisplayWidth: canvasRect.width,
+    canvasDisplayHeight: canvasRect.height,
+  };
+}
+
+/** キャンバス論理座標（0..100%）→ stage オーバーレイ上の % 位置 */
+export function canvasOverlayPercentToStageStyle(
+  leftPercent: number,
+  topPercent: number,
+  layout: PreviewGuideLayoutRects
+): { left: string; top: string } {
+  const x = layout.canvasOffsetX + (leftPercent / 100) * layout.canvasDisplayWidth;
+  const y = layout.canvasOffsetY + (topPercent / 100) * layout.canvasDisplayHeight;
+  return {
+    left: `${(x / layout.stageWidth) * 100}%`,
+    top: `${(y / layout.stageHeight) * 100}%`,
+  };
+}
+
+/** ポインタ位置 → キャンバス論理座標（0..100%） */
+export function clientPointToCanvasOverlayPercent(
+  clientX: number,
+  clientY: number,
+  canvasRect: Pick<DOMRect, "left" | "top" | "width" | "height">
+): { leftPercent: number; topPercent: number } | null {
+  if (canvasRect.width <= 0 || canvasRect.height <= 0) return null;
+  return {
+    leftPercent: ((clientX - canvasRect.left) / canvasRect.width) * 100,
+    topPercent: ((clientY - canvasRect.top) / canvasRect.height) * 100,
+  };
+}

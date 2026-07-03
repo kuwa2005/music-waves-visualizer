@@ -1,38 +1,33 @@
 /**
  * レコードプレイヤー（ターンテーブル）エフェクトの描画ロジック。
+ * 画像参照: 真上から見た長方形ベースのターンテーブル。
  */
 
 export type RecordPlayerRpm = number;
 export type DiscStyle = "full" | "groove";
-export type DiscSize = "compact" | "edge";
+export type DiscSize = "donut" | "7inch" | "10inch" | "12inch";
+export type RecordPlayerColorScheme = "dark" | "light";
 
 const rpmToDegPerSec = (rpm: number): number => (rpm * 360) / 60;
 
 const DISC_RADIUS_BY_SIZE: Record<DiscSize, number> = {
-  compact: 0.35,
-  edge: 0.48,
+  "donut": 0.19,
+  "7inch": 0.22,
+  "10inch": 0.30,
+  "12inch": 0.36,
 };
-const BASE_RADIUS_BY_SIZE: Record<DiscSize, number> = {
-  compact: 0.48,
-  edge: 0.56,
+const DISC_HOLE_RATIO_BY_SIZE: Record<DiscSize, number> = {
+  "donut": 0.35,
+  "7inch": 0.20,
+  "10inch": 0.02,
+  "12inch": 0.02,
 };
 const PLATTER_RADIUS_RATIO = 1.08;
-
-const TONEARM_REF_RADIUS_RATIO = 0.35;
-
-// ピボット: ターンテーブル本体の右上（レコードの外）
-/** ピボット: compact基準で固定（edgeでも同じ位置） */
-const ARM_PIVOT_X = 0.90;
-const ARM_PIVOT_Y = -0.88;
-// カウンターウェイト（ピボットの後方）
-const ARM_COUNTERWEIGHT_X = -0.18;
-const ARM_COUNTERWEIGHT_Y = -0.12;
+const GROOVE_INNER_RADIUS_RATIO = 0.45;
 
 const TONEARM_LERP_SPEED = 2.5;
-/** 針が降りるまでの時間（秒） */
-const ARM_LOWER_DELAY_SEC = 1.5;
-/** 曲終了後に針が戻る時間（秒） */
-const ARM_RETURN_DELAY_SEC = 3.0;
+/** 再生開始時の初期シーク位置（groovePosition 0=外周〜1=内周）。33RPMで約30秒分 */
+const INITIAL_GROOVE_OFFSET = 0.023;
 
 interface ModuleState {
   offscreenCanvas: OffscreenCanvas | null;
@@ -40,15 +35,9 @@ interface ModuleState {
   offscreenSize: number;
   offscreenImageKey: string;
   angle: number;
-  /** 針の降下進行度（0=待機、1=レコード上） */
   tonearmProgress: number;
-  /** グルーブ上の位置（0=外周、1=中心） */
   groovePosition: number;
-  /** 再生開始時刻（針が下りきってからの再生開始遅延用） */
-  armLowerStartTimeMs: number;
-  /** 針が降りきったか */
   armIsLowered: boolean;
-  /** 前フレームの再生状態 */
   wasPlaying: boolean;
   lastTimestampMs: number;
 }
@@ -61,24 +50,40 @@ const state: ModuleState = {
   angle: 0,
   tonearmProgress: 0,
   groovePosition: 0,
-  armLowerStartTimeMs: 0,
   armIsLowered: false,
   wasPlaying: false,
   lastTimestampMs: 0,
 };
 
-/** 全てのトーンアーム状態をリセット */
 export function clearRecordPlayerCache(): void {
   state.offscreenCanvas = null;
   state.offscreenCtx = null;
   state.offscreenSize = 0;
   state.offscreenImageKey = "";
+  state.angle = 0;
   state.tonearmProgress = 0;
   state.groovePosition = 0;
-  state.armLowerStartTimeMs = 0;
   state.armIsLowered = false;
   state.wasPlaying = false;
   state.lastTimestampMs = 0;
+}
+
+export function advanceRecordDiscRotation(
+  rpm: RecordPlayerRpm,
+  isPlaying: boolean,
+  deltaMs: number,
+  elapsedSec: number
+): number {
+  const degPerSec = rpmToDegPerSec(rpm);
+  if (isPlaying) {
+    const deltaSec = Math.max(0, Math.min(deltaMs, 100)) / 1000;
+    if (deltaSec > 0) {
+      state.angle = (state.angle + degPerSec * deltaSec) % 360;
+    }
+    return state.angle;
+  }
+  state.angle = (elapsedSec * degPerSec) % 360;
+  return state.angle;
 }
 
 function getImageKey(image: HTMLImageElement): string {
@@ -119,18 +124,42 @@ function drawGroovePattern(
   outerRatio: number
 ): void {
   ctx.save();
-  ctx.strokeStyle = "rgba(40, 40, 40, 0.35)";
-  ctx.lineWidth = 0.5;
-  const grooveCount = Math.floor(radius * 0.25);
+  const grooveCount = Math.floor(radius * 0.4);
   const innerR = radius * innerRatio;
   const outerR = radius * outerRatio;
   for (let i = 0; i < grooveCount; i++) {
     const t = i / grooveCount;
     const r = innerR + (outerR - innerR) * t;
+    const alpha = 0.12 + 0.08 * Math.sin(t * Math.PI);
+    ctx.strokeStyle = `rgba(80, 80, 80, ${alpha})`;
+    ctx.lineWidth = 0.3;
     ctx.beginPath();
     ctx.arc(cx, cy, r, 0, Math.PI * 2);
     ctx.stroke();
   }
+  ctx.restore();
+}
+
+function drawVinylSheen(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  radius: number
+): void {
+  ctx.save();
+  const sheenGrad = ctx.createLinearGradient(
+    cx - radius * 0.7, cy - radius * 0.5,
+    cx + radius * 0.5, cy + radius * 0.3
+  );
+  sheenGrad.addColorStop(0, "rgba(255, 255, 255, 0)");
+  sheenGrad.addColorStop(0.3, "rgba(255, 255, 255, 0.04)");
+  sheenGrad.addColorStop(0.45, "rgba(255, 255, 255, 0.10)");
+  sheenGrad.addColorStop(0.6, "rgba(255, 255, 255, 0.04)");
+  sheenGrad.addColorStop(1, "rgba(255, 255, 255, 0)");
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+  ctx.fillStyle = sheenGrad;
+  ctx.fill();
   ctx.restore();
 }
 
@@ -140,19 +169,63 @@ function drawStyledDiscBackground(
   cx: number,
   cy: number,
   radius: number,
-  style: DiscStyle
+  style: DiscStyle,
+  discSize: DiscSize
 ): void {
+  const holeRatio = DISC_HOLE_RATIO_BY_SIZE[discSize];
   ctx.save();
   if (style === "full") {
     const { canvas } = ensureOffscreenCircle(image, radius * 2);
     ctx.drawImage(canvas, cx - radius, cy - radius, radius * 2, radius * 2);
-    drawGroovePattern(ctx, cx, cy, radius, 0.12, 0.92);
+    const holeRadius = radius * holeRatio;
+    if (holeRadius > 1) {
+      ctx.save();
+      ctx.globalCompositeOperation = "destination-out";
+      ctx.beginPath();
+      ctx.arc(cx, cy, holeRadius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+      // プラスチック製キャップ風の穴（光沢・立体感）
+      const capGrad = ctx.createRadialGradient(
+        cx - holeRadius * 0.25, cy - holeRadius * 0.25, holeRadius * 0.1,
+        cx, cy, holeRadius
+      );
+      capGrad.addColorStop(0, "#e8e4dc");
+      capGrad.addColorStop(0.3, "#d8d4cc");
+      capGrad.addColorStop(0.6, "#c0bbb0");
+      capGrad.addColorStop(0.85, "#a8a498");
+      capGrad.addColorStop(1, "#8a8680");
+      ctx.beginPath();
+      ctx.arc(cx, cy, holeRadius, 0, Math.PI * 2);
+      ctx.fillStyle = capGrad;
+      ctx.fill();
+      // キャップ縁のハイライト
+      ctx.beginPath();
+      ctx.arc(cx, cy, holeRadius, 0, Math.PI * 2);
+      ctx.strokeStyle = "rgba(180, 175, 165, 0.5)";
+      ctx.lineWidth = 0.6;
+      ctx.stroke();
+      // 内側の縁影
+      ctx.beginPath();
+      ctx.arc(cx, cy, holeRadius - 0.8, 0, Math.PI * 2);
+      ctx.strokeStyle = "rgba(80, 75, 70, 0.3)";
+      ctx.lineWidth = 0.4;
+      ctx.stroke();
+      // 中心の小さな穴（ピン用）
+      const pinHoleR = holeRadius * 0.15;
+      ctx.beginPath();
+      ctx.arc(cx, cy, pinHoleR, 0, Math.PI * 2);
+      ctx.fillStyle = "#555550";
+      ctx.fill();
+    }
+    drawGroovePattern(ctx, cx, cy, radius, holeRatio + 0.05, 0.94);
+    drawVinylSheen(ctx, cx, cy, radius);
   } else if (style === "groove") {
     ctx.beginPath();
     ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-    ctx.fillStyle = "#111111";
+    ctx.fillStyle = "#0a0a0a";
     ctx.fill();
-    const innerRadius = radius * 0.20;
+    const innerRadius = radius * holeRatio;
     const outerRadius = radius * 0.88;
     const imgDiameter = outerRadius * 2;
     const { canvas } = ensureOffscreenCircle(image, imgDiameter);
@@ -164,95 +237,259 @@ function drawStyledDiscBackground(
     ctx.clip();
     ctx.drawImage(canvas, cx - outerRadius, cy - outerRadius, imgDiameter, imgDiameter);
     ctx.restore();
-    const labelRadius = radius * 0.18;
-    ctx.beginPath();
-    ctx.arc(cx, cy, labelRadius, 0, Math.PI * 2);
-    ctx.fillStyle = "#2a2a3a";
-    ctx.fill();
-    drawGroovePattern(ctx, cx, cy, radius, 0.22, 0.92);
+    const labelRadius = innerRadius;
+    if (labelRadius > 2) {
+      const labelGrad = ctx.createRadialGradient(cx - labelRadius * 0.2, cy - labelRadius * 0.2, 0, cx, cy, labelRadius);
+      labelGrad.addColorStop(0, "#4a4a5a");
+      labelGrad.addColorStop(0.5, "#3a3a4a");
+      labelGrad.addColorStop(1, "#2a2a3a");
+      ctx.beginPath();
+      ctx.arc(cx, cy, labelRadius, 0, Math.PI * 2);
+      ctx.fillStyle = labelGrad;
+      ctx.fill();
+    }
+    drawGroovePattern(ctx, cx, cy, radius, holeRatio + 0.02, 0.94);
+    drawVinylSheen(ctx, cx, cy, radius);
   }
   ctx.restore();
+}
+
+function drawStrobeDots(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  platterRadius: number,
+  angle: number
+): void {
+  ctx.save();
+  const dotRadius = Math.max(1.2, platterRadius * 0.010);
+  const ringRadius = platterRadius * 0.97;
+  const dotCount = 72;
+  for (let i = 0; i < dotCount; i++) {
+    const a = ((i / dotCount) * Math.PI * 2) + (angle * Math.PI / 180);
+    const dx = cx + Math.cos(a) * ringRadius;
+    const dy = cy + Math.sin(a) * ringRadius;
+    ctx.beginPath();
+    ctx.arc(dx, dy, dotRadius, 0, Math.PI * 2);
+    ctx.fillStyle = i % 3 === 0 ? "rgba(220, 220, 220, 0.65)" : "rgba(160, 160, 160, 0.35)";
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawRoundedRect(
+  ctx: CanvasRenderingContext2D,
+  x: number, y: number, w: number, h: number, r: number
+): void {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
 }
 
 function drawTurntableBase(
   ctx: CanvasRenderingContext2D,
   canvasWidth: number,
   canvasHeight: number,
-  discSize: DiscSize
+  angle: number,
+  colorScheme: RecordPlayerColorScheme = "dark"
 ): void {
-  const minDim = Math.min(canvasWidth, canvasHeight);
-  const baseRadius = minDim * BASE_RADIUS_BY_SIZE[discSize];
-  const discRadius = minDim * DISC_RADIUS_BY_SIZE[discSize];
-  const cx = canvasWidth / 2;
-  const cy = canvasHeight / 2;
+  const W = canvasWidth;
+  const H = canvasHeight;
+  const minDim = Math.min(W, H);
+
+  const baseW = W * 0.96;
+  const baseH = H * 0.92;
+  const baseX = (W - baseW) / 2;
+  const baseY = (H - baseH) / 2;
+  const cornerR = minDim * 0.025;
+
+  const platterR = minDim * DISC_RADIUS_BY_SIZE["12inch"] * PLATTER_RADIUS_RATIO;
+  const platterCx = W * 0.42;
+  const platterCy = H * 0.46;
+
+  const isLight = colorScheme === "light";
 
   ctx.save();
   ctx.shadowColor = "rgba(0, 0, 0, 0.5)";
-  ctx.shadowBlur = 30;
-  ctx.shadowOffsetX = 6;
-  ctx.shadowOffsetY = 6;
+  ctx.shadowBlur = minDim * 0.04;
+  ctx.shadowOffsetX = minDim * 0.008;
+  ctx.shadowOffsetY = minDim * 0.008;
 
-  const baseGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, baseRadius);
-  baseGrad.addColorStop(0, "#3d3530");
-  baseGrad.addColorStop(0.5, "#2e2822");
-  baseGrad.addColorStop(0.85, "#252018");
-  baseGrad.addColorStop(1, "#1a1612");
-  ctx.beginPath();
-  ctx.arc(cx, cy, baseRadius, 0, Math.PI * 2);
-  ctx.fillStyle = baseGrad;
+  const frameGrad = ctx.createLinearGradient(baseX, baseY, baseX, baseY + baseH);
+  if (isLight) {
+    frameGrad.addColorStop(0, "#d4c8b8");
+    frameGrad.addColorStop(0.15, "#c8bca8");
+    frameGrad.addColorStop(0.5, "#b8a898");
+    frameGrad.addColorStop(0.85, "#c0b4a4");
+    frameGrad.addColorStop(1, "#a89888");
+  } else {
+    frameGrad.addColorStop(0, "#5a4a3a");
+    frameGrad.addColorStop(0.15, "#4a3a2a");
+    frameGrad.addColorStop(0.5, "#3d2e20");
+    frameGrad.addColorStop(0.85, "#4a3a2a");
+    frameGrad.addColorStop(1, "#3a2a1a");
+  }
+  drawRoundedRect(ctx, baseX, baseY, baseW, baseH, cornerR);
+  ctx.fillStyle = frameGrad;
   ctx.fill();
   ctx.shadowColor = "transparent";
 
-  ctx.strokeStyle = "rgba(80, 70, 55, 0.12)";
-  ctx.lineWidth = 1;
-  for (let i = 0; i < 12; i++) {
-    const r = baseRadius * (0.55 + i * 0.038);
-    ctx.beginPath();
-    ctx.arc(cx, cy, r, 0, Math.PI * 2);
-    ctx.stroke();
+  const inset = minDim * 0.018;
+  const panelGrad = ctx.createLinearGradient(
+    baseX + inset, baseY + inset,
+    baseX + inset, baseY + baseH - inset
+  );
+  if (isLight) {
+    panelGrad.addColorStop(0, "#f0ece4");
+    panelGrad.addColorStop(0.3, "#e8e4dc");
+    panelGrad.addColorStop(0.7, "#e0dcd4");
+    panelGrad.addColorStop(1, "#d8d4cc");
+  } else {
+    panelGrad.addColorStop(0, "#2a2a2a");
+    panelGrad.addColorStop(0.3, "#252525");
+    panelGrad.addColorStop(0.7, "#202020");
+    panelGrad.addColorStop(1, "#1c1c1c");
   }
+  drawRoundedRect(ctx, baseX + inset, baseY + inset, baseW - inset * 2, baseH - inset * 2, cornerR - inset * 0.5);
+  ctx.fillStyle = panelGrad;
+  ctx.fill();
 
-  const rimGrad = ctx.createRadialGradient(cx, cy, baseRadius - 4, cx, cy, baseRadius);
-  rimGrad.addColorStop(0, "#555555");
-  rimGrad.addColorStop(0.5, "#777777");
-  rimGrad.addColorStop(1, "#444444");
+  const feltGrad = ctx.createRadialGradient(platterCx, platterCy, 0, platterCx, platterCy, platterR);
+  if (isLight) {
+    feltGrad.addColorStop(0, "#e8e4dc");
+    feltGrad.addColorStop(0.6, "#ddd8d0");
+    feltGrad.addColorStop(1, "#d0ccc4");
+  } else {
+    feltGrad.addColorStop(0, "#2a2a2a");
+    feltGrad.addColorStop(0.6, "#222222");
+    feltGrad.addColorStop(1, "#1a1a1a");
+  }
   ctx.beginPath();
-  ctx.arc(cx, cy, baseRadius, 0, Math.PI * 2);
-  ctx.strokeStyle = rimGrad;
-  ctx.lineWidth = 3;
-  ctx.stroke();
-
-  const platterRadius = discRadius * PLATTER_RADIUS_RATIO;
-  const feltGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, platterRadius);
-  feltGrad.addColorStop(0, "#2a2a2a");
-  feltGrad.addColorStop(0.8, "#222222");
-  feltGrad.addColorStop(1, "#1a1a1a");
-  ctx.beginPath();
-  ctx.arc(cx, cy, platterRadius, 0, Math.PI * 2);
+  ctx.arc(platterCx, platterCy, platterR, 0, Math.PI * 2);
   ctx.fillStyle = feltGrad;
   ctx.fill();
 
+  drawStrobeDots(ctx, platterCx, platterCy, platterR, angle);
+
   ctx.beginPath();
-  ctx.arc(cx, cy, platterRadius, 0, Math.PI * 2);
-  ctx.strokeStyle = "#555555";
+  ctx.arc(platterCx, platterCy, platterR, 0, Math.PI * 2);
+  ctx.strokeStyle = isLight ? "#999999" : "#555555";
   ctx.lineWidth = 1.5;
   ctx.stroke();
 
-  const selectorX = cx - baseRadius * 0.45;
-  const selectorY = cy + baseRadius * 0.65;
   ctx.beginPath();
-  ctx.arc(selectorX, selectorY, 6, 0, Math.PI * 2);
-  ctx.fillStyle = "#555555";
-  ctx.fill();
-  ctx.strokeStyle = "#777777";
+  ctx.arc(platterCx, platterCy, platterR + 1, 0, Math.PI * 2);
+  ctx.strokeStyle = "rgba(0, 0, 0, 0.25)";
   ctx.lineWidth = 1;
   ctx.stroke();
 
-  const powerX = cx + baseRadius * 0.45;
-  const powerY = cy + baseRadius * 0.65;
+  const startX = baseX + baseW * 0.10;
+  const startY = baseY + baseH * 0.82;
+  const btnR = minDim * 0.018;
   ctx.beginPath();
-  ctx.arc(powerX, powerY, 5, 0, Math.PI * 2);
-  ctx.fillStyle = "#cc3333";
+  ctx.arc(startX, startY, btnR, 0, Math.PI * 2);
+  const startGrad = ctx.createRadialGradient(startX - 1, startY - 1, 0, startX, startY, btnR);
+  if (isLight) {
+    startGrad.addColorStop(0, "#cccccc");
+    startGrad.addColorStop(0.5, "#b0b0b0");
+    startGrad.addColorStop(1, "#999999");
+  } else {
+    startGrad.addColorStop(0, "#3a3a3a");
+    startGrad.addColorStop(0.5, "#2a2a2a");
+    startGrad.addColorStop(1, "#1a1a1a");
+  }
+  ctx.fillStyle = startGrad;
+  ctx.fill();
+  ctx.strokeStyle = isLight ? "#888888" : "#444444";
+  ctx.lineWidth = 0.8;
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(startX, startY, btnR * 0.35, 0, Math.PI * 2);
+  ctx.fillStyle = isLight ? "#555555" : "#666666";
+  ctx.fill();
+
+  const sp33X = startX + btnR * 3.2;
+  const sp33Y = startY;
+  const spBtnR = minDim * 0.012;
+  ctx.beginPath();
+  ctx.arc(sp33X, sp33Y, spBtnR, 0, Math.PI * 2);
+  ctx.fillStyle = isLight ? "#e0e0e0" : "#1a1a1a";
+  ctx.fill();
+  ctx.strokeStyle = isLight ? "#888888" : "#444444";
+  ctx.lineWidth = 0.6;
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(sp33X, sp33Y, minDim * 0.003, 0, Math.PI * 2);
+  ctx.fillStyle = "#4488ff";
+  ctx.fill();
+
+  const sp45X = sp33X + spBtnR * 3;
+  ctx.beginPath();
+  ctx.arc(sp45X, sp33Y, spBtnR, 0, Math.PI * 2);
+  ctx.fillStyle = isLight ? "#e0e0e0" : "#1a1a1a";
+  ctx.fill();
+  ctx.strokeStyle = isLight ? "#888888" : "#444444";
+  ctx.lineWidth = 0.6;
+  ctx.stroke();
+
+  const pitchX = baseX + baseW * 0.94;
+  const pitchTopY = baseY + baseH * 0.50;
+  const pitchBotY = baseY + baseH * 0.78;
+  const pitchW = minDim * 0.012;
+  ctx.fillStyle = isLight ? "#d0d0d0" : "#1a1a1a";
+  ctx.fillRect(pitchX - pitchW / 2, pitchTopY, pitchW, pitchBotY - pitchTopY);
+  ctx.strokeStyle = isLight ? "#999999" : "#3a3a3a";
+  ctx.lineWidth = 0.5;
+  ctx.strokeRect(pitchX - pitchW / 2, pitchTopY, pitchW, pitchBotY - pitchTopY);
+  const pitchMidY = (pitchTopY + pitchBotY) / 2;
+  const knobH = minDim * 0.012;
+  ctx.fillStyle = isLight ? "#d0d0d0" : "#1a1a1a";
+  ctx.fillRect(pitchX - pitchW * 0.8, pitchMidY - knobH / 2, pitchW * 1.6, knobH);
+  const knobGrad = ctx.createLinearGradient(pitchX - pitchW, pitchMidY, pitchX + pitchW, pitchMidY);
+  if (isLight) {
+    knobGrad.addColorStop(0, "#aaaaaa");
+    knobGrad.addColorStop(0.3, "#cccccc");
+    knobGrad.addColorStop(0.5, "#dddddd");
+    knobGrad.addColorStop(0.7, "#cccccc");
+    knobGrad.addColorStop(1, "#aaaaaa");
+  } else {
+    knobGrad.addColorStop(0, "#555555");
+    knobGrad.addColorStop(0.3, "#888888");
+    knobGrad.addColorStop(0.5, "#999999");
+    knobGrad.addColorStop(0.7, "#888888");
+    knobGrad.addColorStop(1, "#555555");
+  }
+  ctx.fillStyle = knobGrad;
+  ctx.fillRect(pitchX - pitchW * 0.7, pitchMidY - knobH * 0.4, pitchW * 1.4, knobH * 0.8);
+  ctx.strokeStyle = isLight ? "#888888" : "#333333";
+  ctx.lineWidth = 0.4;
+  ctx.strokeRect(pitchX - pitchW * 0.7, pitchMidY - knobH * 0.4, pitchW * 1.4, knobH * 0.8);
+
+  // アームレスト（停止時にアームを置く支架）: ピボットの右下
+  const restX = baseX + baseW * 0.82;
+  const restY = baseY + baseH * 0.28;
+  const restW = minDim * 0.025;
+  const restH = minDim * 0.018;
+
+  ctx.fillStyle = "#1a1a1a";
+  ctx.beginPath();
+  ctx.roundRect(restX - restW * 0.5, restY - restH * 0.5, restW, restH, 2);
+  ctx.fill();
+  ctx.strokeStyle = "#444444";
+  ctx.lineWidth = 0.6;
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.arc(restX, restY, minDim * 0.005, 0, Math.PI * 2);
+  ctx.fillStyle = "#333333";
   ctx.fill();
 
   ctx.restore();
@@ -266,49 +503,93 @@ export function drawRecordPlayerBackground(
   rpm: RecordPlayerRpm,
   discStyle: DiscStyle,
   discSize: DiscSize,
-  elapsedSec: number
+  elapsedSec: number,
+  isPlaying: boolean,
+  deltaMs: number,
+  colorScheme: RecordPlayerColorScheme = "dark"
 ): void {
   const minDim = Math.min(canvasWidth, canvasHeight);
   const radius = minDim * DISC_RADIUS_BY_SIZE[discSize];
-  const cx = canvasWidth / 2;
-  const cy = canvasHeight / 2;
+  const platterCx = canvasWidth * 0.42;
+  const platterCy = canvasHeight * 0.46;
 
-  ctx.fillStyle = "rgba(20, 18, 15, 1.0)";
+  advanceRecordDiscRotation(rpm, isPlaying, deltaMs, elapsedSec);
+
+  const isLight = colorScheme === "light";
+  ctx.fillStyle = isLight ? "rgba(240, 236, 228, 1.0)" : "rgba(18, 15, 12, 1.0)";
   ctx.fillRect(0, 0, canvasWidth, canvasHeight);
 
-  drawTurntableBase(ctx, canvasWidth, canvasHeight, discSize);
+  const ambGrad = ctx.createRadialGradient(platterCx, platterCy, 0, platterCx, platterCy, minDim * 0.6);
+  ambGrad.addColorStop(0, "rgba(40, 30, 20, 0.2)");
+  ambGrad.addColorStop(0.5, "rgba(20, 15, 10, 0.1)");
+  ambGrad.addColorStop(1, "rgba(0, 0, 0, 0)");
+  ctx.fillStyle = ambGrad;
+  ctx.fillRect(0, 0, canvasWidth, canvasHeight);
 
-  const degPerSec = rpmToDegPerSec(rpm);
-  state.angle = (elapsedSec * degPerSec) % 360;
+  drawTurntableBase(ctx, canvasWidth, canvasHeight, state.angle, colorScheme);
 
   ctx.save();
-  ctx.translate(cx, cy);
+  ctx.translate(platterCx, platterCy);
   ctx.rotate((state.angle * Math.PI) / 180);
-  drawStyledDiscBackground(ctx, image, 0, 0, radius, discStyle);
+  drawStyledDiscBackground(ctx, image, 0, 0, radius, discStyle, discSize);
   ctx.restore();
 
-  ctx.save();
-  const pinGrad = ctx.createRadialGradient(cx - 1, cy - 1, 0, cx, cy, 4);
-  pinGrad.addColorStop(0, "#bbbbbb");
+  const pinSize = Math.max(2, minDim * 0.004);
+  const pinGrad = ctx.createRadialGradient(platterCx - 0.5, platterCy - 0.5, 0, platterCx, platterCy, pinSize + 1.5);
+  pinGrad.addColorStop(0, "#cccccc");
+  pinGrad.addColorStop(0.5, "#999999");
   pinGrad.addColorStop(1, "#666666");
   ctx.beginPath();
-  ctx.arc(cx, cy, 4, 0, Math.PI * 2);
+  ctx.arc(platterCx, platterCy, pinSize + 1.5, 0, Math.PI * 2);
+  ctx.fillStyle = "#333333";
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(platterCx, platterCy, pinSize, 0, Math.PI * 2);
   ctx.fillStyle = pinGrad;
   ctx.fill();
-  ctx.restore();
 }
 
 function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * Math.min(1, Math.max(0, t));
 }
 
-/**
- * トーンアームの状態を更新し、再生可能かどうかを返す。
- * @param isPlaying 再生中か
- * @param playbackProgress  曲の進行度（0〜1）。nullなら未再生
- * @param deltaTimeMs フレーム間隔(ms)
- * @returns armReady 針がレコード上に降りきったか
- */
+/** ターンテーブル針先の disc 中心からの半径比（1 = 盤面最外周） */
+export function tonearmNeedleRadiusRatio(
+  progress: number,
+  groovePos: number,
+  discSize: DiscSize = "12inch",
+  canvasSize = 1000
+): number {
+  const discRadius = canvasSize * DISC_RADIUS_BY_SIZE[discSize];
+  const platterCx = canvasSize * 0.42;
+  const platterCy = canvasSize * 0.46;
+
+  const pivotX = canvasSize * 0.78;
+  const pivotY = canvasSize * 0.18;
+
+  const baseW = canvasSize * 0.96;
+  const baseH = canvasSize * 0.92;
+  const baseX = (canvasSize - baseW) / 2;
+  const baseY = (canvasSize - baseH) / 2;
+
+  const restAngle = Math.atan2(
+    (baseY + baseH * 0.28) - pivotY,
+    (baseX + baseW * 0.82) - pivotX
+  );
+  const edgeAngle = Math.atan2(platterCy - pivotY, (platterCx + discRadius) - pivotX);
+  const armLength = Math.hypot((platterCx + discRadius) - pivotX, platterCy - pivotY);
+
+  const innerR = discRadius * GROOVE_INNER_RADIUS_RATIO;
+  const endAngle = Math.atan2(platterCy - pivotY, (platterCx + innerR) - pivotX);
+
+  const loweredAngle = progress <= 0 ? restAngle : lerp(restAngle, edgeAngle, progress);
+  const currentAngle = loweredAngle + groovePos * (endAngle - edgeAngle);
+
+  const headX = pivotX + armLength * Math.cos(currentAngle);
+  const headY = pivotY + armLength * Math.sin(currentAngle);
+  return Math.hypot(headX - platterCx, headY - platterCy) / discRadius;
+}
+
 export function updateTonearmState(
   isPlaying: boolean,
   playbackProgress: number | null,
@@ -317,15 +598,12 @@ export function updateTonearmState(
   const prevWasPlaying = state.wasPlaying;
 
   if (isPlaying && !prevWasPlaying) {
-    // 再生開始: 針を下ろすアニメーション開始（初期位置から）
     state.tonearmProgress = 0;
-    state.groovePosition = 0;
-    state.armLowerStartTimeMs = performance.now();
+    state.groovePosition = INITIAL_GROOVE_OFFSET;
     state.armIsLowered = false;
   }
 
   if (!isPlaying && prevWasPlaying) {
-    // 再生終了: 針を戻すアニメーション開始（groovePositionをリセット）
     state.armIsLowered = false;
   }
 
@@ -334,20 +612,16 @@ export function updateTonearmState(
   const lerpFactor = (TONEARM_LERP_SPEED * deltaTimeMs) / 1000;
 
   if (isPlaying) {
-    // 再生中: 針を下ろす
     state.tonearmProgress = lerp(state.tonearmProgress, 1, lerpFactor);
     state.armIsLowered = state.tonearmProgress >= 0.98;
 
-    // グルーブ上の位置を進行に合わせて更新（外周→内周）
     if (playbackProgress != null && state.armIsLowered) {
       state.groovePosition = playbackProgress;
     }
   } else {
-    // 停止中: 針を戻す
     state.tonearmProgress = lerp(state.tonearmProgress, 0, lerpFactor * 0.6);
     state.groovePosition = lerp(state.groovePosition, 0, lerpFactor * 0.3);
     state.armIsLowered = false;
-    // 閾値以下になったら完全に0にスナップ
     if (state.tonearmProgress < 0.005) state.tonearmProgress = 0;
     if (state.groovePosition < 0.005) state.groovePosition = 0;
   }
@@ -355,7 +629,6 @@ export function updateTonearmState(
   return state.armIsLowered;
 }
 
-/** 針が下りきってから再生開始するか */
 export function isTonearmReady(): boolean {
   return state.armIsLowered;
 }
@@ -366,202 +639,287 @@ export function drawRecordPlayerOverlay(
   canvasHeight: number,
   isPlaying: boolean,
   deltaTimeMs: number,
-  discSize: DiscSize = "compact"
+  discSize: DiscSize = "12inch"
 ): void {
   const now = performance.now();
   if (state.lastTimestampMs === 0) state.lastTimestampMs = now;
   state.lastTimestampMs = now;
 
   const minDim = Math.min(canvasWidth, canvasHeight);
-  const radius = minDim * DISC_RADIUS_BY_SIZE[discSize];
-  const cx = canvasWidth / 2;
-  const cy = canvasHeight / 2;
+  const discRadius = minDim * DISC_RADIUS_BY_SIZE[discSize];
 
-  // ピボットはcompact基準で固定（edgeでも同じ位置）
-  const refBaseRadius = minDim * BASE_RADIUS_BY_SIZE["compact"];
-  const pivotScale = 1.0;
-
-  const refRadius = minDim * TONEARM_REF_RADIUS_RATIO;
-  const armScale = radius / refRadius;
-
-  drawTonearm(
-    ctx, cx, cy, refRadius, refBaseRadius, pivotScale, armScale,
-    state.tonearmProgress, state.groovePosition
-  );
+  drawTonearm(ctx, canvasWidth, canvasHeight, discRadius);
 }
 
 function drawTonearm(
   ctx: CanvasRenderingContext2D,
-  cx: number,
-  cy: number,
-  discRefRadius: number,
-  baseRefRadius: number,
-  pivotScale: number,
-  armScale: number,
-  progress: number,
-  groovePos: number
+  canvasWidth: number,
+  canvasHeight: number,
+  discRadius: number
 ): void {
-  // ピボット位置はターンテーブル本体（baseRadius）基準で計算
-  const pivotX = cx + baseRefRadius * ARM_PIVOT_X * pivotScale;
-  const pivotY = cy + baseRefRadius * ARM_PIVOT_Y * pivotScale;
+  const minDim = Math.min(canvasWidth, canvasHeight);
+  const W = canvasWidth;
+  const H = canvasHeight;
 
-  // レコード外周の半径（縁）
-  const discRadius = discRefRadius * armScale;
-  const outerRadius = discRadius;
+  const platterCx = W * 0.42;
+  const platterCy = H * 0.46;
 
-  // レコード上の時計位置を角度に変換（12時=上、時計回り）
-  const clockToAngle = (hour: number) => (hour * 30 - 90) * (Math.PI / 180);
+  const pivotX = W * 0.78;
+  const pivotY = H * 0.18;
 
-  // 再生開始位置: 5時の方向（レコード外周の縁）
-  const angle5 = clockToAngle(5);
-  const tipPlayX = cx + outerRadius * Math.cos(angle5);
-  const tipPlayY = cy + outerRadius * Math.sin(angle5);
+  const baseW = W * 0.96;
+  const baseH = H * 0.92;
+  const baseX = (W - baseW) / 2;
+  const baseY = (H - baseH) / 2;
 
-  // アーム長: ピボットから再生開始位置（外周縁）まで × 3/4 × 1.1（10%延長）
-  const armLength = Math.hypot(tipPlayX - pivotX, tipPlayY - pivotY) * 0.825;
+  const restAngle = Math.atan2(
+    (baseY + baseH * 0.28) - pivotY,
+    (baseX + baseW * 0.82) - pivotX
+  );
+  const edgeAngle = Math.atan2(platterCy - pivotY, (platterCx + discRadius) - pivotX);
+  const armLength = Math.hypot((platterCx + discRadius) - pivotX, platterCy - pivotY) * 1.375;
 
-  // 停止時: 垂直から反時計回りに5度（真下より少し左）
-  const restAngle = Math.PI / 2 - (5 * Math.PI / 180);
+  const innerR = discRadius * GROOVE_INNER_RADIUS_RATIO;
+  const endAngle = Math.atan2(platterCy - pivotY, (platterCx + innerR) - pivotX);
 
-  // 再生開始時のアーム角度（ピボット→外周縁）
-  const playAngle = Math.atan2(tipPlayY - pivotY, tipPlayX - pivotX);
-
-  // 再生終了位置: 6時の方向（内周付近）
-  const angle6 = clockToAngle(6);
-  const innerRadius = discRadius * 0.25;
-  const tipEndX = cx + innerRadius * Math.cos(angle6);
-  const tipEndY = cy + innerRadius * Math.sin(angle6);
-
-  // 再生終了時のアーム角度（ピボット→内周境界）
-  const endAngle = Math.atan2(tipEndY - pivotY, tipEndX - pivotX);
-
-  // progress(0→1): 垂直(停止)→5時(レコード上)
-  // groovePos(0→1): 5時→6時(内周方向)
-  const loweredAngle = progress <= 0
+  const loweredAngle = state.tonearmProgress <= 0
     ? restAngle
-    : lerp(restAngle, playAngle, progress);
-  const currentAngle = loweredAngle + groovePos * (endAngle - playAngle);
+    : lerp(restAngle, edgeAngle, state.tonearmProgress);
+  const currentAngle = loweredAngle + state.groovePosition * (endAngle - edgeAngle);
 
-  // ヘッド位置: 固定長のアームを回転させて計算
   const headX = pivotX + armLength * Math.cos(currentAngle);
   const headY = pivotY + armLength * Math.sin(currentAngle);
 
-  const cwX = pivotX + baseRefRadius * ARM_COUNTERWEIGHT_X * pivotScale;
-  const cwY = pivotY + baseRefRadius * ARM_COUNTERWEIGHT_Y * pivotScale;
+  const armAngle = Math.atan2(headY - pivotY, headX - pivotX);
 
-  const armWidth = Math.max(15, 25 * armScale);
-  const headLen = Math.max(40, 70 * armScale);
+  // アーム先端の弯曲: 90%地点で浅い「へ」字（~20°）内側へ
+  const BEND_RATIO = 0.90;
+  const BEND_ANGLE = 0.35;
+  const bendX = pivotX + armLength * BEND_RATIO * Math.cos(armAngle);
+  const bendY = pivotY + armLength * BEND_RATIO * Math.sin(armAngle);
+  const bentAngle = armAngle + BEND_ANGLE;
+  const tipEndX = pivotX + armLength * Math.cos(currentAngle);
+  const tipEndY = pivotY + armLength * Math.sin(currentAngle);
 
   ctx.save();
 
-  // --- カウンターウェイト ---
-  ctx.shadowColor = "rgba(0, 0, 0, 0.25)";
-  ctx.shadowBlur = 4;
-  ctx.shadowOffsetX = 1;
-  ctx.shadowOffsetY = 2;
-  const cwRadius = Math.max(5, 8 * armScale);
-  ctx.beginPath();
-  ctx.arc(cwX, cwY, cwRadius, 0, Math.PI * 2);
-  const cwGrad = ctx.createRadialGradient(cwX - 2, cwY - 2, 0, cwX, cwY, cwRadius);
-  cwGrad.addColorStop(0, "#888888");
-  cwGrad.addColorStop(0.6, "#555555");
-  cwGrad.addColorStop(1, "#333333");
-  ctx.fillStyle = cwGrad;
-  ctx.fill();
-  ctx.strokeStyle = "#222222";
-  ctx.lineWidth = 0.8;
-  ctx.stroke();
-  ctx.shadowColor = "transparent";
+  // アーム本体（直線 tapered）: ピボット→弯曲点
+  ctx.shadowColor = "rgba(0, 0, 0, 0.3)";
+  ctx.shadowBlur = minDim * 0.012;
+  ctx.shadowOffsetX = minDim * 0.003;
+  ctx.shadowOffsetY = minDim * 0.003;
 
-  // --- アーム本体（三角形: 根元が太く先端が細い） ---
-  ctx.shadowColor = "rgba(0, 0, 0, 0.35)";
-  ctx.shadowBlur = 8;
-  ctx.shadowOffsetX = 3;
-  ctx.shadowOffsetY = 3;
+  const armWidthBase = minDim * 0.010;
+  const armWidthBend = minDim * 0.005;
+  const armWidthTip = minDim * 0.004;
 
-  const armAngle = Math.atan2(headY - pivotY, headX - pivotX);
-  const perpX = Math.cos(armAngle + Math.PI / 2);
-  const perpY = Math.sin(armAngle + Math.PI / 2);
-
-  const baseHalf = armWidth * 0.6;
-  const tipHalf = Math.max(0.5, 1.0 * armScale);
+  const perpBendX = Math.cos(armAngle + Math.PI / 2);
+  const perpBendY = Math.sin(armAngle + Math.PI / 2);
 
   ctx.beginPath();
-  ctx.moveTo(pivotX + perpX * baseHalf, pivotY + perpY * baseHalf);
-  ctx.lineTo(headX + perpX * tipHalf, headY + perpY * tipHalf);
-  ctx.lineTo(headX - perpX * tipHalf, headY - perpY * tipHalf);
-  ctx.lineTo(pivotX - perpX * baseHalf, pivotY - perpY * baseHalf);
+  ctx.moveTo(pivotX + perpBendX * armWidthBase, pivotY + perpBendY * armWidthBase);
+  ctx.lineTo(bendX + perpBendX * armWidthBend, bendY + perpBendY * armWidthBend);
+  const perpTipX = Math.cos(bentAngle + Math.PI / 2);
+  const perpTipY = Math.sin(bentAngle + Math.PI / 2);
+  ctx.lineTo(tipEndX + perpTipX * armWidthTip, tipEndY + perpTipY * armWidthTip);
+  ctx.lineTo(tipEndX - perpTipX * armWidthTip, tipEndY - perpTipY * armWidthTip);
+  ctx.lineTo(bendX - perpBendX * armWidthBend, bendY - perpBendY * armWidthBend);
+  ctx.lineTo(pivotX - perpBendX * armWidthBase, pivotY - perpBendY * armWidthBase);
   ctx.closePath();
 
   const armGrad = ctx.createLinearGradient(
-    pivotX + perpX * armWidth, pivotY + perpY * armWidth,
-    pivotX - perpX * armWidth, pivotY - perpY * armWidth
+    pivotX + perpBendX * armWidthBase * 2,
+    pivotY + perpBendY * armWidthBase * 2,
+    pivotX - perpBendX * armWidthBase * 2,
+    pivotY - perpBendY * armWidthBase * 2
   );
-  armGrad.addColorStop(0, "#999999");
-  armGrad.addColorStop(0.3, "#cccccc");
+  armGrad.addColorStop(0, "#888888");
+  armGrad.addColorStop(0.2, "#aaaaaa");
+  armGrad.addColorStop(0.4, "#cccccc");
   armGrad.addColorStop(0.5, "#dddddd");
-  armGrad.addColorStop(0.7, "#bbbbbb");
+  armGrad.addColorStop(0.6, "#cccccc");
+  armGrad.addColorStop(0.8, "#999999");
   armGrad.addColorStop(1, "#777777");
   ctx.fillStyle = armGrad;
   ctx.fill();
   ctx.shadowColor = "transparent";
 
-  ctx.beginPath();
-  ctx.moveTo(pivotX + perpX * baseHalf * 0.15, pivotY + perpY * baseHalf * 0.15);
-  ctx.lineTo(headX + perpX * tipHalf * 0.15, headY + perpY * tipHalf * 0.15);
-  ctx.strokeStyle = "rgba(255, 255, 255, 0.35)";
-  ctx.lineWidth = Math.max(0.5, 1 * armScale);
+  ctx.strokeStyle = "rgba(50, 50, 50, 0.4)";
+  ctx.lineWidth = 0.5;
   ctx.stroke();
 
-  // --- 先端の箱（レコード針ホルダ） ---
-  const boxLen = Math.max(30, 50 * armScale);
-  const boxH = Math.max(15, 25 * armScale);
+  ctx.beginPath();
+  ctx.moveTo(pivotX, pivotY);
+  ctx.lineTo(bendX, bendY);
+  ctx.lineTo(tipEndX, tipEndY);
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.15)";
+  ctx.lineWidth = Math.max(0.3, 0.6);
+  ctx.stroke();
+
+  // カウンターウェイト→ピボット間の接続シャフト（重りの下に描画）
+  ctx.shadowColor = "rgba(0, 0, 0, 0.25)";
+  ctx.shadowBlur = minDim * 0.008;
+  ctx.shadowOffsetX = minDim * 0.002;
+  ctx.shadowOffsetY = minDim * 0.002;
+
+  const cwDist = armLength * 0.22;
+  const cwX = pivotX - Math.cos(armAngle) * cwDist;
+  const cwY = pivotY - Math.sin(armAngle) * cwDist;
+  const cwRadius = minDim * 0.022;
+
+  const shaftWidth = minDim * 0.007;
+  const shaftPerpX = Math.cos(armAngle + Math.PI / 2);
+  const shaftPerpY = Math.sin(armAngle + Math.PI / 2);
+
+  ctx.beginPath();
+  ctx.moveTo(cwX + shaftPerpX * shaftWidth, cwY + shaftPerpY * shaftWidth);
+  ctx.lineTo(pivotX + shaftPerpX * shaftWidth, pivotY + shaftPerpY * shaftWidth);
+  ctx.lineTo(pivotX - shaftPerpX * shaftWidth, pivotY - shaftPerpY * shaftWidth);
+  ctx.lineTo(cwX - shaftPerpX * shaftWidth, cwY - shaftPerpY * shaftWidth);
+  ctx.closePath();
+
+  const shaftGrad = ctx.createLinearGradient(
+    cwX + shaftPerpX * shaftWidth * 2, cwY + shaftPerpY * shaftWidth * 2,
+    cwX - shaftPerpX * shaftWidth * 2, cwY - shaftPerpY * shaftWidth * 2
+  );
+  shaftGrad.addColorStop(0, "#777777");
+  shaftGrad.addColorStop(0.3, "#aaaaaa");
+  shaftGrad.addColorStop(0.5, "#bbbbbb");
+  shaftGrad.addColorStop(0.7, "#aaaaaa");
+  shaftGrad.addColorStop(1, "#777777");
+  ctx.fillStyle = shaftGrad;
+  ctx.fill();
+  ctx.shadowColor = "transparent";
+
+  ctx.strokeStyle = "rgba(50, 50, 50, 0.3)";
+  ctx.lineWidth = 0.4;
+  ctx.stroke();
+
+  // カウンターウェイト（シャフトの上に描画）
+  ctx.shadowColor = "rgba(0, 0, 0, 0.35)";
+  ctx.shadowBlur = minDim * 0.015;
+  ctx.shadowOffsetX = minDim * 0.004;
+  ctx.shadowOffsetY = minDim * 0.004;
+
+  ctx.beginPath();
+  ctx.arc(cwX, cwY, cwRadius + 1.5, 0, Math.PI * 2);
+  ctx.fillStyle = "#1a1a1a";
+  ctx.fill();
+  const cwGrad = ctx.createRadialGradient(
+    cwX - cwRadius * 0.3, cwY - cwRadius * 0.3, 0,
+    cwX, cwY, cwRadius
+  );
+  cwGrad.addColorStop(0, "#888888");
+  cwGrad.addColorStop(0.3, "#666666");
+  cwGrad.addColorStop(0.7, "#444444");
+  cwGrad.addColorStop(1, "#2a2a2a");
+  ctx.beginPath();
+  ctx.arc(cwX, cwY, cwRadius, 0, Math.PI * 2);
+  ctx.fillStyle = cwGrad;
+  ctx.fill();
+  ctx.strokeStyle = "#222222";
+  ctx.lineWidth = 0.8;
+  ctx.stroke();
+
+  const cwRingR = cwRadius * 0.55;
+  ctx.beginPath();
+  ctx.arc(cwX, cwY, cwRingR, 0, Math.PI * 2);
+  ctx.strokeStyle = "rgba(150, 150, 150, 0.25)";
+  ctx.lineWidth = 0.6;
+  ctx.stroke();
+
+  // カートリッジ（先端の小さな黒い直方体ボックス）
+  // 中央に近づくにつれ「へ」字の弯曲が減り、アーム直線上に並行になる
+  const cartLen = minDim * 0.035;
+  const cartH = minDim * 0.016;
+  const cartAngleOuter = bentAngle + 0.15;
+  const cartAngleInner = armAngle + 0.05;
+  const cartAngle = lerp(cartAngleOuter, cartAngleInner, state.groovePosition);
 
   ctx.save();
-  ctx.translate(headX, headY);
-  ctx.rotate(armAngle);
-  const boxGrad = ctx.createLinearGradient(0, -boxH * 0.5, 0, boxH * 0.5);
-  boxGrad.addColorStop(0, "#aaaaaa");
-  boxGrad.addColorStop(0.3, "#dddddd");
-  boxGrad.addColorStop(0.7, "#bbbbbb");
-  boxGrad.addColorStop(1, "#777777");
-  ctx.fillStyle = boxGrad;
-  ctx.fillRect(0, -boxH * 0.5, boxLen, boxH);
-  ctx.strokeStyle = "#666666";
-  ctx.lineWidth = 0.8;
-  ctx.strokeRect(0, -boxH * 0.5, boxLen, boxH);
+  ctx.translate(tipEndX, tipEndY);
+  ctx.rotate(cartAngle);
+
+  ctx.shadowColor = "rgba(0, 0, 0, 0.25)";
+  ctx.shadowBlur = minDim * 0.004;
+  ctx.shadowOffsetX = minDim * 0.002;
+  ctx.shadowOffsetY = minDim * 0.002;
+
+  const cartGrad = ctx.createLinearGradient(0, -cartH * 0.5, 0, cartH * 0.5);
+  cartGrad.addColorStop(0, "#333333");
+  cartGrad.addColorStop(0.3, "#252525");
+  cartGrad.addColorStop(0.7, "#1a1a1a");
+  cartGrad.addColorStop(1, "#111111");
+  ctx.fillStyle = cartGrad;
+  ctx.beginPath();
+  ctx.roundRect(-2, -cartH * 0.5, cartLen + 2, cartH, 1);
+  ctx.fill();
+  ctx.shadowColor = "transparent";
+
+  ctx.strokeStyle = "#3a3a3a";
+  ctx.lineWidth = 0.5;
+  ctx.stroke();
+
+  // カートリッジ表面の細部（溝模様）
+  ctx.strokeStyle = "rgba(60, 60, 60, 0.3)";
+  ctx.lineWidth = 0.3;
+  for (let i = 1; i < 4; i++) {
+    const lx = cartLen * (i / 4);
+    ctx.beginPath();
+    ctx.moveTo(lx, -cartH * 0.35);
+    ctx.lineTo(lx, cartH * 0.35);
+    ctx.stroke();
+  }
+
+  // 針（カートリッジ先端寄りから細く突き出る）
+  const needleLen = minDim * 0.012;
+  const needleW = minDim * 0.001;
+  ctx.beginPath();
+  ctx.moveTo(cartLen * 0.7, -needleW);
+  ctx.lineTo(cartLen + needleLen, 0);
+  ctx.lineTo(cartLen * 0.7, needleW);
+  ctx.closePath();
+  const needleGrad = ctx.createLinearGradient(0, -needleW, 0, needleW);
+  needleGrad.addColorStop(0, "#aaaaaa");
+  needleGrad.addColorStop(0.5, "#dddddd");
+  needleGrad.addColorStop(1, "#888888");
+  ctx.fillStyle = needleGrad;
+  ctx.fill();
+
   ctx.restore();
 
-  // --- ピボット（回転軸） ---
-  const pivotRadius = Math.max(6, 10 * armScale);
+  // ピボット基部（円筒形の回転軸）
+  const pivotRadius = minDim * 0.024;
   ctx.beginPath();
-  ctx.arc(pivotX, pivotY, pivotRadius + Math.max(2, 3 * armScale), 0, Math.PI * 2);
-  ctx.fillStyle = "#222222";
+  ctx.arc(pivotX, pivotY, pivotRadius + minDim * 0.005, 0, Math.PI * 2);
+  ctx.fillStyle = "#1a1a1a";
   ctx.fill();
-  ctx.beginPath();
-  ctx.arc(pivotX, pivotY, pivotRadius, 0, Math.PI * 2);
   const pivGrad = ctx.createRadialGradient(
     pivotX - pivotRadius * 0.3, pivotY - pivotRadius * 0.3, 0,
     pivotX, pivotY, pivotRadius
   );
   pivGrad.addColorStop(0, "#cccccc");
-  pivGrad.addColorStop(0.4, "#aaaaaa");
-  pivGrad.addColorStop(0.8, "#777777");
-  pivGrad.addColorStop(1, "#444444");
+  pivGrad.addColorStop(0.3, "#aaaaaa");
+  pivGrad.addColorStop(0.6, "#888888");
+  pivGrad.addColorStop(1, "#555555");
+  ctx.beginPath();
+  ctx.arc(pivotX, pivotY, pivotRadius, 0, Math.PI * 2);
   ctx.fillStyle = pivGrad;
   ctx.fill();
-  ctx.strokeStyle = "#333333";
-  ctx.lineWidth = 1;
+  ctx.strokeStyle = "#444444";
+  ctx.lineWidth = 0.8;
   ctx.stroke();
-  const capRadius = Math.max(2, 3.5 * armScale);
+
+  const capRadius = minDim * 0.007;
   ctx.beginPath();
   ctx.arc(pivotX, pivotY, capRadius, 0, Math.PI * 2);
   const capGrad = ctx.createRadialGradient(
-    pivotX - 1, pivotY - 1, 0,
+    pivotX - 0.5, pivotY - 0.5, 0,
     pivotX, pivotY, capRadius
   );
-  capGrad.addColorStop(0, "#eeeeee");
-  capGrad.addColorStop(1, "#888888");
+  capGrad.addColorStop(0, "#ffffff");
+  capGrad.addColorStop(0.5, "#dddddd");
+  capGrad.addColorStop(1, "#999999");
   ctx.fillStyle = capGrad;
   ctx.fill();
 

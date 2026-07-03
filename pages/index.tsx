@@ -93,6 +93,10 @@ import {
   getSpectrumPivotOverlayPercent,
   getSpaceCenterOverlayPercent,
   overlayPercentToModeOffsets,
+  getPreviewGuideLayoutRects,
+  canvasOverlayPercentToStageStyle,
+  clientPointToCanvasOverlayPercent,
+  type PreviewGuideLayoutRects,
 } from "../lib/spectrumAdjustments";
 import {
   densityToWaterRippleIntensity,
@@ -904,9 +908,9 @@ const Home: NextPage = () => {
   const [mirrorBall, setMirrorBall] = useState<MirrorBallAdjust>(DEFAULT_MIRROR_BALL);
 
   // レコードプレイヤーエフェクト設定
-  const [recordPlayerRpm, setRecordPlayerRpm] = useState<number>(6);
-  const [recordPlayerDiscStyle, setRecordPlayerDiscStyle] = useState<"full" | "groove">("groove");
-  const [recordPlayerDiscSize, setRecordPlayerDiscSize] = useState<"compact" | "edge">("compact");
+  const [recordPlayerRpm, setRecordPlayerRpm] = useState<number>(3);
+  const [recordPlayerDiscSize, setRecordPlayerDiscSize] = useState<"donut" | "7inch" | "10inch" | "12inch">("12inch");
+  const [recordPlayerColorScheme, setRecordPlayerColorScheme] = useState<"dark" | "light">("dark");
 
   const [settingsTab, setSettingsTab] = useState(0);
   const [screenMotion, setScreenMotion] = useState<ScreenMotionSettings>(DEFAULT_SCREEN_MOTION);
@@ -1085,8 +1089,8 @@ const Home: NextPage = () => {
       }
     } else if (effectType === "recordPlayer") {
       base.recordPlayerRpm = recordPlayerRpm;
-      base.recordPlayerDiscStyle = recordPlayerDiscStyle;
       base.recordPlayerDiscSize = recordPlayerDiscSize;
+      base.recordPlayerColorScheme = recordPlayerColorScheme;
     }
     return base;
   }, [
@@ -1112,8 +1116,8 @@ const Home: NextPage = () => {
     atmosphereStrength,
     mirrorBall,
     recordPlayerRpm,
-    recordPlayerDiscStyle,
     recordPlayerDiscSize,
+    recordPlayerColorScheme,
   ]);
 
   const [recordVideoBitrateMbps, setRecordVideoBitrateMbps] = useState<number>(8);
@@ -1245,13 +1249,13 @@ const Home: NextPage = () => {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    mwvSetItem("common_recordPlayerDiscStyle", recordPlayerDiscStyle);
-  }, [recordPlayerDiscStyle]);
+    mwvSetItem("common_recordPlayerDiscSize", recordPlayerDiscSize);
+  }, [recordPlayerDiscSize]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    mwvSetItem("common_recordPlayerDiscSize", recordPlayerDiscSize);
-  }, [recordPlayerDiscSize]);
+    mwvSetItem("common_recordPlayerColorScheme", recordPlayerColorScheme);
+  }, [recordPlayerColorScheme]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -2145,8 +2149,21 @@ const Home: NextPage = () => {
     }
   };
 
-  const beginSpaceCenterGuide = useCallback(() => setShowSpaceCenterGuide(true), []);
-  const endSpaceCenterGuide = useCallback(() => setShowSpaceCenterGuide(false), []);
+  const spaceCenterGuideDraggingRef = useRef(false);
+  const beginSpaceCenterGuide = useCallback(() => {
+    spaceCenterGuideDraggingRef.current = true;
+    setShowSpaceCenterGuide(true);
+  }, []);
+  useEffect(() => {
+    const onUp = () => {
+      if (spaceCenterGuideDraggingRef.current) {
+        spaceCenterGuideDraggingRef.current = false;
+        setShowSpaceCenterGuide(false);
+      }
+    };
+    window.addEventListener("pointerup", onUp);
+    return () => window.removeEventListener("pointerup", onUp);
+  }, []);
 
   useEffect(() => {
     setRainColorInput(rainWeather.color.toUpperCase());
@@ -2475,17 +2492,93 @@ const Home: NextPage = () => {
     [previewGuideCanvasDims.width, previewGuideCanvasDims.height, modeAdjustments, mode]
   );
 
+  const spaceCenterGuidePos = useMemo(
+    () => getSpaceCenterOverlayPercent(spaceCenterX, spaceCenterY),
+    [spaceCenterX, spaceCenterY]
+  );
+
+  const [previewGuideLayout, setPreviewGuideLayout] = useState<PreviewGuideLayoutRects | null>(
+    null
+  );
+
+  const measurePreviewGuideLayout = useCallback(() => {
+    const stage = previewCanvasStageRef.current;
+    const canvas = canvasRef.current;
+    if (!stage || !canvas) {
+      setPreviewGuideLayout(null);
+      return;
+    }
+    setPreviewGuideLayout(getPreviewGuideLayoutRects(stage, canvas));
+  }, []);
+
+  useLayoutEffect(() => {
+    measurePreviewGuideLayout();
+  }, [
+    measurePreviewGuideLayout,
+    activeCanvasLayout,
+    modeAdjustments,
+    spaceCenterX,
+    spaceCenterY,
+    showSpectrumOffsetGuide,
+    showSpaceCenterGuide,
+    mode,
+  ]);
+
+  useLayoutEffect(() => {
+    const stage = previewCanvasStageRef.current;
+    const canvas = canvasRef.current;
+    if (!stage || !canvas) return;
+    const observer = new ResizeObserver(() => measurePreviewGuideLayout());
+    observer.observe(stage);
+    observer.observe(canvas);
+    window.addEventListener("resize", measurePreviewGuideLayout);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", measurePreviewGuideLayout);
+    };
+  }, [measurePreviewGuideLayout]);
+
+  const resolveGuideDotStageStyle = useCallback(
+    (leftPercent: number, topPercent: number) => {
+      if (previewGuideLayout) {
+        return canvasOverlayPercentToStageStyle(leftPercent, topPercent, previewGuideLayout);
+      }
+      return {
+        left: `${leftPercent}%`,
+        top: `${topPercent}%`,
+      };
+    },
+    [previewGuideLayout]
+  );
+
+  const spectrumOffsetGuideDotStyle = useMemo(
+    () =>
+      resolveGuideDotStageStyle(
+        spectrumOffsetGuidePos.leftPercent,
+        spectrumOffsetGuidePos.topPercent
+      ),
+    [resolveGuideDotStageStyle, spectrumOffsetGuidePos.leftPercent, spectrumOffsetGuidePos.topPercent]
+  );
+
+  const spaceCenterGuideDotStyle = useMemo(
+    () =>
+      resolveGuideDotStageStyle(
+        spaceCenterGuidePos.leftPercent,
+        spaceCenterGuidePos.topPercent
+      ),
+    [resolveGuideDotStageStyle, spaceCenterGuidePos.leftPercent, spaceCenterGuidePos.topPercent]
+  );
+
   const applySpectrumOffsetFromGuidePointer = useCallback(
     (clientX: number, clientY: number) => {
-      const stage = previewCanvasStageRef.current;
-      if (!stage) return;
-      const rect = stage.getBoundingClientRect();
-      if (rect.width <= 0 || rect.height <= 0) return;
-      const leftPercent = ((clientX - rect.left) / rect.width) * 100;
-      const topPercent = ((clientY - rect.top) / rect.height) * 100;
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const canvasRect = canvas.getBoundingClientRect();
+      const overlay = clientPointToCanvasOverlayPercent(clientX, clientY, canvasRect);
+      if (!overlay) return;
       const { offsetX, offsetY } = overlayPercentToModeOffsets(
-        leftPercent,
-        topPercent,
+        overlay.leftPercent,
+        overlay.topPercent,
         previewGuideCanvasDims.width,
         previewGuideCanvasDims.height,
         modeAdjustments,
@@ -2537,12 +2630,6 @@ const Home: NextPage = () => {
       setShowSpectrumOffsetGuide(false);
     }
   }, []);
-
-  const spaceCenterGuidePos = useMemo(
-    () => getSpaceCenterOverlayPercent(spaceCenterX, spaceCenterY),
-    [spaceCenterX, spaceCenterY]
-  );
-
 
   const webglBlockedByVideoBackground = backgroundMediaMode === "video";
   const webglSwitchDisabled =
@@ -2933,6 +3020,11 @@ const Home: NextPage = () => {
       if (resolved !== savedEffectType) {
         mwvSetItem("common_effectType", resolved);
       }
+    }
+
+    const savedRecordPlayerColorScheme = mwvGetItem("common_recordPlayerColorScheme");
+    if (savedRecordPlayerColorScheme === "dark" || savedRecordPlayerColorScheme === "light") {
+      setRecordPlayerColorScheme(savedRecordPlayerColorScheme);
     }
 
     try {
@@ -5769,6 +5861,7 @@ const Home: NextPage = () => {
       ? srtAuthorEditingField[key]
       : (Number.isFinite(cue[field]) ? cue[field].toFixed(2) : "");
     return (
+    <>
     <Box sx={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 18px", gap: 0.25, width: { xs: "100%", sm: 94 } }}>
       <TextField
         size="small"
@@ -5820,11 +5913,12 @@ const Home: NextPage = () => {
           },
         }}
       />
+      </Box>
       <Box sx={{ display: "flex", flexDirection: "column", gap: "1px", alignSelf: "center" }}>
         {renderSrtAuthorTimeStepButton(index, field, SRT_AUTHOR_TIME_STEP_SEC, `${label} +${SRT_AUTHOR_TIME_STEP_SEC}`)}
         {renderSrtAuthorTimeStepButton(index, field, -SRT_AUTHOR_TIME_STEP_SEC, `${label} -${SRT_AUTHOR_TIME_STEP_SEC}`)}
       </Box>
-    </Box>
+    </>
     );
   };
 
@@ -7027,26 +7121,26 @@ const Home: NextPage = () => {
                           <Typography variant="caption" color="textSecondary" display="block">
                             {t("effect.spaceCenterX", { value: Math.round(spaceCenterX * 100) })}
                           </Typography>
-                          <Slider
+                          <ResettableSlider
                             value={spaceCenterX}
                             min={0.05}
                             max={0.95}
                             step={0.01}
                             onChange={(_, v) => setSpaceCenterX(v as number)}
                             onPointerDown={beginSpaceCenterGuide}
-                            onPointerUp={endSpaceCenterGuide}
+                            onResetToDefault={() => setSpaceCenterX(0.5)}
                           />
                           <Typography variant="caption" color="textSecondary" display="block">
                             {t("effect.spaceCenterY", { value: Math.round(spaceCenterY * 100) })}
                           </Typography>
-                          <Slider
+                          <ResettableSlider
                             value={spaceCenterY}
                             min={0.08}
                             max={0.92}
                             step={0.01}
                             onChange={(_, v) => setSpaceCenterY(v as number)}
                             onPointerDown={beginSpaceCenterGuide}
-                            onPointerUp={endSpaceCenterGuide}
+                            onResetToDefault={() => setSpaceCenterY(0.5)}
                           />
                         </Box>
                         <Box sx={{ width: "100%", maxWidth: 440, mt: 2, mx: "auto" }}>
@@ -7663,31 +7757,14 @@ const Home: NextPage = () => {
                           />
                           <Typography variant="caption" color="textSecondary">RPM</Typography>
                         </Box>
-                        <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 1 }}>
-                          {t("effect.recordPlayerDiscStyle")}
-                        </Typography>
-                        <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
-                          {([
-                            { value: "full" as const, key: "effect.recordPlayerDiscStyleFull" },
-                            { value: "groove" as const, key: "effect.recordPlayerDiscStyleGroove" },
-                          ]).map(({ value, key }) => (
-                            <Button
-                              key={value}
-                              variant={recordPlayerDiscStyle === value ? "contained" : "outlined"}
-                              size="small"
-                              onClick={() => setRecordPlayerDiscStyle(value)}
-                            >
-                              {t(key)}
-                            </Button>
-                          ))}
-                        </Box>
                         <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 1, mt: 1.5 }}>
                           {t("effect.recordPlayerDiscSize")}
                         </Typography>
                         <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
                           {([
-                            { value: "compact" as const, key: "effect.recordPlayerDiscSizeCompact" },
-                            { value: "edge" as const, key: "effect.recordPlayerDiscSizeEdge" },
+                            { value: "7inch" as const, key: "effect.recordPlayerDiscSize7inch" },
+                            { value: "10inch" as const, key: "effect.recordPlayerDiscSize10inch" },
+                            { value: "12inch" as const, key: "effect.recordPlayerDiscSize12inch" },
                           ]).map(({ value, key }) => (
                             <Button
                               key={value}
@@ -7698,6 +7775,29 @@ const Home: NextPage = () => {
                               {t(key)}
                             </Button>
                           ))}
+                        </Box>
+                        <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 1, mt: 1.5 }}>
+                          {t("effect.recordPlayerColorScheme")}
+                        </Typography>
+                        <Box sx={{ display: "flex", gap: 1, mb: 1 }}>
+                          {([
+                            { value: "dark" as const, key: "effect.recordPlayerColorSchemeDark" },
+                            { value: "light" as const, key: "effect.recordPlayerColorSchemeLight" },
+                          ]).map(({ value, key }) => (
+                            <Button
+                              key={value}
+                              variant={recordPlayerColorScheme === value ? "contained" : "outlined"}
+                              size="small"
+                              onClick={() => setRecordPlayerColorScheme(value)}
+                            >
+                              {t(key)}
+                            </Button>
+                          ))}
+                        </Box>
+                        <Box sx={{ p: 1.5, bgcolor: "grey.100", borderRadius: 1, mt: 1 }}>
+                          <Typography variant="caption" color="textSecondary">
+                            {t("effect.recordPlayerAspectRatioNote")}
+                          </Typography>
                         </Box>
                       </Box>
                     )}
@@ -7824,6 +7924,7 @@ const Home: NextPage = () => {
                     step={1}
                     disabled={!screenMotion.motionEnabled}
                     onChange={(_, v) => patchScreenMotion({ speedForward: v as number })}
+                    onDoubleClick={(e) => { e.preventDefault(); patchScreenMotion({ speedForward: 1 }); }}
                     onResetToDefault={() => patchScreenMotion({ speedForward: DEFAULT_SCREEN_MOTION.speedForward })}
                   />
                   <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 2 }}>
@@ -8667,18 +8768,68 @@ const Home: NextPage = () => {
                     label={t("subtitle.italic")}
                   />
                 </Box>
+                <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 0.5 }}>
+                  {t("subtitle.color")}
+                </Typography>
+                <Box sx={paletteGridSx}>
+                  {DEFAULT_COLOR_PALETTE_20.map((c) => (
+                    <Box
+                      key={`sub-color-${c}`}
+                      component="button"
+                      type="button"
+                      aria-label={`${t("subtitle.color")} ${c}`}
+                      onClick={() => setSubtitleStyle((p) => ({ ...p, color: c.toUpperCase() }))}
+                      sx={{
+                        width: 28,
+                        height: 28,
+                        borderRadius: 0.75,
+                        border:
+                          subtitleStyle.color.toUpperCase() === c.toUpperCase()
+                            ? "2px solid #111"
+                            : "1px solid #999",
+                        backgroundColor: c,
+                        cursor: "pointer",
+                        p: 0,
+                      }}
+                    />
+                  ))}
+                </Box>
                 <TextField
                   size="small"
                   fullWidth
-                  label={t("subtitle.color")}
                   value={subtitleStyle.color}
                   onChange={(e) => setSubtitleStyle((p) => ({ ...p, color: normalizeHexColorInput(e.target.value) }))}
                   sx={{ mb: 1.5 }}
                 />
+                <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 0.5 }}>
+                  {t("subtitle.strokeColor")}
+                </Typography>
+                <Box sx={paletteGridSx}>
+                  {DEFAULT_COLOR_PALETTE_20.map((c) => (
+                    <Box
+                      key={`sub-stroke-${c}`}
+                      component="button"
+                      type="button"
+                      aria-label={`${t("subtitle.strokeColor")} ${c}`}
+                      onClick={() => setSubtitleStyle((p) => ({ ...p, strokeColor: c.toUpperCase() }))}
+                      sx={{
+                        width: 28,
+                        height: 28,
+                        borderRadius: 0.75,
+                        border:
+                          subtitleStyle.strokeColor.toUpperCase() === c.toUpperCase()
+                            ? "2px solid #111"
+                            : "1px solid #999",
+                        backgroundColor: c,
+                        cursor: "pointer",
+                        p: 0,
+                      }}
+                    />
+                  ))}
+                </Box>
                 <TextField
                   size="small"
                   fullWidth
-                  label={t("subtitle.strokeColor")}
                   value={subtitleStyle.strokeColor}
                   onChange={(e) => setSubtitleStyle((p) => ({ ...p, strokeColor: normalizeHexColorInput(e.target.value) }))}
                   sx={{ mb: 1.5 }}
@@ -9329,14 +9480,11 @@ const Home: NextPage = () => {
                 ref={canvasRef}
                 data-size={activeCanvasLayout}
               ></canvas>
-              {isSpaceEffect && (
+              {isSpaceEffect && showSpaceCenterGuide && (
                 <div className={styles.spaceCenterGuideLayer}>
                   <div
                     className={styles.spaceCenterGuideDot}
-                    style={{
-                      left: `${spaceCenterGuidePos.leftPercent}%`,
-                      top: `${spaceCenterGuidePos.topPercent}%`,
-                    }}
+                    style={spaceCenterGuideDotStyle}
                   />
                 </div>
               )}
@@ -9345,10 +9493,7 @@ const Home: NextPage = () => {
                   <div
                     role="presentation"
                     className={`${styles.spaceCenterGuideDot} ${styles.spectrumOffsetGuideDot}`}
-                    style={{
-                      left: `${spectrumOffsetGuidePos.leftPercent}%`,
-                      top: `${spectrumOffsetGuidePos.topPercent}%`,
-                    }}
+                    style={spectrumOffsetGuideDotStyle}
                     onPointerDown={handleSpectrumGuidePointerDown}
                     onPointerMove={handleSpectrumGuidePointerMove}
                     onPointerUp={handleSpectrumGuidePointerUp}

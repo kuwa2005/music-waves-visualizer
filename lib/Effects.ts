@@ -114,6 +114,8 @@ export interface EffectParams {
   recordPlayerDiscStyle?: DiscStyle;
   /** レコードプレイヤー: ディスクサイズ */
   recordPlayerDiscSize?: DiscSize;
+  /** レコードプレイヤー: 配色パターン */
+  recordPlayerColorScheme?: "dark" | "light";
 }
 
 /** 音源連動用メトリクス（0〜1正規化） */
@@ -742,13 +744,13 @@ function drawSparkleHeartShape(
   ctx.rotate(rotation);
   ctx.scale(s / 16, s / 16);
   ctx.beginPath();
-  ctx.moveTo(0, 6);
-  ctx.bezierCurveTo(-8, -1, -11, -8, -4, -12);
-  ctx.bezierCurveTo(0, -14, 4, -11, 4, -7);
-  ctx.bezierCurveTo(4, -11, 8, -14, 12, -12);
-  ctx.bezierCurveTo(19, -8, 16, -1, 8, 6);
-  ctx.bezierCurveTo(5, 9, 3, 11, 0, 14);
-  ctx.bezierCurveTo(-3, 11, -5, 9, -8, 6);
+  ctx.moveTo(0, 12);
+  ctx.bezierCurveTo(-2, 8, -8, 2, -10, -2);
+  ctx.bezierCurveTo(-12, -6, -12, -10, -8, -12);
+  ctx.bezierCurveTo(-4, -14, 0, -11, 0, -8);
+  ctx.bezierCurveTo(0, -11, 4, -14, 8, -12);
+  ctx.bezierCurveTo(12, -10, 12, -6, 10, -2);
+  ctx.bezierCurveTo(8, 2, 2, 8, 0, 12);
   ctx.closePath();
   ctx.fillStyle = `rgba(${r},${g},${b},${Math.min(1, a * 0.92)})`;
   ctx.fill();
@@ -2053,13 +2055,13 @@ function drawWaterRippleCanvas(
     } else {
       ctx.scale(s / 16, s / 16);
       ctx.beginPath();
-      ctx.moveTo(0, 6);
-      ctx.bezierCurveTo(-8, -1, -11, -8, -4, -12);
-      ctx.bezierCurveTo(0, -14, 4, -11, 4, -7);
-      ctx.bezierCurveTo(4, -11, 8, -14, 12, -12);
-      ctx.bezierCurveTo(19, -8, 16, -1, 8, 6);
-      ctx.bezierCurveTo(5, 9, 3, 11, 0, 14);
-      ctx.bezierCurveTo(-3, 11, -5, 9, -8, 6);
+      ctx.moveTo(0, 12);
+      ctx.bezierCurveTo(-2, 8, -8, 2, -10, -2);
+      ctx.bezierCurveTo(-12, -6, -12, -10, -8, -12);
+      ctx.bezierCurveTo(-4, -14, 0, -11, 0, -8);
+      ctx.bezierCurveTo(0, -11, 4, -14, 8, -12);
+      ctx.bezierCurveTo(12, -10, 12, -6, 10, -2);
+      ctx.bezierCurveTo(8, 2, 2, 8, 0, 12);
       ctx.closePath();
       ctx.stroke();
     }

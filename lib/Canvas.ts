@@ -1,5 +1,11 @@
 import { drawEffectOverlayCanvas, type EffectParams, type AudioReactiveData } from "./Effects";
-import { drawRecordPlayerBackground, drawRecordPlayerOverlay, updateTonearmState, clearRecordPlayerCache } from "./recordPlayer";
+import {
+  advanceRecordDiscRotation,
+  drawRecordPlayerBackground,
+  drawRecordPlayerOverlay,
+  updateTonearmState,
+  clearRecordPlayerCache,
+} from "./recordPlayer";
 import {
   clearTextOverlayCaches,
   renderSubtitleOverlayCanvas,
@@ -685,6 +691,7 @@ export function resetSpectrumRuntimeState(): void {
   (drawBars as any)._mode13Level = undefined;
   (drawBars as any)._mode13Particles = undefined;
   (drawBars as any)._mode14Morph = undefined;
+  (drawBars as any)._recordPlayerLastDrawMs = undefined;
   resetSpectrumTimelineState();
 }
 
@@ -998,6 +1005,15 @@ export const drawBars = (
   const galleryTransition = peekGalleryImageTransitionFrame();
   const bgVideo = settings.backgroundVideo;
 
+  let recordPlayerFrameDeltaMs = 0;
+  if (effect?.type === "recordPlayer") {
+    const nowMs = performance.now();
+    const lastMs = (drawBars as any)._recordPlayerLastDrawMs as number | undefined;
+    recordPlayerFrameDeltaMs =
+      lastMs == null ? resolveSpectrumFrameDeltaMs(settings) : Math.min(nowMs - lastMs, 100);
+    (drawBars as any)._recordPlayerLastDrawMs = nowMs;
+  }
+
   let bgAudioReactive: AudioReactiveData | undefined;
   if (
     imageCtx &&
@@ -1047,6 +1063,7 @@ export const drawBars = (
       ctx.fillRect(0, 0, canvasWidth, canvasHeight);
     }
   } else if (
+    effect?.type !== "recordPlayer" &&
     shouldUseStillScreenBackgroundPipeline(imageCtx, settings.screenMotion, !!bgVideo, !!galleryTransition)
   ) {
     drawStillScreenBackground(
@@ -1074,17 +1091,18 @@ export const drawBars = (
         imageCtx,
         canvasWidth,
         canvasHeight,
-        effect.recordPlayerRpm ?? 33,
-        effect.recordPlayerDiscStyle ?? "groove",
-        effect.recordPlayerDiscSize ?? "compact",
-        elapsedSec
+        effect.recordPlayerRpm ?? 3,
+        effect.recordPlayerDiscStyle ?? "full",
+        effect.recordPlayerDiscSize ?? "12inch",
+        elapsedSec,
+        !!effectActive,
+        recordPlayerFrameDeltaMs,
+        effect.recordPlayerColorScheme ?? "dark"
       );
     } else {
       const offscreenCanvas = drawImageToOffscreen(imageCtx, canvasWidth, canvasHeight);
       ctx.drawImage(offscreenCanvas, 0, 0);
     }
-    ctx.restore();
-
     ctx.restore();
 
   } else if (settings.clearBackgroundTransparent) {
@@ -1100,18 +1118,13 @@ export const drawBars = (
     if (imageTimelineFadeAlpha < 0.999) {
       ctx.globalAlpha = imageTimelineFadeAlpha;
     }
-    const nowMs = performance.now();
-    const deltaMs = Math.min(nowMs - ((drawBars as any)._recordPlayerLastDrawMs ?? 0), 100);
-    (drawBars as any)._recordPlayerLastDrawMs = nowMs;
-
-    // 再生進行度を計算（0〜1）
     const timing = settings.getPlaybackTiming?.();
     const playbackProgress = (timing && timing.durationSec > 0)
       ? Math.min(1, timing.elapsedSec / timing.durationSec)
       : null;
-    updateTonearmState(!!effectActive, playbackProgress, deltaMs);
+    updateTonearmState(!!effectActive, playbackProgress, recordPlayerFrameDeltaMs);
 
-    drawRecordPlayerOverlay(ctx, canvasWidth, canvasHeight, !!effectActive, deltaMs, effect.recordPlayerDiscSize ?? "compact");
+    drawRecordPlayerOverlay(ctx, canvasWidth, canvasHeight, !!effectActive, recordPlayerFrameDeltaMs, effect.recordPlayerDiscSize ?? "12inch");
     ctx.restore();
   }
 

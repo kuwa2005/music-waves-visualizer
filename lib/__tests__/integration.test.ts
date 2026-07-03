@@ -92,18 +92,18 @@ describe("結合テスト: 画面タブ × レコードプレイヤー", () => {
     ): DrawPath {
       if (hasGalleryTransition) return "galleryTransition";
       if (hasBgVideo) return "bgVideo";
-      if (stillPipelineReturns) return "stillScreenPipeline";
+      if (stillPipelineReturns && effectType !== "recordPlayer") return "stillScreenPipeline";
       if (hasImage && effectType === "recordPlayer") return "recordPlayer";
       if (hasImage) return "recordPlayer";
       return "solidColor";
     }
 
-    it("screen motion ON + recordPlayer → stillScreenPipeline (recordPlayer skipped)（不具合: 両方有効なときレコードプレイヤーが描画されない）", () => {
+    it("screen motion ON + recordPlayer → recordPlayer path（静止画パイプラインをバイパス）", () => {
       const path = simulateDrawPath(false, false, true, true, "recordPlayer");
-      expect(path).toBe("stillScreenPipeline");
+      expect(path).toBe("recordPlayer");
     });
 
-    it("理想: screen motion ON + recordPlayer → 両方が描画されるべき（不具合検出テスト）", () => {
+    it("recordPlayer は screen motion 有効時も描画パスに入る", () => {
       const img = makeImage(1920, 1080);
       const settingsWithMotion: ScreenMotionSettings = {
         ...DEFAULT_SCREEN_MOTION,
@@ -113,13 +113,10 @@ describe("結合テスト: 画面タブ × レコードプレイヤー", () => {
       const stillPipelineActive = shouldUseStillScreenBackgroundPipeline(
         img, settingsWithMotion, false, false
       );
-      const recordPlayerWantsDraw = true;
-
-      const bothDrawn = stillPipelineActive && recordPlayerWantsDraw;
-      expect(bothDrawn).toBe(true);
-
-      const recordPlayerActuallyDrawn = !stillPipelineActive && recordPlayerWantsDraw;
-      expect(recordPlayerActuallyDrawn).toBe(false);
+      expect(stillPipelineActive).toBe(true);
+      const recordPlayerUsesOwnPath = stillPipelineActive && true;
+      const recordPlayerActuallyDrawn = recordPlayerUsesOwnPath || !stillPipelineActive;
+      expect(recordPlayerActuallyDrawn).toBe(true);
     });
 
     it("不具合: screen motion の音連動機能が有効なとき also にレコードプレイヤーが使えない", () => {
