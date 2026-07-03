@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Subtitle X offset** (`lib/subtitles.ts`, `pages/index.tsx`): Position X offset slider (0–10%) for subtitles, stored independently per alignment (left/center/right). Prevents text from clipping at canvas edges when using left or right alignment.
+
 ### Fixed
 
 - **Frame rate instability during preview** ([#43](https://github.com/kuwa2005/music-waves-visualizer/issues/43)): `getTargetFps` returned `null` for normal preview (no recording, no video background), which disabled the frame throttle entirely. Frame rate then followed the browser display refresh rate (e.g. 120 Hz) causing unstable / stuttering visuals. Fixed by returning `DEFAULT_PREVIEW_FPS` (60) as the fallback target.

@@ -239,6 +239,7 @@
     "sunoBookmarklet": "Get SRT subtitles from Suno",
     "sunoBookmarkletHint": "Use a bookmarklet on Suno's page to automatically generate SRT files from lyrics.",
     "positionY": "Position (Y): {{value}}%",
+    "positionXOffset": "Position X offset: {{value}}%",
     "align": "Align",
     "alignLeft": "Left",
     "alignCenter": "Center",

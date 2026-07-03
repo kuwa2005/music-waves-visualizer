@@ -1790,6 +1790,9 @@ const Home: NextPage = () => {
             ...DEFAULT_SUBTITLE_STYLE,
             ...s,
             positionYPercent: Math.max(5, Math.min(98, Number(s.positionYPercent ?? DEFAULT_SUBTITLE_STYLE.positionYPercent))),
+            positionXOffsetLeftPercent: Math.max(0, Math.min(10, Number(s.positionXOffsetLeftPercent ?? DEFAULT_SUBTITLE_STYLE.positionXOffsetLeftPercent))),
+            positionXOffsetCenterPercent: Math.max(0, Math.min(10, Number(s.positionXOffsetCenterPercent ?? DEFAULT_SUBTITLE_STYLE.positionXOffsetCenterPercent))),
+            positionXOffsetRightPercent: Math.max(0, Math.min(10, Number(s.positionXOffsetRightPercent ?? DEFAULT_SUBTITLE_STYLE.positionXOffsetRightPercent))),
             fontSize: Math.max(12, Math.min(96, Number(s.fontSize ?? DEFAULT_SUBTITLE_STYLE.fontSize))),
             strokeWidth: Math.max(0, Math.min(12, Number(s.strokeWidth ?? DEFAULT_SUBTITLE_STYLE.strokeWidth))),
             shadowBlur: Math.max(0, Math.min(30, Number(s.shadowBlur ?? DEFAULT_SUBTITLE_STYLE.shadowBlur))),
@@ -3252,6 +3255,9 @@ const Home: NextPage = () => {
           ...DEFAULT_SUBTITLE_STYLE,
           ...s,
           positionYPercent: Math.max(5, Math.min(98, Number(s.positionYPercent ?? DEFAULT_SUBTITLE_STYLE.positionYPercent))),
+          positionXOffsetLeftPercent: Math.max(0, Math.min(10, Number(s.positionXOffsetLeftPercent ?? DEFAULT_SUBTITLE_STYLE.positionXOffsetLeftPercent))),
+          positionXOffsetCenterPercent: Math.max(0, Math.min(10, Number(s.positionXOffsetCenterPercent ?? DEFAULT_SUBTITLE_STYLE.positionXOffsetCenterPercent))),
+          positionXOffsetRightPercent: Math.max(0, Math.min(10, Number(s.positionXOffsetRightPercent ?? DEFAULT_SUBTITLE_STYLE.positionXOffsetRightPercent))),
           fontSize: Math.max(12, Math.min(96, Number(s.fontSize ?? DEFAULT_SUBTITLE_STYLE.fontSize))),
           strokeWidth: Math.max(0, Math.min(12, Number(s.strokeWidth ?? DEFAULT_SUBTITLE_STYLE.strokeWidth))),
           shadowBlur: Math.max(0, Math.min(30, Number(s.shadowBlur ?? DEFAULT_SUBTITLE_STYLE.shadowBlur))),
@@ -8689,15 +8695,7 @@ const Home: NextPage = () => {
                 </Accordion>
                 )}
 
-                <Typography gutterBottom>{t("subtitle.positionY", { value: subtitleStyle.positionYPercent.toFixed(0) })}</Typography>
-                <Slider
-                  value={subtitleStyle.positionYPercent}
-                  min={5}
-                  max={98}
-                  step={1}
-                  onChange={(_, v) => setSubtitleStyle((prev) => ({ ...prev, positionYPercent: v as number }))}
-                />
-                <FormControl size="small" fullWidth sx={{ mt: 1.5, mb: 1.5 }}>
+                <FormControl size="small" fullWidth sx={{ mb: 1.5 }}>
                   <InputLabel>{t("subtitle.align")}</InputLabel>
                   <Select
                     value={subtitleStyle.align}
@@ -8711,27 +8709,49 @@ const Home: NextPage = () => {
                     <MenuItem value="right">{t("subtitle.alignRight")}</MenuItem>
                   </Select>
                 </FormControl>
-                <FormControl size="small" fullWidth sx={{ mb: 1.5 }}>
-                  <InputLabel>{t("subtitle.displayType")}</InputLabel>
-                  <Select
-                    value={subtitleStyle.displayType}
-                    label={t("subtitle.displayType")}
-                    onChange={(e) =>
-                      setSubtitleStyle((prev) => ({ ...prev, displayType: e.target.value as SubtitleStyle["displayType"] }))
-                    }
-                  >
-                    <MenuItem value="plain">{t("subtitle.typePlain")}</MenuItem>
-                    <MenuItem value="outline">{t("subtitle.typeOutline")}</MenuItem>
-                    <MenuItem value="boxed">{t("subtitle.typeBoxed")}</MenuItem>
-                  </Select>
-                </FormControl>
-                <Typography gutterBottom>{t("subtitle.fontSize", { value: subtitleStyle.fontSize.toFixed(0) })}</Typography>
+                {subtitleStyle.align === "left" && (
+                  <>
+                    <Typography gutterBottom>{t("subtitle.positionXOffset", { value: (subtitleStyle.positionXOffsetLeftPercent ?? 0).toFixed(1) })}</Typography>
+                    <Slider
+                      value={subtitleStyle.positionXOffsetLeftPercent ?? 0}
+                      min={0}
+                      max={10}
+                      step={0.1}
+                      onChange={(_, v) => setSubtitleStyle((prev) => ({ ...prev, positionXOffsetLeftPercent: v as number }))}
+                    />
+                  </>
+                )}
+                {subtitleStyle.align === "center" && (
+                  <>
+                    <Typography gutterBottom>{t("subtitle.positionXOffset", { value: (subtitleStyle.positionXOffsetCenterPercent ?? 0).toFixed(1) })}</Typography>
+                    <Slider
+                      value={subtitleStyle.positionXOffsetCenterPercent ?? 0}
+                      min={0}
+                      max={10}
+                      step={0.1}
+                      onChange={(_, v) => setSubtitleStyle((prev) => ({ ...prev, positionXOffsetCenterPercent: v as number }))}
+                    />
+                  </>
+                )}
+                {subtitleStyle.align === "right" && (
+                  <>
+                    <Typography gutterBottom>{t("subtitle.positionXOffset", { value: (subtitleStyle.positionXOffsetRightPercent ?? 0).toFixed(1) })}</Typography>
+                    <Slider
+                      value={subtitleStyle.positionXOffsetRightPercent ?? 0}
+                      min={0}
+                      max={10}
+                      step={0.1}
+                      onChange={(_, v) => setSubtitleStyle((prev) => ({ ...prev, positionXOffsetRightPercent: v as number }))}
+                    />
+                  </>
+                )}
+                <Typography gutterBottom>{t("subtitle.positionY", { value: subtitleStyle.positionYPercent.toFixed(0) })}</Typography>
                 <Slider
-                  value={subtitleStyle.fontSize}
-                  min={12}
-                  max={96}
+                  value={subtitleStyle.positionYPercent}
+                  min={5}
+                  max={98}
                   step={1}
-                  onChange={(_, v) => setSubtitleStyle((prev) => ({ ...prev, fontSize: v as number }))}
+                  onChange={(_, v) => setSubtitleStyle((prev) => ({ ...prev, positionYPercent: v as number }))}
                 />
                 <FormControl size="small" fullWidth sx={{ mt: 1.5, mb: 1.5 }}>
                   <InputLabel>{t("subtitle.fontFamily")}</InputLabel>
@@ -8746,6 +8766,14 @@ const Home: NextPage = () => {
                     <MenuItem value="'Noto Sans JP', sans-serif">Noto Sans JP</MenuItem>
                   </Select>
                 </FormControl>
+                <Typography gutterBottom>{t("subtitle.fontSize", { value: subtitleStyle.fontSize.toFixed(0) })}</Typography>
+                <Slider
+                  value={subtitleStyle.fontSize}
+                  min={12}
+                  max={96}
+                  step={1}
+                  onChange={(_, v) => setSubtitleStyle((prev) => ({ ...prev, fontSize: v as number }))}
+                />
                 <Box sx={{ display: "flex", gap: 2, mb: 1.5 }}>
                   <FormControlLabel
                     control={

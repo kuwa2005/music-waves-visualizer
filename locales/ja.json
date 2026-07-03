@@ -239,6 +239,7 @@
     "sunoBookmarklet": "SunoからSRT字幕を取得する",
     "sunoBookmarkletHint": "Sunoのページでブックマークレットを使うと、歌詞からSRTファイルを自動生成できます。",
     "positionY": "位置（Y）: {{value}}%",
+    "positionXOffset": "位置オフセット（X）: {{value}}%",
     "align": "揃え",
     "alignLeft": "左寄せ",
     "alignCenter": "中央",

@@ -14,6 +14,9 @@ export type SubtitleAlign = "left" | "center" | "right";
 
 export type SubtitleStyle = {
   positionYPercent: number;
+  positionXOffsetLeftPercent: number;
+  positionXOffsetCenterPercent: number;
+  positionXOffsetRightPercent: number;
   align: SubtitleAlign;
   displayType: SubtitleDisplayType;
   color: string;
@@ -33,6 +36,9 @@ export type SubtitleStyle = {
 
 export const DEFAULT_SUBTITLE_STYLE: SubtitleStyle = {
   positionYPercent: 86,
+  positionXOffsetLeftPercent: 0,
+  positionXOffsetCenterPercent: 0,
+  positionXOffsetRightPercent: 0,
   align: "center",
   displayType: "outline",
   color: "#FFFFFF",
@@ -741,7 +747,12 @@ export function resolveSubtitleOverlayDraw(
     }
     const layer = resolveSubtitleLayer(layerKey, lines, style, canvasWidth, canvasHeight);
     if (!layer) return null;
-    const state: TextOverlayDrawState = { layer, alpha: 1, dy: 0, dx: 0, scale: 1 };
+    const pct = style.align === "left" ? style.positionXOffsetLeftPercent
+      : style.align === "right" ? style.positionXOffsetRightPercent
+      : style.positionXOffsetCenterPercent;
+    const sign = style.align === "right" ? -1 : 1;
+    const xPx = canvasWidth * ((pct ?? 0) / 100) * sign;
+    const state: TextOverlayDrawState = { layer, alpha: 1, dy: 0, dx: xPx, scale: 1 };
     lastSubtitleStaticKey = layerKey;
     lastSubtitleStaticDraw = state;
     scheduleSubtitlePrefetch(cues, lastCueSearchHint, style, canvasWidth, canvasHeight);
@@ -754,7 +765,12 @@ export function resolveSubtitleOverlayDraw(
   const layer = resolveSubtitleLayer(layerKey, lines, style, canvasWidth, canvasHeight);
   if (!layer) return null;
   scheduleSubtitlePrefetch(cues, lastCueSearchHint, style, canvasWidth, canvasHeight);
-  return { layer, ...anim, dx: 0 };
+  const pct = style.align === "left" ? style.positionXOffsetLeftPercent
+    : style.align === "right" ? style.positionXOffsetRightPercent
+    : style.positionXOffsetCenterPercent;
+  const sign = style.align === "right" ? -1 : 1;
+  const xPx = canvasWidth * ((pct ?? 0) / 100) * sign;
+  return { layer, ...anim, dx: xPx };
 }
 
 export function resolveTitleOverlayDraw(
