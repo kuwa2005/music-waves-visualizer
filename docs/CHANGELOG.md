@@ -1,6 +1,6 @@
-# Changelog
+# 変更履歴
 
-## [Unreleased]
+## [未リリース]
 
 ### 追加
 
@@ -12,7 +12,7 @@
 
 ### 修正（2026-06 — レンダリング・字幕パフォーマンス、PR [#41](https://github.com/kuwa2005/music-waves-visualizer/pull/41)）
 
-- **WebGL背景のスクラッチ**: ギャラリー切替・`screenMotion` で毎フレームキャンバス生成 Instead、`bgTempCanvas` / `texSubImage2D` を再利用（`lib/WebGLRenderer.ts`）。
+- **WebGL背景のスクラッチ**: ギャラリー切替・`screenMotion` で毎フレームキャンバス生成を廃止、`bgTempCanvas` / `texSubImage2D` を再利用（`lib/WebGLRenderer.ts`）。
 - **FFTスクラッチバッファ**: Canvas 2D と WebGL がフレームごとの `Uint8Array` 再利用を共有（`canvasFft*Scratch` / `fft*Scratch`）。
 - **水滴WebGL**: `waterRipple` のドロップレット行を `LineBatch` で単一DrawCallにバッチ化（`lib/WebGLRenderer.ts`）。
 - **動画背景プレビュー**: 30fps スロットル；モード6 retro EQ がエフェクトOFF時にFFTを2重取得する問題を修正。
@@ -31,139 +31,139 @@
 
 - [#34](https://github.com/kuwa2005/music-waves-visualizer/issues/34) — 映像/音声MP4の同期ドリフト（変更なし）。
 - [#36](https://github.com/kuwa2005/music-waves-visualizer/issues/36) — WebGL動画背景（まだCanvas 2Dフォールバック）。
-- Remaining perf backlog: `filmGrain` per-frame `createImageData`, `mirrorBall` WebGL draw-call count — [#42](https://github.com/kuwa2005/music-waves-visualizer/issues/42).
+- 残りのパフォーマンスバックログ: `filmGrain` フレームごとの `createImageData`、`mirrorBall` WebGL draw-call数 — [#42](https://github.com/kuwa2005/music-waves-visualizer/issues/42)。
 
 ## [1.0.6] - 2026-06-05
 
-### Added
-- **Laser effect**: `lib/laserEffect.ts` — edge-burst colored beams (Canvas 2D + WebGL `drawLine`); density-only tuning; UI type `laser` with i18n `effect.laser`.
-- **File picker masks**: `components/FilePickerSplitButton.tsx` + `lib/fileValidation.ts` — split button (default / alternate / all) for image (still vs video), music (audio vs video), extension gates (`gateImageFile`, `gateAudioFile`, `gateVideoAsMediaFile`).
-- **Rain / water ripple audio sensitivity**: Sliders 0–10 (0.1 step, 0 = off); shared envelope in `lib/Effects.ts` (`rainAudioSensitivity`, `waterRippleAudioSensitivity`).
+### 追加
+- **レーザーエフェクト**: `lib/laserEffect.ts` — エッジバーストカラービーム（Canvas 2D + WebGL `drawLine`）；密度のみチューニング；UIタイプ `laser` と i18n `effect.laser`。
+- **ファイルピッカーマスク**: `components/FilePickerSplitButton.tsx` + `lib/fileValidation.ts` — スプリットボタン（デフォルト/代替/すべて）で画像（静止画/動画）、音楽（音声/動画）、拡張子フィルタ（`gateImageFile`、`gateAudioFile`、`gateVideoAsMediaFile`）。
+- **雨/水滴の音連動感度**: スライダー 0〜10（0.1刻み、0=OFF）；`lib/Effects.ts` で共有エンベロープ（`rainAudioSensitivity`、`waterRippleAudioSensitivity`）。
 
-### Changed
-- **Audio tab**: **Clip length** controls (presets, start/duration, fades) merged into **Audio** tab (`audioSettings.videoLengthSection`); dedicated Clip Length tab removed from tab order.
-- **Screen tab — sabi shake**: Chorus shake uses instant level + smoothed drive with higher peak (`SHAKE_EXCESS_CAP`); stronger response on loud hits (`lib/drawStillScreenBackground.ts`).
-- **Graceful stop on record end**: Early stop schedules GainNode fade (`scheduleEarlyStopGainFade`) and optional image alpha fade (`StopGracefulImageFade`, `resolveCombinedImageFadeAlpha`) so preview/recording does not cut abruptly.
-- **Clip / MP4 audio fade**: `resolveAudioFadeSchedule` applies in/out on the **audible segment** (not only when explicit platform max length matches); FFmpeg path adds `afade` + `-t` trim via `buildFfmpegAfadeFilter` / `Mp4AudioFadeEncode` (`lib/Ffmpeg.ts`, `lib/clipAudioFade.ts`).
-- **YouTube LUFS encode calibration**: UI stays **-14**; `loudnorm` integrated target **-13.95** (+0.05) when UI is -14 (`resolveLoudnormIntegratedTarget` in `lib/Ffmpeg.ts`). See [audio-quality.md](./audio-quality.md).
-- **Settings**: Supplement hint under **Clear all** (`settings.clearAllSupplement` JA/EN).
-- **React hooks**: Stabilized callbacks/refs around playback stop, spectrum settings, and encode paths in `pages/index.tsx` (exhaustive-deps / stale-closure fixes).
+### 変更
+- **音声タブ**: **クリップ長**コントロール（プリセット、開始/長さ、フェード）を**音声**タブに統合（`audioSettings.videoLengthSection`）；専用クリップ長タブを削除。
+- **画面タブ — サビ揺れ**: コーラス揺れが瞬間値+ smoothed drive でピーク向上（`SHAKE_EXCESS_CAP`）；音量の大きいヒットに強く反応（`lib/drawStillScreenBackground.ts`）。
+- **録画終了時のグレースフル停止**: 早期停止時にGainNodeフェード（`scheduleEarlyStopGainFade`）とオプションの画像アルファフェード（`StopGracefulImageFade`、`resolveCombinedImageFadeAlpha`）をスケジュールし、プレビュー/録画が途中で途切れないよう改善。
+- **クリップ/MP4音声フェード**: `resolveAudioFadeSchedule` が**再生区間**にイン/アウトを適用（プラットフォーム最大長と一致する場合のみではない）；FFmpeg経路で `afade` + `-t` トリムを `buildFfmpegAfadeFilter` / `Mp4AudioFadeEncode` で追加（`lib/Ffmpeg.ts`、`lib/clipAudioFade.ts`）。
+- **YouTube LUFSエンコードキャリブレーション**: UIは **-14** のまま；`loudnorm` 統合ターゲットを **-13.95**（+0.05）に設定（`lib/Ffmpeg.ts` の `resolveLoudnormIntegratedTarget`）。→ [audio-quality.md](./audio-quality.md)
+- **設定**: 「すべてクリア」の下に補足ヒントを追加（`settings.clearAllSupplement` JA/EN）。
+- **React hooks**: 再生停止、スペクトラム設定、エンコード経路周辺のコールバック/ref を安定化（exhaustive-deps / stale-closure 修正）。
 
-### Documentation
-- [SESSION_20260601.md](./SESSION_20260601.md) §2026-06-05, [SPECIFICATION.md](./SPECIFICATION.md) (effects, file pickers, audio tab), [audio-quality.md](./audio-quality.md) (YouTube +0.05 note).
+### ドキュメント
+- [SESSION_20260601.md](./SESSION_20260601.md) §2026-06-05、[SPECIFICATION.md](./SPECIFICATION.md)（エフェクト、ファイルピッカー、音声タブ）、[audio-quality.md](./audio-quality.md)（YouTube +0.05メモ）。
 
 ## [1.0.5] - 2026-06-02
 
-### Fixed (2026-06-02 — i18n restore)
-- **Hardcoded English in UI**: Spectrum modes 17–21, retro EQ (mode 6), screen-tab motion sliders, and Settings **SRT** toggle now use `t()` with keys in `locales/ja.json` / `locales/en.json`.
-- **Missing locale keys**: Restored ~58 keys (`waveFamily`, `particleSpectrum`, `radialSpectrum`, `retroEq`, extended `screen.*`, `subtitle.author.panelToggle`) that caused raw key strings or blank labels after the layout-overhaul branch.
-- **`encode.warning`**: Clarified JA/EN copy (“while generating the **video**” / 動画を生成中は…).
+### 修正（2026-06-02 — i18n復元）
+- **UI内のハードコード英語**: スペクトラムモード17〜21、retro EQ（モード6）、画面タブのモーションスライダー、設定の**SRT**トグルが `t()` を使用し、`locales/ja.json` / `locales/en.json` のキーに変更。
+- **欠落ロケールキー**: レイアウト改修ブランチ後に生のキーストリングや空白ラベルになっていた約58キー（`waveFamily`、`particleSpectrum`、`radialSpectrum`、`retroEq`、拡張 `screen.*`、`subtitle.author.panelToggle`）を復元。
+- **`encode.warning`**: JA/ENコピーを明確化（「動画を生成中は…」）。
 
-### Fixed (2026-06-01 — layout recovery follow-up)
-- **Accidental `git checkout HEAD -- pages/index.tsx`**: Reverted the in-progress 2-pane UI (`desktopTwoPane`, left preview + right controls). Restored from agent transcript + diff against static bundles under `visualizer/` / `visualizer.これが最新/` (build artifacts, not tracked).
-- **Spectrum position sliders (mode 2)**: Horizontal/vertical offset use **`ResettableSlider`** with shared `handleOffsetSliderChange` / `spectrumOffsetSliderGuideProps` (double-click reset, guide dot while dragging). Preview overlay uses `previewCanvasStageRef`, `spaceCenterGuideLayer` / `spectrumOffsetGuideDot`, and pointer drag on the guide dot (`lib/spectrumAdjustments.ts` mapping).
+### 修正（2026-06-01 — レイアウト復旧フォローアップ）
+- **誤った `git checkout HEAD -- pages/index.tsx`**: 進行中の2ペインUI（`desktopTwoPane`、左プレビュー+右コントロール）をロールバック。エージェントトランスクリプトと `visualizer/` / `visualizer.これが最新/` の静的バンドル（ビルド成果物、tracked外）とのdiffから復元。
+- **スペクトラム位置スライダー（モード2）**: 水平/垂直オフセットに **`ResettableSlider`** を使用、共有 `handleOffsetSliderChange` / `spectrumOffsetSliderGuideProps`（ダブルクリックリセット、ドラッグ中のガイドドット）。プレビューオーバーレイに `previewCanvasStageRef`、`spaceCenterGuideLayer` / `spectrumOffsetGuideDot`、ガイドドットのポインタードラッグを使用（`lib/spectrumAdjustments.ts` マッピング）。
 
-### Added (2026-06-01 session — rendering / lib)
-- **Screen tab (still background)**: `lib/screenMotion.ts`, `lib/drawStillScreenBackground.ts` — zoom/pan (per-axis speed), image fade in/out on clip timeline, audio-reactive brightness/shake/chorus zoom/flash. Excludes background video, gallery transitions, QuickVideoEncoder.
-- **Spectrum modes 17–21**: Wave family (17–19), particle (20), radial (21) in `lib/Canvas.ts` + `lib/WebGLRenderer.ts`; **retro EQ glyco** extensions on mode 6 (`retroEqParams`, region-only background dim via `glycoBarRegionBounds`).
-- **Water ripple / 描画 effect**: `waterRipple` with variants `ripple` / `heart` / `firework`, light mode, adaptive ring cap (`lib/Effects.ts`).
-- **Spectrum adjustments module**: `lib/spectrumAdjustments.ts` — shared scale/offset, mode-2 pivot, overlay percent inverse mapping.
-- **MP4 thumbnail helper**: `lib/mp4Thumbnail.ts`; FFmpeg path documents caller JPEG vs first encoded frame fallback (`lib/Ffmpeg.ts`).
-- **FFmpeg assets**: `scripts/copy-ffmpeg-core.cjs` copies to `public/ffmpeg` and `public/ffmpeg-core`; loader probes both (`lib/Ffmpeg.ts`).
+### 追加（2026-06-01セッション — レンダリング/lib）
+- **画面タブ（静止画背景）**: `lib/screenMotion.ts`、`lib/drawStillScreenBackground.ts` — ズーム/パン（軸ごと速度）、クリップタイムライン上の画像フェードイン/アウト、音連動の明るさ/揺れ/コーラスズーム/フラッシュ。動画背景、ギャラリー切替、QuickVideoEncoderは対象外。
+- **スペクトラムモード17〜21**: ウェーブファミリー（17〜19）、パーティクル（20）、ラジアル（21）を `lib/Canvas.ts` + `lib/WebGLRenderer.ts` に追加；モード6の **retro EQ glyco** 拡張（`retroEqParams`、`glycoBarRegionBounds` によるリージョン限定背景暗転）。
+- **水滴/描画エフェクト**: `waterRipple` にバリアント `ripple` / `heart` / `firework`、ライトモード、アダプティブリング上限（`lib/Effects.ts`）。
+- **スペクトラム調整モジュール**: `lib/spectrumAdjustments.ts` — 共有スケール/オフセット、モード2ピボット、オーバーレイパーセント逆マッピング。
+- **MP4サムネイルヘルパー**: `lib/mp4Thumbnail.ts`；FFmpeg経路で呼び出し元JPEG vs 最初のエンコードフレームフォールバックをドキュメント化（`lib/Ffmpeg.ts`）。
+- **FFmpegアセット**: `scripts/copy-ffmpeg-core.cjs` が `public/ffmpeg` と `public/ffmpeg-core` にコピー；ローダーが両方をプローブ（`lib/Ffmpeg.ts`）。
 
-### Changed (2026-06-01 session)
-- **MP4 cover art (still background)**: `onRecordMovie` passes unprocessed gallery still via `buildMp4StillThumbnailJpeg` → `thumbnailJpeg` (not first encoded video frame). Fallback unchanged for video-only background or no image.
-- **Settings persistence**: `lib/mwvCookieStorage.ts` — **localStorage primary**; legacy cookies migrate once then cleared (see [SESSION_20260601.md](./SESSION_20260601.md)).
-- **Performance**: Spectrum throttle for modes 1 & 5; water-ripple adaptive scale; shared target-fps pacing in Canvas/WebGL.
+### 変更（2026-06-01セッション）
+- **MP4カバーアート（静止画背景）**: `onRecordMovie` が未処理のギャラリストillを `buildMp4StillThumbnailJpeg` → `thumbnailJpeg` で渡す（最初のエンコード動画フレームではなく）。動画のみ背景や画像なしのフォールバックは変更なし。
+- **設定永続化**: `lib/mwvCookieStorage.ts` — **localStorageをプライマリ**に；レガシークッキーは初回読込時に移行後クリア（→ [SESSION_20260601.md](./SESSION_20260601.md)）。
+- **パフォーマンス**: モード1と5のスペクトラムスロットル；水滴アダプティブスケール；Canvas/WebGL間の共有ターゲットfpsペーシング。
 
-### Documentation (2026-06-01)
-- **[SESSION_20260601.md](./SESSION_20260601.md)**: Session hub (screen tab, modes 17–21, ripple, persistence, MP4 frame 0, 2-pane UI recovery, spectrum offset sliders).
-- **[FFMPEG.md](./FFMPEG.md)**: Clarified `attached_pic` vs unprocessed stills.
-- **[SPECIFICATION.md](./SPECIFICATION.md)**: Desktop 2-pane layout (≥1024px); spectrum offset `ResettableSlider` + preview guide behavior.
+### ドキュメント（2026-06-01）
+- **[SESSION_20260601.md](./SESSION_20260601.md)**: セッションハブ（画面タブ、モード17〜21、リップル、永続化、MP4フレーム0、2ペインUI復旧、スペクトラムオフセットスライダー）。
+- **[FFMPEG.md](./FFMPEG.md)**: `attached_pic` vs 未処理スチルの明確化。
+- **[SPECIFICATION.md](./SPECIFICATION.md)**: デスクトップ2ペインレイアウト（≥1024px）；スペクトラムオフセット `ResettableSlider` + プレビュー動作。
 
-### Added
-- **Mirror ball effect**: Canvas 2D + WebGL overlay (`lib/Effects.ts`, `lib/Canvas.ts`, `lib/WebGLRenderer.ts`). UI picker entry is **hidden** via `EFFECT_TYPES_UI_HIDDEN` in `pages/index.tsx`; settings remain in cookies/export when type is `mirrorBall`.
-- **Clip fade in/out**: `lib/clipAudioFade.ts` — GainNode scheduling for clip window; fade-out only when explicit duration matches trimmed segment. UI: fade-in / fade-out seconds on **Clip length** tab (3-row layout: presets, start+duration, fades).
-- **Subtitle display timing offset**: ±2 s slider on Subtitle tab; preview/recording only (`displayTimingOffsetSec` in `lib/subtitles.ts`), **not** persisted to cookies or export.
-- **Hidden SRT authoring panel**: Settings tab checkbox **SRT** (under bitrate settings) reveals the subtitle authoring tools; loading an `.srt` while enabled also populates the editor.
-- **MP4 audio Tier A**: `MediaRecorder` `audioBitsPerSecond` (default record **384 kbps**); MP4 AAC up to **320 kbps**; presets **配信用** / **高音質** set LUFS -14, AAC 320, record 384, video **8** / **14 Mbps**.
+### 追加
+- **ミラーボールエフェクト**: Canvas 2D + WebGLオーバーレイ（`lib/Effects.ts`、`lib/Canvas.ts`、`lib/WebGLRenderer.ts`）。UIピッカーエントリは `pages/index.tsx` の `EFFECT_TYPES_UI_HIDDEN` で**非表示**；タイプが `mirrorBall` の場合、設定はクッキー/エクスポートに残存。
+- **クリップフェードイン/アウト**: `lib/clipAudioFade.ts` — クリップウィンドウ用GainNodeスケジューリング；明示的な長さがトリム区間と一致する場合のみフェードアウト。UI: **クリップ長**タブにフェードイン/フェードアウト秒数（3行レイアウト: プリセット、開始+長さ、フェード）。
+- **字幕表示タイミング補正**: 字幕タブに±2秒スライダー；プレビュー/録画のみ（`lib/subtitles.ts` の `displayTimingOffsetSec`）、クッキー/エクスポートには**保存しない**。
+- **隠しSRT作成パネル**: 設定タブのチェックボックス **SRT**（ビットレート設定の下）で字幕作成ツールを表示；有効な状態で `.srt` を読み込むとエディターにも反映。
+- **MP4音声Tier A**: `MediaRecorder` `audioBitsPerSecond`（デフォルト録画 **384 kbps**）；MP4 AAC 最大 **320 kbps**；プリセット **配信用** / **高音質** で LUFS -14、AAC 320、録画 384、映像 **8** / **14 Mbps**。
 
-### Changed
-- **SRT authoring (hidden feature)**: Section title is now **字幕作成支援（隠し機能）** / **Subtitle authoring (hidden feature)**. Start begins preview playback and timing record; End stops preview playback; active/current and next cue rows stay visible; timing inputs and lyric editor sizing were tuned; custom ▲/▼ hold-repeat controls now use a 200 ms initial delay and 45 ms repeat interval.
-- **SRT authoring completion**: Finishing the final lyric asks whether to apply the recorded cues to preview/internal subtitle memory.
-- **SRT download filename**: Same base name as MP4 via `buildDownloadBaseName` / `buildDownloadSrtName`.
-- **Frame pacing / FPS**: Video-background preview is throttled to **30 fps** only during preview. Recording/video generation uses a **max 60 fps** draw and `captureStream` path for Canvas 2D/WebGL, preserving normal output quality up to 60 fps. Frame throttling was adjusted to avoid periodic stutter; FPS state updates run only in developer mode and skip redundant React updates.
-- **Spectrum throttle (Canvas 2D/WebGL)**: Modes 1 & 5 skip only spectrum draw; effects/subtitles update every frame, and both renderers share target-fps frame pacing.
-- **Defaults aligned with presets**: Target LUFS **-14**, record audio **384 kbps**, export AAC **320 kbps**; distribution **8 Mbps** / hi-fi **14 Mbps** video.
-- Removed unused `pages/api/hello.ts` sample API route.
+### 変更
+- **SRT作成（隠し機能）**: セクションタイトルを **字幕作成支援（隠し機能）** に変更。Startでプレビュー再生とタイミング記録を開始；Endでプレビュー再生を停止；アクティブ/カレントと次のキュー行を表示維持；タイミング入力と歌詞エディターサイズを調整；カスタム▲/▼ホールドリピートコントロールの初期遅延200ms、繰り返し間隔45ms。
+- **SRT作成完了**: 最後の歌詞を終了すると、記録されたキューをプレビュー/内部字幕メモリに適用するか確認。
+- **SRTダウンロードファイル名**: `buildDownloadBaseName` / `buildDownloadSrtName` でMP4と同じベース名。
+- **フレームペーシング/FPS**: 動画背景プレビューはプレビュー中のみ **30fps** にスロットル。録画/動画生成は **最大60fps** のdrawとCanvas 2D/WebGLの `captureStream` 経路を使用し、通常出力品質を60fpsまで維持。周期的なスタッターを回避するようフレームスロットルを調整；FPS状態更新は開発者モードのみで実行し、冗長なReact更新をスキップ。
+- **スペクトラムスロットル（Canvas 2D/WebGL）**: モード1と5はスペクトラム描画のみスキップ；エフェクト/字幕は毎フレーム更新し、両レンダラーが共有ターゲットfpsフレームペーシングを使用。
+- **デフォルトをプリセットに揃え**: ターゲット LUFS **-14**、録画音声 **384 kbps**、エクスポート AAC **320 kbps**；配信 **8 Mbps** / 高音質 **14 Mbps** 映像。
+- 未使用の `pages/api/hello.ts` サンプルAPIルートを削除。
 
-### Documentation
-- **[audio-quality.md](./audio-quality.md)**: Tier A/B decisions, YouTube/TikTok rationale for 384/320 kbps, preset table.
-- **Handover** [`music-waves-visualizer-引継ぎ20260517.md`](../music-waves-visualizer-引継ぎ20260517.md): 2026-05-23 session summary.
+### ドキュメント
+- **[audio-quality.md](./audio-quality.md)**: Tier A/B判断、YouTube/TikTok向け384/320 kbpsの根拠、プリセットテーブル。
+- **引継ぎ** [`music-waves-visualizer-引継ぎ20260517.md`](../music-waves-visualizer-引継ぎ20260517.md): 2026-05-23セッション要約。
 
-### Documentation (prior unreleased)
-- **MP4 / video background**: New hub [VIDEO_BACKGROUND.md](./VIDEO_BACKGROUND.md) (EN + 日本語サマリ, UI rules, recording MIME, links to [#34](https://github.com/kuwa2005/music-waves-visualizer/issues/34) / [#35](https://github.com/kuwa2005/music-waves-visualizer/issues/35) / [#36](https://github.com/kuwa2005/music-waves-visualizer/issues/36)). Indexed from [docs/README.md](./README.md), [README.md](../README.md), [SPECIFICATION.md](./SPECIFICATION.md) §8, [仕様書.md](./仕様書.md) §3.1. **Release ZIP** (`scripts/make-release-zip.sh`) now bundles `docs-bundled/docs/VIDEO_BACKGROUND.md`.
-- **`npm run build:html:lil-la`**: One-shot static build with `NEXT_PUBLIC_SITE_URL=https://lil.la` for [lil.la/visualizer](https://lil.la/visualizer/) (canonical / OG). Documented in [BUILD.md](./BUILD.md), [README](./README.md), and [`.env.production.example`](./.env.production.example).
-- **Persistence / clip / build**: README, [SPECIFICATION.md](./SPECIFICATION.md), [仕様書.md](./仕様書.md), [PRIVACY_POLICY.md](./PRIVACY_POLICY.md), [EU_GDPR_NOTICE.md](./EU_GDPR_NOTICE.md), [BUILD.md](./BUILD.md) — first-party cookies for settings; clip UI semantics; `next export` / static-export notices.
+### ドキュメント（先行未リリース）
+- **MP4/動画背景**: 新ハブ [VIDEO_BACKGROUND.md](./VIDEO_BACKGROUND.md)（EN + 日本語サマリ、UIルール、録画MIME、[#34](https://github.com/kuwa2005/music-waves-visualizer/issues/34) / [#35](https://github.com/kuwa2005/music-waves-visualizer/issues/35) / [#36](https://github.com/kuwa2005/music-waves-visualizer/issues/36)へのリンク）。[docs/README.md](./README.md)、[README.md](../README.md)、[SPECIFICATION.md](./SPECIFICATION.md) §8、[仕様書.md](./仕様書.md) §3.1 からインデックス。**リリースZIP**（`scripts/make-release-zip.sh`）に `docs-bundled/docs/VIDEO_BACKGROUND.md` をバンドル。
+- **`npm run build:html:lil-la`**: `NEXT_PUBLIC_SITE_URL=https://lil.la` でのワンショット静的ビルド（[lil.la/visualizer](https://lil.la/visualizer/) 向け）。[BUILD.md](./BUILD.md)、[README](./README.md)、[`.env.production.example`](./.env.production.example) でドキュメント化。
+- **永続化/クリップ/ビルド**: README、[SPECIFICATION.md](./SPECIFICATION.md)、[仕様書.md](./仕様書.md)、[PRIVACY_POLICY.md](./PRIVACY_POLICY.md)、[EU_GDPR_NOTICE.md](./EU_GDPR_NOTICE.md)、[BUILD.md](./BUILD.md) — 設定用ファーストパーティクッキー；クリップUIセマンティクス；`next export` / 静的エクスポート注意事項。
 
-### Added (video background — fork)
-- **Separate roles for MP4**: Music vs **single** background video; drag/drop and image-picker rules; optional second `<video>` when music is `AudioBuffer`; `drawVideoCover` + `syncBackgroundOnlyVideo`; WebGL → Canvas 2D fallback while video background is active ([#36](https://github.com/kuwa2005/music-waves-visualizer/issues/36)).
-- **Recording policy update**: user-facing output is now **MP4 fixed** (alpha/transparency not supported) for stability.
+### 追加（動画背景 — フォーク）
+- **MP4の役割分離**: 音楽 vs **単一**背景動画；ドラッグ/ドロップと画像ピッカールール；音楽が `AudioBuffer` の場合のオプション2つ目の `<video>`；`drawVideoCover` + `syncBackgroundOnlyVideo`；動画背景有効時のWebGL → Canvas 2Dフォールバック（[#36](https://github.com/kuwa2005/music-waves-visualizer/issues/36)）。
+- **録画ポリシー更新**: 安定性のため、ユーザー向け出力を **MP4固定**（アルファ/透過非対応）に変更。
 
-### Fixed
-- **Image picker `accept`**: “Choose image(s)” includes `video/mp4` (and common video extensions) so MP4 is selectable in the system dialog.
-- **Video background flicker**: `drawBars` no longer falls through to the still-image branch when a background `<video>` is present but `readyState` is still warming up; eased `syncBackgroundOnlyVideo` seek threshold.
-- **MP4 input recording startup glitch**: mitigated brief stall/drop at recording start by stabilizing play/record start order for `HTMLVideoElement` input.
-- **Clear after MP4 load**: removed spurious “video load failed” snackbar by clearing video event handlers before disposing sources.
+### 修正
+- **画像ピッカー `accept`**: 「画像を選択」に `video/mp4`（および一般的な動画拡張子）を追加し、システムダイアログでMP4を選択可能に。
+- **動画背景のチカつき**: 背景 `<video>` が存在するが `readyState` がまだ準備中の場合、`drawBars` が静止画ブランチにフォールスルーしないよう修正；`syncBackgroundOnlyVideo` のシーク閾値を緩和。
+- **MP4入力録画開始時のグリッチ**: `HTMLVideoElement` 入力の再生/録画開始順序を安定化し、録画開始時の短い停滞/ドロップを軽減。
+- **MP4読み込み後のクリア**: ソース破棄前に動画イベントハンドラをクリアし、誤った「動画読み込み失敗」スナックバーを削除。
 
-### Changed (maintenance — cookies, clip, spectrum, restore)
-- **Settings persistence (cookies)**: Most client settings persist in **first-party cookies** via [`lib/mwvCookieStorage.ts`](./lib/mwvCookieStorage.ts) (chunked Base64 for large values). **Legacy `localStorage` entries migrate on first read** then clear. **Not stored**: image/music file content, **title text**, **SRT body**; subtitle/title **styles** and toggles **are** stored. Mode remains in existing `mwv_mode` cookie.
-- **Clip length limit**: YouTube / TikTok / NicoNico buttons only suggest a duration in the field; **start (sec) + duration (sec)** define the window. **Empty duration** = play **to end of media** (no hard platform max).
-- **Spectrum / glyco low band**: `GLYCO_LOG_MIN_BIN`, `glycoLowBandGain`, `spectrumLinearBarLowGain` in [`lib/Canvas.ts`](./lib/Canvas.ts) — less low-frequency pegging (modes 0, 3, 4, 6; Canvas 2D + WebGL).
-- **Spectrum scale/position restore**: Hydration and JSON import load `spectrumSettings_{layout}_{mode}` using **`resolveCanvasLayout(savedOrImportedCanvasSize, …)`** instead of a fixed layout key.
-- **Title defaults**: Default title animation **none**; title font size **up to 200px**.
-- **ESLint**: `getCanvasDimensions` is `useCallback`’d so canvas sizing `useLayoutEffect` satisfies `react-hooks/exhaustive-deps`.
+### 変更（メンテナンス — クッキー、クリップ、スペクトラム、復元）
+- **設定永続化（クッキー）**: 多くのクライアント設定が [`lib/mwvCookieStorage.ts`](./lib/mwvCookieStorage.ts) 経由の**ファーストパーティクッキー**に保存（大容量値はチャンクBase64）。**レガシー `localStorage` エントリは初回読込時に移行**後クリア。**保存しない**: 画像/音楽ファイル内容、**タイトルテキスト**、**SRT本文**；字幕/タイトルの**スタイル**とトグルは**保存**。モードは既存の `mwv_mode` クッキーに維持。
+- **クリップ長制限**: YouTube / TikTok / NicoNicoボタンはフィールドに期間を提案するのみ；**開始（秒）+ 期間（秒）**でウィンドウを定義。**空の期間** = **メディア末尾まで再生**（プラットフォーム固定上限なし）。
+- **スペクトラム/glycoローバンド**: [`lib/Canvas.ts`](./lib/Canvas.ts) の `GLYCO_LOG_MIN_BIN`、`glycoLowBandGain`、`spectrumLinearBarLowGain` — 低周波のペグインを抑制（モード0、3、4、6；Canvas 2D + WebGL）。
+- **スペクトラムスケール/位置復元**: ハイドレーションとJSONインポートで、固定レイアウトキーではなく **`resolveCanvasLayout(savedOrImportedCanvasSize, …)`** を使用して `spectrumSettings_{layout}_{mode}` をロード。
+- **タイトルデフォルト**: タイトルアニメーションデフォルト **なし**；タイトルフォントサイズ **最大200px**。
+- **ESLint**: `getCanvasDimensions` を `useCallback` で包み、キャンバスサイズの `useLayoutEffect` が `react-hooks/exhaustive-deps` を満たすよう修正。
 
-### Changed
-- **Title overlay**: **Title** tab after Spectrum — multiline text (not cookie-persisted), styling **is** persisted (position, align, plain/outline/box, font size, letter spacing, font family, bold/italic, stroke, shadow, box, intro animation). Included in settings **export** (optional `titleText` in JSON) / import applies text in-session only. Renderer falls back to Canvas 2D when title is enabled (same as subtitles).
-- **SRT subtitle support**: Added `.srt` loading (file picker + drag/drop) and subtitle rendering customization in the existing settings UI flow. Position, type (plain/outline/boxed), color, font, decoration, and show animation are adjustable; settings are persisted/exported/imported. When subtitles are active, renderer auto-falls back to Canvas 2D for compatibility.
-- **Spectrum mode button visibility**: Hid the **Lissajous button (mode 16)** from the mode picker while keeping rendering logic/settings compatibility intact.
-- **WMP trail tuning (modes 15–16)**: Added UI parameters for **trail length / trail decay / additive intensity** (per-mode persistence, export/import, clear reset). Defaults are now split by mode (15 vs 16), and new presets **WMP classic / Modern** are available for quick tuning. Canvas 2D + WebGL trail rendering uses these values.
-- **Modes 15–16 (Oscilloscope / Lissajous)**: Added two high-impact waveform visuals (time-domain) with Canvas 2D + WebGL implementations. Included in mode picker with tooltips; sensitivity tuning presets apply.
-- **Spectrum UX + loudness tuning**: Mode picker is grouped into **frequency** and **loudness** sections with shorter labels and tooltip descriptions. Loudness modes (8–14) now support per-mode **presets** (Natural / Strong / EDM) and exposed **gain/gamma/attack/release** controls.
-- **Mode 13 performance guard**: Added automatic particle cap/trail simplification based on device capability (`hardwareConcurrency` / `deviceMemory`) with low-spec fallback in Canvas 2D + WebGL.
-- **Visual consistency + effect interference**: Added shared opacity shaping to reduce highlight clipping and align slider feel; auto-ducking for `scanlines` / `rain` / `dust` when spectrum is active so visuals do not bury the main spectrum.
-- **Loudness-only visuals (modes 9–14)**: Added six non-FFT visuals under the spectrum category — **VU meter**, **pulse ring**, **center orb**, **breathing background**, **particle density**, and **geometry morph** — all implemented for Canvas 2D + WebGL with the same mode buttons and settings flow.
-- **Mode 8 (loudness pulse)**: Added a non-spectrum visual in the spectrum category that reacts to overall loudness only (center orb + glow pulse), available as a new mode button in Canvas 2D and WebGL.
-- **Mode 2 (circle)**: Added rotation option (`common_circleRotationRpm`) with **OFF / -10..10 rpm**. `1` equals ~1 rotation per 60 seconds (1rpm), negative is left (CCW), positive is right (CW). **OFF** and **0** both stop rotation (Canvas 2D + WebGL).
-- **Modes 3 & 4 (symmetric bars & dots)**: Horizontal axis now uses **log-spaced FFT bins** via `glycoBarToFftBin` / `glycoBarRawEnergy` (same family as mode 6), fixing mostly dead right columns from linear `i/bufferLength` mapping (Canvas 2D + WebGL).
-- **Spectrum update rate (modes 1 & 5)**: Waveform redraw throttling is fixed at **`SPECTRUM_THROTTLE_TARGET_FPS` (60)** (Canvas 2D + WebGL); the **更新レート** slider is removed (`SpectrumSettings.fps` removed).
-- **Spectrum size (all modes)**: Layout/mode **width & height scale** sliders and `clampModeAdjustments` now **0.1–5.0×** (was 0.5–5.0×) so small displays can shrink the analyzer further.
-- **Mode 6 (glyco)**: Log-spaced bins (`GLYCO_LOG_BIN_MAX_FRAC`), right-edge **local max** (`glycoBarRawEnergy`). Vertical mapping uses shared **`glycoAdjustedLevel`** (γ≈1.18 peak compression) and **`GLYCO_BAR_VERTICAL_SCALE`** headroom so bars do not sit at MAX as often (Canvas 2D + WebGL).
-- **Gallery auto-advance**: Enabled automatically only when the gallery goes from one image to **two or more**; turned **off** when only one or zero images remain. Manual OFF is kept when adding more images without dropping below two. **`common_galleryAutoSec`** and **`common_galleryAutoEnabled`** are persisted (cookies).
-- **SEO / HTML**: Expanded `<meta description>`, keywords, robots, canonical (when `NEXT_PUBLIC_SITE_URL` or `NEXT_PUBLIC_DOMAIN`), Open Graph / Twitter cards, `theme-color`, JSON-LD `WebApplication`, `favicon`/`apple-touch-icon` paths with `assetBasePath`; added `pages/_document.tsx` (`lang="ja"`) and `public/robots.txt`. Documented `NEXT_PUBLIC_SITE_URL` in [BUILD.md](./BUILD.md).
+### 変更
+- **タイトルオーバーレイ**: スペクトラムの後に **タイトル** タブを追加 — 複数行テキスト（クッキー非保存）、スタイルは**保存**（位置、揃え、plain/outline/box、フォントサイズ、字間、フォントファミリー、太字/斜体、縁取り、シャドウ、ボックス、イントロアニメーション）。設定**エクスポート**に含む（JSONのオプション `titleText`）/ インポートはセッション中のテキスト適用のみ。タイトル有効時はレンダラーがCanvas 2Dにフォールバック（字幕と同様）。
+- **SRT字幕サポート**: `.srt` 読み込み（ファイルピッカー + ドラッグ/ドロップ）と字幕レンダリングカスタマイズを既存の設定UIフローに追加。位置、タイプ（plain/outline/boxed）、色、フォント、装飾、表示アニメーションを調整可能；設定は永続化/エクスポート/インポート。字幕アクティブ時は互換性のためレンダラーが自動でCanvas 2Dにフォールバック。
+- **スペクトラムモードボタンの可視性**: モードピッカーから **リサージュボタン（モード16）** を非表示にし、レンダリングロジック/設定の互換性は維持。
+- **WMPトレイル調整（モード15〜16）**: **トレイル長/トレイル減衰/加算強度** のUIパラメータを追加（モードごとの永続化、エクスポート/インポート、クリアリセット）。デフォルトをモード別（15 vs 16）に分割；新しいプリセット **WMP classic / Modern** でクイック調整。Canvas 2D + WebGLトレイルレンダリングでこれらの値を使用。
+- **モード15〜16（オシロスコープ/リサージュ）**: タイムドメインの2つの高インパクト波形ビジュアルを追加；Canvas 2D + WebGL実装。モードピッカーにツールチップ付きで含む；感度チューニングプリセットを適用。
+- **スペクトラムUX + ラウドネス調整**: モードピッカーを **周波数** と **ラウドネス** セクションにグループ化、短縮ラベルとツールチップ説明を追加。ラウドネスモード（8〜14）にモードごとの **プリセット**（Natural / Strong / EDM）と **ゲイン/ガンマ/アタック/リリース** コントロールを追加。
+- **モード13パフォーマンスガード**: デバイス性能（`hardwareConcurrency` / `deviceMemory`）に基づく自動パーティクル上限/トレイル簡略化を追加；Canvas 2D + WebGLで低スペックフォールバック。
+- **視覚的一致性 + エフェクト干渉**: ハイライトクリッピングを軽減しスライダー感度を揃える共有透過率シェーピィングを追加；スペクトラムアクティブ時の `scanlines` / `rain` / `dust` の自動ダッキングでメインスペクトラムを埋めないよう改善。
+- **ラウドネス限定ビジュアル（モード9〜14）**: スペクトラムカテゴリに6つの非FFTビジュアルを追加 — **VUメーター**、**パルスリング**、**センターオーブ**、**ブリージング背景**、**パーティクル密度**、**ジオメトリモーフ** — すべてCanvas 2D + WebGLで実装、同じモードボタンと設定フロー。
+- **モード8（ラウドネスパルス）**: スペクトラムカテゴリに全体ラウドネスのみに反応する非スペクトラムビジュアルを追加（センターオーブ + グローパルス）；Canvas 2DとWebGLの新しいモードボタンとして利用可能。
+- **モード2（サークル）**: 回転オプション（`common_circleRotationRpm`）を追加 — **OFF / -10..10 rpm**。`1` は約60秒に1回転（1rpm）、負は左（反時計回り）、正は右（時計回り）。**OFF** と **0** は両方回転停止（Canvas 2D + WebGL）。
+- **モード3と4（対称バーとドット）**: 水平軸を `glycoBarToFftBin` / `glycoBarRawEnergy` 経由の **対数分布FFTビン** 使用に変更（モード6と同ファミリー）；線形 `i/bufferLength` マッピングによる右カラムのほぼ完全なデッドを修正（Canvas 2D + WebGL）。
+- **スペクトラム更新レート（モード1と5）**: 波形の再描画スロットルを **`SPECTRUM_THROTTLE_TARGET_FPS`（60）** に固定（Canvas 2D + WebGL）；**更新レート** スライダーを削除（`SpectrumSettings.fps` 削除）。
+- **スペクトラムサイズ（全モード）**: レイアウト/モードの **幅と高さスケール** スライダーと `clampModeAdjustments` を **0.1〜5.0×** に拡大（0.5〜5.0×から）；小型ディスプレイでアナライザーをさらに縮小可能に。
+- **モード6（glyco）**: 対数分布ビン（`GLYCO_LOG_BIN_MAX_FRAC`）、右端 **ローカルマックス**（`glycoBarRawEnergy`）。垂直マッピングで共有 **`glycoAdjustedLevel`**（γ≈1.18ピーク圧縮）と **`GLYCO_BAR_VERTICAL_SCALE`** ヘッドルームを使用し、バーがMAXに留まる頻度を削減（Canvas 2D + WebGL）。
+- **ギャラリー自動送り**: ギャラリーが1枚から **2枚以上** に移行した場合のみ自動有効化；1枚または0枚の場合は**オフ**。2枚以上に戻しても手動OFFは維持。**`common_galleryAutoSec`** と **`common_galleryAutoEnabled`** を保存（クッキー）。
+- **SEO/HTML**: `<meta description>`、キーワード、robots、canonical（`NEXT_PUBLIC_SITE_URL` または `NEXT_PUBLIC_DOMAIN` 時）、Open Graph / Twitterカード、`theme-color`、JSON-LD `WebApplication`、`favicon`/`apple-touch-icon` パスに `assetBasePath` を拡張；`pages/_document.tsx`（`lang="ja"`）と `public/robots.txt` を追加。`NEXT_PUBLIC_SITE_URL` を [BUILD.md](./BUILD.md) でドキュメント化。
 
 ## [1.0.3] - 2026-03-29
 
-### Added
-- **Issue #14**: New spectrum mode **7 — Spectrum fill** (filled area under frequency curve + top outline); Canvas 2D and WebGL; layout/mode settings key `7` in export/import.
-- **Issue #16**: **Multi-image gallery**: multi-select / drag-drop multiple still images, **Add image** append, **Prev/Next**, **auto-advance** during preview/recording (2–30s interval, persisted in client storage / cookies). First image still sets canvas layout for Auto mode.
-- **Issue #17**: **Scanlines** overlay effect (CRT-style horizontal lines); Canvas 2D and WebGL; strength presets; saved like other effects.
-- **Issue #23**: **Gallery image transitions** (none / random per switch / crossfade, wipes, iris, slides, zoom, checker, venetian, diagonal, flash); Canvas 2D + WebGL via `lib/galleryImageTransition.ts`. **Spectrum scale** 0.5–5× and **offset** ±150% (integer-clamped in save/import). **Spectrum color**: 20-color palette (10-column grid) + `#RRGGBB` (`common_spectrumColorHex`; legacy preset migration). **Shared palette** in `lib/colorPalette.ts`. **Space / sparkle / dust** tint colors (`effectTintColor`, palette + hex). **Scanlines** strength increased. Settings export adds `galleryTransitionMode`, particle colors, `spectrumColorHex`; i18n `gallery.tr*` (ja/en).
+### 追加
+- **Issue #14**: 新スペクトラムモード **7 — スペクトラムフィル**（周波数曲線下の塗りつぶし面 + 上部アウトライン）；Canvas 2D と WebGL；エクスポート/インポートのレイアウト/モード設定キー `7`。
+- **Issue #16**: **マルチ画像ギャラリー**: マルチセレクト/ドラッグドロップで複数静止画像、**画像追加**、**前へ/次へ**、プレビュー/録画中の **自動送り**（2〜30秒間隔、クライアントストレージ/クッキーに保存）。最初の画像は引き続きAutoモードのキャンバスレイアウトを設定。
+- **Issue #17**: **スキャンライン** オーバーレイエフェクト（CRTスタイル水平線）；Canvas 2D と WebGL；強度プリセット；他のエフェクトと同様に保存。
+- **Issue #23**: **ギャラリー画像トランジション**（なし/切替ごとランダム/クロスフェード、ワイプ、アイリス、スライド、ズーム、チェッカー、ベネチアン、斜め、フラッシュ）；`lib/galleryImageTransition.ts` 経由 Canvas 2D + WebGL。**スペクトラルスケール** 0.5〜5× と **オフセット** ±150%（保存/インポートで整数クランプ）。**スペクトラルカラー**: 20カラーパレット（10列グリッド）+ `#RRGGBB`（`common_spectrumColorHex`；レガシープリセット移行）。**共有パレット** を `lib/colorPalette.ts` に追加。**スペース/きらきら/空気感** ティントカラー（`effectTintColor`、パレット + hex）。**スキャンライン** 強度増加。設定エクスポートに `galleryTransitionMode`、パーティクルカラー、`spectrumColorHex` を追加；i18n `gallery.tr*`（ja/en）。
 
 ## [1.0.2] - 2026-03-29
 
-### Added
-- **Video quality (Issue #15)**: Settings tab — output canvas resolution display, **recording video bitrate** (1–40 Mbps, `MediaRecorder` `videoBitsPerSecond` when supported), **MP4 AAC bitrate** (128 / 192 / 256 kbps) passed to FFmpeg on loudnorm path. Persisted in `localStorage` and settings export/import.
-- **Waveform color & style (Issue #13)**: Spectrum tab — **color presets** (white / cyan / magenta / green / gold / custom `#RRGGBB`) for modes 0, 1, 2, 5 and for modes 3 & 4 when rainbow is off; **toggle** for rainbow gradient on symmetric bars & dots (modes 3 & 4). Canvas 2D and WebGL aligned. Export/import and clear reset included.
+### 追加
+- **動画品質（Issue #15）**: 設定タブ — 出力キャンバス解像度表示、**録画映像ビットレート**（1〜40 Mbps、対応時 `MediaRecorder` `videoBitsPerSecond`）、FFmpegに渡す **MP4 AACビットレート**（128 / 192 / 256 kbps）。`localStorage` と設定エクスポート/インポートに保存。
+- **波形カラーとスタイル（Issue #13）**: スペクトラムタブ — モード0、1、2、5およびレインボーOFF時のモード3と4用の **カラープリセット**（白/シアン/マゼンタ/緑/ゴールド/カスタム `#RRGGBB`）；対称バーとドット（モード3と4）のレインボーグラデーション **トグル**。Canvas 2D と WebGL を揃え。エクスポート/インポートとクリアリセットを含む。
 
 ## [1.0.1] - 2026-03-29
 
-### Added
-- **GitHub Releases static bundle**: `npm run release:zip` → `dist/music-waves-visualizer-static-v*.zip` with `visualizer/`, root **`INSTALL_LOCAL_STATIC.md`**, and **`docs-bundled/`** (license, changelog, hosting, FFmpeg, nginx sample, terms/privacy). User guide: [docs/INSTALL_LOCAL_STATIC.md](./docs/INSTALL_LOCAL_STATIC.md).
+### 追加
+- **GitHub Releases静的バンドル**: `npm run release:zip` → `dist/music-waves-visualizer-static-v*.zip`（`visualizer/`、ルート **`INSTALL_LOCAL_STATIC.md`**、**`docs-bundled/`**（ライセンス、変更履歴、ホスティング、FFmpeg、nginxサンプル、規約/プライバシー））。ユーザーガイド: [docs/INSTALL_LOCAL_STATIC.md](./docs/INSTALL_LOCAL_STATIC.md)。
 
-### Changed
-- Page `<title>` / `og:title`: **Music Waves Visualizer(改) #MWV**
+### 変更
+- ページ `<title>` / `og:title`: **Music Waves Visualizer(改) #MWV**
 
 ---
 
