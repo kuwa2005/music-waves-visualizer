@@ -1513,6 +1513,55 @@ function drawWaterRippleWebGL(
       }
       continue;
     }
+    if (d.kind === "star") {
+      const s = Math.max(3, d.scale);
+      const cosR = Math.cos(d.rotation);
+      const sinR = Math.sin(d.rotation);
+      let prevPx = 0;
+      let prevPy = 0;
+      for (let i = 0; i <= d.points * 2; i++) {
+        const angle = (i * Math.PI) / d.points - Math.PI / 2;
+        const r = i % 2 === 0 ? s : s * 0.4;
+        const lx = Math.cos(angle) * r;
+        const ly = Math.sin(angle) * r;
+        const x = d.x + lx * cosR - ly * sinR;
+        const y = d.y + lx * sinR + ly * cosR;
+        if (i > 0) {
+          addLineToBatch(prevPx, prevPy, x, y, rr, gg, bb, aa, lw);
+        }
+        prevPx = x;
+        prevPy = y;
+      }
+      continue;
+    }
+    if (d.kind === "paw") {
+      const s = Math.max(3, d.scale);
+      const cosR = Math.cos(d.rotation);
+      const sinR = Math.sin(d.rotation);
+      const drawEllipse = (cx: number, cy: number, rx: number, ry: number) => {
+        const segs = 16;
+        let prevPx = 0;
+        let prevPy = 0;
+        for (let i = 0; i <= segs; i++) {
+          const a = (Math.PI * 2 * i) / segs;
+          const lx = Math.cos(a) * rx;
+          const ly = Math.sin(a) * ry;
+          const x = d.x + (cx + lx) * cosR - (cy + ly) * sinR;
+          const y = d.y + (cx + lx) * sinR + (cy + ly) * cosR;
+          if (i > 0) addLineToBatch(prevPx, prevPy, x, y, rr, gg, bb, aa, lw);
+          prevPx = x;
+          prevPy = y;
+        }
+      };
+      // 主パッド
+      drawEllipse(0, s * 0.3, s * 0.38, s * 0.32);
+      // 4つの趾
+      drawEllipse(-s * 0.42, -s * 0.12, s * 0.19, s * 0.17);
+      drawEllipse(-s * 0.15, -s * 0.52, s * 0.17, s * 0.15);
+      drawEllipse(s * 0.15, -s * 0.52, s * 0.17, s * 0.15);
+      drawEllipse(s * 0.42, -s * 0.12, s * 0.19, s * 0.17);
+      continue;
+    }
     if (d.radius < 0.45) continue;
     const segments = getWaterRippleArcSegments(d.radius, wrLightMode);
     const step = (Math.PI * 2) / segments;
@@ -2429,28 +2478,86 @@ function drawMode2(
   const radius = -(bass * 0.25 + baseRadius);  // radius is negative (matching Canvas.ts)
   const barWidth = BASE_LINE_WIDTH_CIRCLE * settings.lineWidthCircle;
 
-  // User adjustment offsets in pixels
   const opacity = settings.opacity;
   const [pr, pg, pb] = getSpectrumPrimaryRgb(settings);
-  const r = pr / 255;
-  const g = pg / 255;
-  const b = pb / 255;
+  const shapeVariant = settings.circleShapeVariant ?? "classic";
+  const gradientType = settings.circleGradient ?? "none";
   const circleRotationRpm = settings.circleRotationRpm ?? 0;
   const rotationOffsetRad = ((circleRotationRpm * 2 * Math.PI) / 60) * (performance.now() / 1000);
 
   for (let i = 0; i < 256; i++) {
     const value = bufferData[i];
+    if (value <= 0) continue;
     const angle = i * ((180 / 128) * Math.PI / 180) + rotationOffsetRad;
 
-    const localX1 = -radius * Math.sin(angle);
-    const localY1 = radius * Math.cos(angle);
-    const localX2 = -(radius - value) * Math.sin(angle);
-    const localY2 = (radius - value) * Math.cos(angle);
+    // グラデーション設定
+    let r = pr / 255;
+    let g = pg / 255;
+    let b = pb / 255;
+    if (gradientType === "rainbow") {
+      const hue = (i / 256) * 360;
+      const [hr, hg, hb] = hslToRgb(hue / 360, 1, 0.6);
+      r = hr; g = hg; b = hb;
+    } else if (gradientType === "angular") {
+      const angle2 = (i / 256) * 360;
+      r = (127.5 + 127.5 * Math.cos((angle2 * Math.PI) / 180)) / 255;
+      g = (127.5 + 127.5 * Math.cos(((angle2 - 120) * Math.PI) / 180)) / 255;
+      b = (127.5 + 127.5 * Math.cos(((angle2 - 240) * Math.PI) / 180)) / 255;
+    } else if (gradientType === "radial") {
+      const t = value / 255;
+      r = (pr + (255 - pr) * t) / 255;
+      g = (pg + (255 - pg) * t) / 255;
+      b = (pb + (255 - pb) * t) / 255;
+    }
 
-    const [tx1, ty1] = applyMode2LocalToScreen(localX1, localY1, canvasWidth, canvasHeight, adj);
-    const [tx2, ty2] = applyMode2LocalToScreen(localX2, localY2, canvasWidth, canvasHeight, adj);
-
-    drawLine(ctx, tx1, ty1, tx2, ty2, r, g, b, opacity, barWidth);
+    if (shapeVariant === "mirror") {
+      // 内側
+      const localX1 = -radius * Math.sin(angle);
+      const localY1 = radius * Math.cos(angle);
+      const localX2 = -(radius - value) * Math.sin(angle);
+      const localY2 = (radius - value) * Math.cos(angle);
+      const [tx1, ty1] = applyMode2LocalToScreen(localX1, localY1, canvasWidth, canvasHeight, adj);
+      const [tx2, ty2] = applyMode2LocalToScreen(localX2, localY2, canvasWidth, canvasHeight, adj);
+      drawLine(ctx, tx1, ty1, tx2, ty2, r, g, b, opacity, barWidth);
+      // 外側
+      const localX3 = -radius * Math.sin(angle);
+      const localY3 = radius * Math.cos(angle);
+      const localX4 = -(radius + value) * Math.sin(angle);
+      const localY4 = (radius + value) * Math.cos(angle);
+      const [tx3, ty3] = applyMode2LocalToScreen(localX3, localY3, canvasWidth, canvasHeight, adj);
+      const [tx4, ty4] = applyMode2LocalToScreen(localX4, localY4, canvasWidth, canvasHeight, adj);
+      drawLine(ctx, tx3, ty3, tx4, ty4, r, g, b, opacity, barWidth);
+    } else if (shapeVariant === "donut") {
+      // 外側のみ
+      const outerRadius = Math.abs(radius) + value;
+      const localX1 = -(-outerRadius) * Math.sin(angle);
+      const localY1 = (-outerRadius) * Math.cos(angle);
+      const localX2 = -(-Math.abs(radius)) * Math.sin(angle);
+      const localY2 = (-Math.abs(radius)) * Math.cos(angle);
+      const [tx1, ty1] = applyMode2LocalToScreen(localX1, localY1, canvasWidth, canvasHeight, adj);
+      const [tx2, ty2] = applyMode2LocalToScreen(localX2, localY2, canvasWidth, canvasHeight, adj);
+      drawLine(ctx, tx1, ty1, tx2, ty2, r, g, b, opacity, barWidth);
+    } else if (shapeVariant === "outline") {
+      // 脇動する円
+      const pulseRadius = Math.abs(radius) + value * 0.3;
+      const localX1 = -(-pulseRadius) * Math.sin(angle);
+      const localY1 = (-pulseRadius) * Math.cos(angle);
+      const localX2 = -(-pulseRadius) * Math.sin(angle + 0.1);
+      const localY2 = (-pulseRadius) * Math.cos(angle + 0.1);
+      const [tx1, ty1] = applyMode2LocalToScreen(localX1, localY1, canvasWidth, canvasHeight, adj);
+      const [tx2, ty2] = applyMode2LocalToScreen(localX2, localY2, canvasWidth, canvasHeight, adj);
+      drawLine(ctx, tx1, ty1, tx2, ty2, r, g, b, opacity, barWidth);
+    } else {
+      // classic / filled
+      const localX1 = -radius * Math.sin(angle);
+      const localY1 = radius * Math.cos(angle);
+      const localX2 = -(radius - value) * Math.sin(angle);
+      const localY2 = (radius - value) * Math.cos(angle);
+      const [tx1, ty1] = applyMode2LocalToScreen(localX1, localY1, canvasWidth, canvasHeight, adj);
+      const [tx2, ty2] = applyMode2LocalToScreen(localX2, localY2, canvasWidth, canvasHeight, adj);
+      const w = shapeVariant === "filled" ? barWidth * 2 : barWidth;
+      drawLine(ctx, tx1, ty1, tx2, ty2, r, g, b, opacity, w);
+    }
   }
 }
 

@@ -28,18 +28,29 @@ export type EffectType =
 export type EffectDensity = 1 | 2 | 3;
 export type AtmosphereVariant = "dust" | "sparks" | "fireflies";
 export type SparkleVariant = "normal" | "heart" | "star";
-export type WaterRippleVariant = "ripple" | "heart" | "firework";
+export type WaterRippleVariant = "ripple" | "heart" | "firework" | "star" | "paw";
+export type WeatherVariant = "rain" | "snow" | "heart" | "star" | "paw";
 export type SpaceDirection = "forward" | "backward";
 
 export interface EffectParams {
   type: EffectType;
   density: EffectDensity;
-  /** 雨・雪: 鉛直からの傾き（度）。0=真下、正で右へ傾く */
+  /** 雨雪: 角度（0〜360度、12時=0、6時=180、デフォルト180） */
   weatherAngleDeg?: number;
-  /** 雨・雪: 量 0〜1 */
+  /** 雨雪: 量 0〜1 */
   weatherAmount?: number;
-  /** 雨・雪: 色 #RRGGBB */
+  /** 雨雪: 色 #RRGGBB */
   weatherColor?: string;
+  /** 雨雪: 種類 */
+  weatherVariant?: WeatherVariant;
+  /** 雨雪: 風の揺らぎ 0〜1（内部で10倍） */
+  weatherWind?: number;
+  /** 雨雪: 大きさ 0.2〜5.0 */
+  weatherSize?: number;
+  /** 雨雪: 落下スピード 0.1〜3.0 */
+  weatherSpeed?: number;
+  /** 雨雪: 透過率 0〜1 */
+  weatherOpacity?: number;
   /** 雨: 音連動感度 0〜10（0.1刻み、0=音連動オフ） */
   rainAudioSensitivity?: number;
   /** 水滴: 落下強度 0〜1（スポーン率・同時リング上限） */
@@ -1142,28 +1153,13 @@ export function resolveRainAudioModulation(
   return smoothedExcess * (sens / RAIN_AUDIO_SENSITIVITY_MAX);
 }
 
-function pushRainDrop(
-  width: number,
-  height: number,
-  density: EffectDensity,
-  ux: number,
-  uy: number
-): void {
-  const span = Math.max(width, height) + 200;
-  const t = Math.random();
-  rainDrops.push({
-    x: Math.random() * width + ux * (t - 0.5) * span * 0.3,
-    y: Math.random() * height + uy * (t - 0.5) * span * 0.3,
-    speed: 0.75 + Math.random() * 0.45,
-    len: 10 + Math.random() * (16 + DENSITY_STRENGTH[density] * 10),
-  });
-}
-
 interface RainDrop {
   x: number;
   y: number;
   speed: number;
   len: number;
+  /** 風の位相（0〜2π）: 粒子ごとに異なる */
+  windPhase: number;
 }
 
 interface SnowFlake {
@@ -1173,12 +1169,30 @@ interface SnowFlake {
   phase: number;
   size: number;
   driftSign: number;
+  windPhase: number;
+  rotDir: number;
+  sizeRandom: number;
 }
 
 let rainDrops: RainDrop[] = [];
 let lastRainInitKey = "";
 let snowFlakes: SnowFlake[] = [];
 let lastSnowInitKey = "";
+
+function createRainDrop(
+  width: number,
+  height: number,
+  density: EffectDensity
+): RainDrop {
+  const pad = 120;
+  return {
+    x: Math.random() * (width + pad * 2) - pad,
+    y: Math.random() * (height + pad * 2) - pad,
+    speed: 0.75 + Math.random() * 0.45,
+    len: 10 + Math.random() * (16 + DENSITY_STRENGTH[density] * 10),
+    windPhase: Math.random() * Math.PI * 2,
+  };
+}
 
 function initRainDrops(
   width: number,
@@ -1192,19 +1206,19 @@ function initRainDrops(
     Math.round(RAIN_BASE_COUNTS[density] * (0.2 + 0.8 * Math.max(0.05, Math.min(1, amount))))
   );
   rainDrops = [];
-  const rad = (angleDeg * Math.PI) / 180;
-  const ux = Math.sin(rad);
-  const uy = Math.cos(rad);
-  const span = Math.max(width, height) + 200;
   for (let i = 0; i < n; i++) {
-    const t = Math.random();
-    rainDrops.push({
-      x: Math.random() * width + ux * (t - 0.5) * span * 0.3,
-      y: Math.random() * height + uy * (t - 0.5) * span * 0.3,
-      speed: 0.75 + Math.random() * 0.45,
-      len: 10 + Math.random() * (16 + DENSITY_STRENGTH[density] * 10),
-    });
+    rainDrops.push(createRainDrop(width, height, density));
   }
+}
+
+function pushRainDrop(
+  width: number,
+  height: number,
+  density: EffectDensity,
+  ux: number,
+  uy: number
+): void {
+  rainDrops.push(createRainDrop(width, height, density));
 }
 
 function initSnowFlakes(
@@ -1223,10 +1237,13 @@ function initSnowFlakes(
     snowFlakes.push({
       x: Math.random() * width,
       y: Math.random() * height,
-      vy: 18 + Math.random() * 32 + density * 8,
+      vy: 50 + Math.random() * 30 + density * 10,
       phase: Math.random() * Math.PI * 2,
       size: Math.max(2, minDim * (0.002 + Math.random() * 0.004)),
       driftSign: Math.random() < 0.5 ? -1 : 1,
+      windPhase: Math.random() * Math.PI * 2,
+      rotDir: Math.random() < 0.5 ? -1 : 1,
+      sizeRandom: 0.5 + Math.random() * 1.0,
     });
   }
 }
@@ -1253,7 +1270,10 @@ export function updateAndGetRainStreaks(
   angleDeg: number,
   amount: number,
   hexColor: string | undefined,
-  audioSensitivityStep = 0
+  audioSensitivityStep = 0,
+  speedScale = 1.0,
+  wind = 0,
+  opacity = 1.0
 ): RainStreakGl[] {
   const [r0, g0, b0] = parseWeatherColorHex(hexColor, [110, 160, 255]);
   const amt = Math.max(0.05, Math.min(1, amount));
@@ -1292,27 +1312,44 @@ export function updateAndGetRainStreaks(
     sens <= 0
       ? 0.85
       : 0.85 + RAIN_AUDIO_FLOW_VOLUME * a.volume * (sens / RAIN_AUDIO_SENSITIVITY_MAX) + RAIN_AUDIO_FLOW_DRIVE * drive;
-  const baseSpeed = (520 + DENSITY_STRENGTH[density] * 220) * flow;
+  const baseSpeed = (520 + DENSITY_STRENGTH[density] * 220) * flow * speedScale;
   const dt = Math.min(deltaTime, 50) / 1000;
   const minDim = Math.min(width, height);
   const lwBase = Math.max(1.0, minDim * 0.0018);
-  const margin = 80;
+  const span = 120;
+  const nowSec = performance.now() / 1000;
   const out: RainStreakGl[] = [];
   const strength = DENSITY_STRENGTH[density];
-  const alphaBase = 0.35 + 0.25 * strength;
+  const alphaBase = (0.35 + 0.25 * strength) * opacity;
   const alphaMul = 1 + RAIN_AUDIO_ALPHA_BOOST * drive;
   const lenMul = 1 + RAIN_AUDIO_LEN_BOOST * drive;
   const lwMul = 1 + RAIN_AUDIO_LW_BOOST * drive;
 
   for (const p of rainDrops) {
     const sp = p.speed * baseSpeed;
-    p.x += ux * sp * dt;
+    // 風の横方向ドリフト（各粒子の位相で異なるタイミングに揺れる）
+    const windDrift = calcWindDrift(wind, nowSec, p.windPhase);
+    p.x += ux * sp * dt + windDrift * dt;
     p.y += uy * sp * dt;
-    if (p.x < -margin || p.x > width + margin || p.y < -margin || p.y > height + margin) {
-      p.x = Math.random() * (width + margin) - margin * 0.5;
-      p.y = -margin - Math.random() * height * 0.4;
-      if (drive > 0.05 && Math.random() < drive * 0.35) {
-        pushRainDrop(width, height, density, ux, uy);
+    // 画面外に出たら進行方向の逆側から再配置
+    if (p.x < -span || p.x > width + span || p.y < -span || p.y > height + span) {
+      // 出た方向の逆側に配置（進行方向に沿った辺）
+      if (p.x < -span) {
+        // 左から出た → 右端に配置、yは全面ランダム
+        p.x = width + span;
+        p.y = Math.random() * (height + span * 2) - span;
+      } else if (p.x > width + span) {
+        // 右から出た → 左端に配置
+        p.x = -span;
+        p.y = Math.random() * (height + span * 2) - span;
+      } else if (p.y < -span) {
+        // 上から出た → 下端に配置
+        p.y = height + span;
+        p.x = Math.random() * (width + span * 2) - span;
+      } else if (p.y > height + span) {
+        // 下から出た → 上端に配置
+        p.y = -span;
+        p.x = Math.random() * (width + span * 2) - span;
       }
     }
     const x2 = p.x;
@@ -1344,6 +1381,9 @@ export type SnowParticleGl = {
   g: number;
   b: number;
   alpha: number;
+  phase: number;
+  rotDir: number;
+  sizeRandom: number;
 };
 
 /** Canvas / WebGL 共用: 雪の粒子 */
@@ -1355,7 +1395,11 @@ export function updateAndGetSnowParticles(
   audio: AudioReactiveData | undefined,
   angleDeg: number,
   amount: number,
-  hexColor: string | undefined
+  hexColor: string | undefined,
+  speedScale = 1.0,
+  wind = 0,
+  opacity = 1.0,
+  audioSensitivityStep = 0
 ): SnowParticleGl[] {
   const [r0, g0, b0] = parseWeatherColorHex(hexColor, [250, 252, 255]);
   const amt = Math.max(0.05, Math.min(1, amount));
@@ -1371,14 +1415,42 @@ export function updateAndGetSnowParticles(
   const sway = 0.45 + 0.35 * a.volume;
   const dt = Math.min(deltaTime, 50) / 1000;
   const margin = 60;
+  const minDim = Math.min(width, height);
+
+  // 音連動: 感度と音量に応じて粒子数を増減
+  const sens = normalizeRainAudioSensitivity(audioSensitivityStep, 0);
+  if (sens > 0) {
+    const audioBoost = Math.min(1, a.volume * (sens / RAIN_AUDIO_SENSITIVITY_MAX));
+    const baseN = Math.max(40, Math.round(SNOW_BASE_COUNTS[density] * (0.2 + 0.8 * amt)));
+    const targetN = Math.round(baseN * (1 + audioBoost * 1.5));
+    while (snowFlakes.length < targetN) {
+      snowFlakes.push({
+        x: Math.random() * width,
+        y: -margin - Math.random() * height,
+        vy: 50 + Math.random() * 30 + density * 8,
+        phase: Math.random() * Math.PI * 2,
+        size: Math.max(2, minDim * (0.002 + Math.random() * 0.004)),
+        driftSign: Math.random() < 0.5 ? -1 : 1,
+        windPhase: Math.random() * Math.PI * 2,
+        rotDir: Math.random() < 0.5 ? -1 : 1,
+        sizeRandom: 0.5 + Math.random() * 1.0,
+      });
+    }
+    while (snowFlakes.length > targetN) {
+      snowFlakes.pop();
+    }
+  }
+  const nowSec = performance.now() / 1000;
   const out: SnowParticleGl[] = [];
   const strength = DENSITY_STRENGTH[density];
 
   for (const p of snowFlakes) {
     p.phase += dt * (1.2 + strength);
     const flutter = Math.sin(p.phase) * 28 * sway * p.driftSign;
-    p.x += (ux * p.vy * 0.35 + flutter) * dt;
-    p.y += uy * p.vy * dt * (0.95 + 0.05 * strength);
+    // 風の横方向ドリフト（固定のwindPhaseを使用）
+    const windDrift = calcWindDrift(wind, nowSec, p.windPhase);
+    p.x += (ux * p.vy * 0.35 + flutter) * dt * speedScale * 3 + windDrift * dt;
+    p.y += uy * p.vy * dt * (0.95 + 0.05 * strength) * speedScale * 3;
 
     if (p.y > height + margin) {
       p.y = -margin - Math.random() * 40;
@@ -1388,7 +1460,7 @@ export function updateAndGetSnowParticles(
     if (p.x > width + margin) p.x = -margin;
 
     const flicker = 0.55 + 0.45 * Math.sin(p.phase * 0.8);
-    const alpha = Math.min(1, (0.22 + 0.2 * strength) * flicker * (0.7 + 0.3 * amt));
+    const alpha = Math.min(1, (0.6 + 0.3 * strength) * flicker * (0.7 + 0.3 * amt) * opacity);
     out.push({
       x: p.x,
       y: p.y,
@@ -1397,9 +1469,32 @@ export function updateAndGetSnowParticles(
       g: g0,
       b: b0,
       alpha,
+      phase: p.phase,
+      rotDir: p.rotDir,
+      sizeRandom: p.sizeRandom,
     });
   }
   return out;
+}
+
+/**
+ * 風の横方向ドリフト速度を計算。
+ * 複数sine波の合成で自然な揺らぎを再現し、
+ * 各粒子の windPhase で位相をずらすことで
+ * 全粒子が同時に動かないようにする。
+ */
+function calcWindDrift(wind: number, nowSec: number, phase: number): number {
+  if (wind <= 0) return 0;
+  // 低周波: 0.08-0.25Hz（数秒周期の穏やかな揺らぎ）
+  const low = Math.sin(nowSec * 0.15 + phase) * 0.45
+            + Math.sin(nowSec * 0.08 + phase * 1.7 + 1.3) * 0.35;
+  // 中周波: 0.4-0.8Hz
+  const mid = Math.sin(nowSec * 0.55 + phase * 0.6 + 0.8) * 0.15
+            + Math.sin(nowSec * 0.8 + phase * 1.3 + 2.5) * 0.1;
+  // 正味: low が主体、±1 付近に収束
+  const combined = low + mid;
+  // 風の強さに比例した横方向ドリフト（px/秒）
+  return combined * wind * 60;
 }
 
 function drawRainCanvas(
@@ -1411,30 +1506,114 @@ function drawRainCanvas(
   audio: AudioReactiveData,
   effect: EffectParams
 ): void {
-  const angle = effect.weatherAngleDeg ?? 18;
+  const angle = effect.weatherAngleDeg ?? 180;
   const amount = effect.weatherAmount ?? 0.65;
-  const streaks = updateAndGetRainStreaks(
-    width,
-    height,
-    density,
-    deltaTime,
-    audio,
-    angle,
-    amount,
-    effect.weatherColor,
-    effect.rainAudioSensitivity ?? 0
-  );
-  ctx.save();
-  ctx.lineCap = "round";
-  for (const s of streaks) {
-    ctx.strokeStyle = `rgba(${s.r},${s.g},${s.b},${s.a})`;
-    ctx.lineWidth = s.lw;
-    ctx.beginPath();
-    ctx.moveTo(s.x1, s.y1);
-    ctx.lineTo(s.x2, s.y2);
-    ctx.stroke();
+  const variant = (effect.weatherVariant ?? "rain") as WeatherVariant;
+  const wind = effect.weatherWind ?? 0;
+  const sizeScale = effect.weatherSize ?? 1.0;
+  const speedScale = effect.weatherSpeed ?? 1.0;
+  const weatherOpacity = effect.weatherOpacity ?? 1.0;
+
+  if (variant === "rain") {
+    const streaks = updateAndGetRainStreaks(
+      width, height, density, deltaTime, audio,
+      angle, amount, effect.weatherColor,
+      effect.rainAudioSensitivity ?? 0, speedScale, wind, weatherOpacity
+    );
+    ctx.save();
+    ctx.lineCap = "round";
+    for (const s of streaks) {
+      ctx.strokeStyle = `rgba(${s.r},${s.g},${s.b},${s.a})`;
+      ctx.lineWidth = s.lw * sizeScale;
+      ctx.beginPath();
+      ctx.moveTo(s.x1, s.y1);
+      ctx.lineTo(s.x2, s.y2);
+      ctx.stroke();
+    }
+    ctx.restore();
+  } else {
+    // 雪・ハート・星・猫の手（粒子系）
+    const snowParticles = updateAndGetSnowParticles(
+      width, height, density, deltaTime, audio,
+      angle, amount, effect.weatherColor, speedScale, wind, weatherOpacity,
+      effect.rainAudioSensitivity ?? 0
+    );
+    const [r0, g0, b0] = parseWeatherColorHex(effect.weatherColor, [250, 252, 255]);
+    ctx.save();
+    for (const p of snowParticles) {
+      // ハート・星・猫の手は5倍サイズ + ランダム
+      const sizeMul = (variant === "heart" || variant === "star" || variant === "paw") ? 5 : 1;
+      const s = Math.max(2, p.radius * sizeScale * sizeMul * p.sizeRandom);
+      ctx.fillStyle = `rgba(${r0},${g0},${b0},${p.alpha})`;
+      ctx.strokeStyle = `rgba(${r0},${g0},${b0},${p.alpha})`;
+      ctx.lineWidth = Math.max(1, s * 0.15);
+
+      if (variant === "snow") {
+        // 雪（円）
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, s, 0, Math.PI * 2);
+        ctx.fill();
+      } else if (variant === "heart") {
+        // ハート
+        ctx.save();
+        ctx.translate(p.x, p.y);
+        const scale = s / 10;
+        ctx.scale(scale, scale);
+        ctx.beginPath();
+        ctx.moveTo(0, 3);
+        ctx.bezierCurveTo(-2, 1, -5, -2, -6, -4);
+        ctx.bezierCurveTo(-7, -6, -5, -8, -3, -7);
+        ctx.bezierCurveTo(-1, -6, 0, -4, 0, -2);
+        ctx.bezierCurveTo(0, -4, 1, -6, 3, -7);
+        ctx.bezierCurveTo(5, -8, 7, -6, 6, -4);
+        ctx.bezierCurveTo(5, -2, 2, 1, 0, 3);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+      } else if (variant === "star") {
+        // 星（落下速度に比例した回転）
+        ctx.save();
+        ctx.translate(p.x, p.y);
+        ctx.rotate(p.phase * 0.4 * p.rotDir + p.x * 0.01);
+        ctx.beginPath();
+        for (let i = 0; i < 10; i++) {
+          const angle2 = (i * Math.PI) / 5 - Math.PI / 2;
+          const r = i % 2 === 0 ? s : s * 0.4;
+          const px = Math.cos(angle2) * r;
+          const py = Math.sin(angle2) * r;
+          if (i === 0) ctx.moveTo(px, py);
+          else ctx.lineTo(px, py);
+        }
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+      } else if (variant === "paw") {
+        // 猫の手
+        ctx.save();
+        ctx.translate(p.x, p.y);
+        ctx.rotate(Math.sin(performance.now() / 1500 + p.x) * 0.2);
+        ctx.lineWidth = Math.max(1, s * 0.12);
+        // 主パッド
+        ctx.beginPath();
+        ctx.ellipse(0, s * 0.3, s * 0.38, s * 0.32, 0, 0, Math.PI * 2);
+        ctx.stroke();
+        // 4つの趾
+        const toeOffsets = [
+          { dx: -s * 0.42, dy: -s * 0.12, rx: s * 0.19, ry: s * 0.17 },
+          { dx: -s * 0.15, dy: -s * 0.52, rx: s * 0.17, ry: s * 0.15 },
+          { dx: s * 0.15, dy: -s * 0.52, rx: s * 0.17, ry: s * 0.15 },
+          { dx: s * 0.42, dy: -s * 0.12, rx: s * 0.19, ry: s * 0.17 },
+        ];
+        for (const toe of toeOffsets) {
+          ctx.beginPath();
+          ctx.ellipse(toe.dx, toe.dy, toe.rx, toe.ry, 0, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+    }
+    ctx.restore();
   }
-  ctx.restore();
 }
 
 /** 水滴: スポーン率（滴/秒）— intensity 0 = 弱、1 = 強（10×旧「強」7/sec） */
@@ -1516,8 +1695,33 @@ interface WaterRippleFirework {
   rotation: number;
 }
 
+interface WaterRippleStar {
+  x: number;
+  y: number;
+  startMs: number;
+  duration: number;
+  maxAlpha: number;
+  lineWidth: number;
+  baseScale: number;
+  rotation: number;
+  points: number;
+}
+
+interface WaterRipplePaw {
+  x: number;
+  y: number;
+  startMs: number;
+  duration: number;
+  maxAlpha: number;
+  lineWidth: number;
+  baseScale: number;
+  rotation: number;
+}
+
 let waterRippleHearts: WaterRippleHeart[] = [];
 let waterRippleFireworks: WaterRippleFirework[] = [];
+let waterRippleStars: WaterRippleStar[] = [];
+let waterRipplePaws: WaterRipplePaw[] = [];
 
 export function getWaterRippleAdaptiveScale(): number {
   return waterRippleAdaptiveScale;
@@ -1583,6 +1787,41 @@ function spawnWaterRippleFirework(
     baseRadius: minDim * (0.02 + Math.random() * 0.055),
     spokes: lightMode ? 5 + Math.floor(Math.random() * 3) : 8 + Math.floor(Math.random() * 7),
     rotation: Math.random() * Math.PI * 2,
+  });
+}
+
+function spawnWaterRippleStar(width: number, height: number, nowMs: number, drive = 0): void {
+  const minDim = Math.min(width, height);
+  const x = Math.random() * width;
+  const y = Math.random() * height;
+  const alphaMul = 1 + WATER_RIPPLE_AUDIO_ALPHA_GAIN * drive;
+  waterRippleStars.push({
+    x,
+    y,
+    startMs: nowMs,
+    duration: 800 + Math.random() * 600,
+    maxAlpha: (0.55 + Math.random() * 0.2) * alphaMul,
+    lineWidth: Math.max(1.2, minDim * 0.0014),
+    baseScale: minDim * (0.02 + Math.random() * 0.035),
+    rotation: Math.random() * Math.PI * 2,
+    points: 5,
+  });
+}
+
+function spawnWaterRipplePaw(width: number, height: number, nowMs: number, drive = 0): void {
+  const minDim = Math.min(width, height);
+  const x = Math.random() * width;
+  const y = Math.random() * height;
+  const alphaMul = 1 + WATER_RIPPLE_AUDIO_ALPHA_GAIN * drive;
+  waterRipplePaws.push({
+    x,
+    y,
+    startMs: nowMs,
+    duration: 1000 + Math.random() * 500,
+    maxAlpha: (0.55 + Math.random() * 0.2) * alphaMul,
+    lineWidth: Math.max(1.2, minDim * 0.0013),
+    baseScale: minDim * (0.018 + Math.random() * 0.03),
+    rotation: (Math.random() - 0.5) * 0.6,
   });
 }
 
@@ -1698,10 +1937,37 @@ export type WaterRippleSparkGl = {
   a: number;
 };
 
+export type WaterRippleStarGl = {
+  x: number;
+  y: number;
+  scale: number;
+  lw: number;
+  r: number;
+  g: number;
+  b: number;
+  a: number;
+  rotation: number;
+  points: number;
+};
+
+export type WaterRipplePawGl = {
+  x: number;
+  y: number;
+  scale: number;
+  lw: number;
+  r: number;
+  g: number;
+  b: number;
+  a: number;
+  rotation: number;
+};
+
 export type WaterRippleDrawGl =
   | ({ kind: "ripple" } & WaterRippleRingGl)
   | ({ kind: "heart" } & WaterRippleHeartGl)
-  | ({ kind: "firework" } & WaterRippleSparkGl);
+  | ({ kind: "firework" } & WaterRippleSparkGl)
+  | ({ kind: "star" } & WaterRippleStarGl)
+  | ({ kind: "paw" } & WaterRipplePawGl);
 
 /** Canvas / WebGL 共用: 水面リップル（円形の波紋） */
 export function updateAndGetWaterRippleRings(
@@ -1755,6 +2021,8 @@ export function updateAndGetWaterRippleDraws(
     waterRippleRings = [];
     waterRippleHearts = [];
     waterRippleFireworks = [];
+    waterRippleStars = [];
+    waterRipplePaws = [];
     waterRippleRenderBuffer = [];
     waterRippleDrawBuffer = [];
     waterRippleSpawnCarry = 0;
@@ -1821,6 +2089,12 @@ export function updateAndGetWaterRippleDraws(
       } else if (variant === "firework") {
         if (waterRippleFireworks.length >= maxRings) break;
         spawnWaterRippleFirework(width, height, nowMs, lightMode, drive);
+      } else if (variant === "star") {
+        if (waterRippleStars.length >= maxRings) break;
+        spawnWaterRippleStar(width, height, nowMs, drive);
+      } else if (variant === "paw") {
+        if (waterRipplePaws.length >= maxRings) break;
+        spawnWaterRipplePaw(width, height, nowMs, drive);
       } else {
         if (waterRippleRings.length >= maxRings) break;
         spawnWaterRippleDrop(width, height, nowMs, ringCountLimit, drive);
@@ -1847,6 +2121,26 @@ export function updateAndGetWaterRippleDraws(
         }
       }
       waterRippleHearts.length = write;
+    } else if (variant === "star") {
+      let write = 0;
+      for (let i = 0; i < waterRippleStars.length; i++) {
+        const star = waterRippleStars[i];
+        const progress = (nowMs - star.startMs) / star.duration;
+        if (progress < 1) {
+          waterRippleStars[write++] = star;
+        }
+      }
+      waterRippleStars.length = write;
+    } else if (variant === "paw") {
+      let write = 0;
+      for (let i = 0; i < waterRipplePaws.length; i++) {
+        const paw = waterRipplePaws[i];
+        const progress = (nowMs - paw.startMs) / paw.duration;
+        if (progress < 1) {
+          waterRipplePaws[write++] = paw;
+        }
+      }
+      waterRipplePaws.length = write;
     } else {
       let write = 0;
       for (let i = 0; i < waterRippleFireworks.length; i++) {
@@ -1909,6 +2203,47 @@ export function updateAndGetWaterRippleDraws(
           a: alpha * (0.85 + (i % 3) * 0.05),
         });
       }
+    }
+  } else if (variant === "star") {
+    for (const star of waterRippleStars) {
+      const progress = (nowMs - star.startMs) / star.duration;
+      if (progress < 0 || progress >= 1) continue;
+      const fade = 1 - progress;
+      const alpha = Math.min(1, star.maxAlpha * fade * (0.84 + 0.16 * strength));
+      if (alpha < WATER_RIPPLE_ALPHA_CULL) continue;
+      waterRippleDrawBuffer.push({
+        kind: "star",
+        x: star.x,
+        y: star.y,
+        scale: star.baseScale * (0.3 + progress * 1.2),
+        lw: star.lineWidth,
+        r: r0,
+        g: g0,
+        b: b0,
+        a: alpha,
+        rotation: star.rotation + progress * 0.3,
+        points: star.points,
+      });
+    }
+  } else if (variant === "paw") {
+    for (const paw of waterRipplePaws) {
+      const progress = (nowMs - paw.startMs) / paw.duration;
+      if (progress < 0 || progress >= 1) continue;
+      const fade = 1 - progress;
+      const alpha = Math.min(1, paw.maxAlpha * fade * (0.84 + 0.16 * strength));
+      if (alpha < WATER_RIPPLE_ALPHA_CULL) continue;
+      waterRippleDrawBuffer.push({
+        kind: "paw",
+        x: paw.x,
+        y: paw.y,
+        scale: paw.baseScale * (0.3 + progress * 1.2),
+        lw: paw.lineWidth,
+        r: r0,
+        g: g0,
+        b: b0,
+        a: alpha,
+        rotation: paw.rotation + progress * 0.15,
+      });
     }
   } else {
     for (const ring of waterRippleRings) {
@@ -1992,7 +2327,8 @@ function drawWaterRippleCanvas(
   let prevStyle = "";
   let prevShadowColor = "";
   const useShadow = !lightMode;
-  for (const d of draws) {
+  for (let idx = 0; idx < draws.length; idx++) {
+    const d = draws[idx];
     if (d.a < WATER_RIPPLE_ALPHA_CULL) continue;
     if (useShadow) {
       const shadow = Math.max(4, d.lw * 4);
@@ -2015,24 +2351,76 @@ function drawWaterRippleCanvas(
       ctx.lineWidth = d.lw;
       prevLw = d.lw;
     }
-    if (d.kind === "ripple") {
-      if (d.radius < WATER_RIPPLE_RADIUS_CULL) continue;
-      ctx.beginPath();
-      ctx.arc(d.x, d.y, d.radius, 0, Math.PI * 2);
-      ctx.stroke();
-      continue;
+    switch (d.kind) {
+      case "ripple": {
+        const rippleD = d as WaterRippleRingGl & { kind: "ripple" };
+        if (rippleD.radius < WATER_RIPPLE_RADIUS_CULL) continue;
+        ctx.beginPath();
+        ctx.arc(rippleD.x, rippleD.y, rippleD.radius, 0, Math.PI * 2);
+        ctx.stroke();
+        continue;
+      }
+      case "firework": {
+        const fwD = d as WaterRippleSparkGl & { kind: "firework" };
+        ctx.beginPath();
+        ctx.moveTo(fwD.x1, fwD.y1);
+        ctx.lineTo(fwD.x2, fwD.y2);
+        ctx.stroke();
+        continue;
+      }
+      case "star": {
+        const starD = d as WaterRippleStarGl & { kind: "star" };
+        const s = Math.max(3, starD.scale);
+        ctx.save();
+        ctx.translate(starD.x, starD.y);
+        ctx.rotate(starD.rotation);
+        ctx.beginPath();
+        for (let i = 0; i <= starD.points * 2; i++) {
+          const angle = (i * Math.PI) / starD.points - Math.PI / 2;
+          const r = i % 2 === 0 ? s : s * 0.4;
+          const px = Math.cos(angle) * r;
+          const py = Math.sin(angle) * r;
+          if (i === 0) ctx.moveTo(px, py);
+          else ctx.lineTo(px, py);
+        }
+        ctx.closePath();
+        ctx.stroke();
+        ctx.restore();
+        continue;
+      }
+      case "paw": {
+        const pawD = d as WaterRipplePawGl & { kind: "paw" };
+        const s = Math.max(3, pawD.scale);
+        ctx.save();
+        ctx.translate(pawD.x, pawD.y);
+        ctx.rotate(pawD.rotation);
+        ctx.lineWidth = pawD.lw;
+        // 主パッド（小さな楕円）
+        ctx.beginPath();
+        ctx.ellipse(0, s * 0.3, s * 0.38, s * 0.32, 0, 0, Math.PI * 2);
+        ctx.stroke();
+        // 4つの趾パッド（少し大きめ、間隔広め）
+        const toeOffsets = [
+          { dx: -s * 0.42, dy: -s * 0.12, rx: s * 0.19, ry: s * 0.17 },
+          { dx: -s * 0.15, dy: -s * 0.52, rx: s * 0.17, ry: s * 0.15 },
+          { dx: s * 0.15, dy: -s * 0.52, rx: s * 0.17, ry: s * 0.15 },
+          { dx: s * 0.42, dy: -s * 0.12, rx: s * 0.19, ry: s * 0.17 },
+        ];
+        for (const toe of toeOffsets) {
+          ctx.beginPath();
+          ctx.ellipse(toe.dx, toe.dy, toe.rx, toe.ry, 0, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        ctx.restore();
+        continue;
+      }
     }
-    if (d.kind === "firework") {
-      ctx.beginPath();
-      ctx.moveTo(d.x1, d.y1);
-      ctx.lineTo(d.x2, d.y2);
-      ctx.stroke();
-      continue;
-    }
-    const s = Math.max(3, d.scale);
+    // heart (default fallthrough)
+    const heartD = d as WaterRippleHeartGl & { kind: "heart" };
+    const s = Math.max(3, heartD.scale);
     ctx.save();
-    ctx.translate(d.x, d.y);
-    ctx.rotate(d.rotation);
+    ctx.translate(heartD.x, heartD.y);
+    ctx.rotate(heartD.rotation);
     if (lightMode) {
       const steps = getWaterRippleHeartSteps(true);
       const step = (Math.PI * 2) / steps;
@@ -2080,13 +2468,17 @@ function drawSnowCanvas(
   audio: AudioReactiveData,
   effect: EffectParams
 ): void {
-  const angle = effect.weatherAngleDeg ?? 8;
+  const angle = effect.weatherAngleDeg ?? 180;
   const amount = effect.weatherAmount ?? 0.55;
-  const list = updateAndGetSnowParticles(width, height, density, deltaTime, audio, angle, amount, effect.weatherColor);
+  const wind = effect.weatherWind ?? 0;
+  const sizeScale = effect.weatherSize ?? 1.0;
+  const speedScale = effect.weatherSpeed ?? 1.0;
+
+  const list = updateAndGetSnowParticles(width, height, density, deltaTime, audio, angle, amount, effect.weatherColor, speedScale, wind, effect.weatherOpacity ?? 1.0, effect.rainAudioSensitivity ?? 0);
   ctx.save();
   ctx.globalCompositeOperation = "lighter";
   for (const p of list) {
-    const rad = Math.max(1.2, p.radius);
+    const rad = Math.max(1.2, p.radius * sizeScale);
     ctx.fillStyle = `rgba(${p.r},${p.g},${p.b},${p.alpha})`;
     ctx.beginPath();
     ctx.arc(p.x, p.y, rad, 0, Math.PI * 2);

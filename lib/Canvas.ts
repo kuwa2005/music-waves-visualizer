@@ -54,6 +54,12 @@ export type SpectrumSettings = {
   dotSizeLevel?: number;
   /** 円形スペアナ回転（rpm）。null=OFF、0=停止、負=左回転、正=右回転 */
   circleRotationRpm?: number | null;
+  /** 円形スペアナ形状バリアント */
+  circleShapeVariant?: "classic" | "mirror" | "donut" | "filled" | "outline";
+  /** 円形スペアナグラデーション */
+  circleGradient?: "none" | "radial" | "angular" | "rainbow";
+  /** 円形スペアナバースタイル */
+  circleBarStyle?: "rect" | "line" | "dot";
   /** 音圧系（8〜14）: ゲイン/ガンマ/アタック/リリース */
   loudnessParams?: {
     gain: number;
@@ -1290,7 +1296,10 @@ export const drawBars = (
     analyser.getByteFrequencyData(bufferData); //spectrum data
     const specSens = settings.sensitivity ?? 1;
     if (specSens !== 1) { for (let i = 0; i < bufferData.length; i++) bufferData[i] = Math.max(0, Math.min(255, bufferData[i] * specSens)); }
-    ctx.fillStyle = `rgba(${pr}, ${pg}, ${pb}, ${settings.opacity})`;
+
+    const shapeVariant = settings.circleShapeVariant ?? "classic";
+    const gradientType = settings.circleGradient ?? "none";
+    const barStyle = settings.circleBarStyle ?? "rect";
 
     ctx.scale(0.5, 0.5);
     ctx.translate(canvasWidth, canvasHeight);
@@ -1308,16 +1317,95 @@ export const drawBars = (
     if (rotationOffsetRad !== 0) {
       ctx.rotate(rotationOffsetRad);
     }
+
+    const barWidth = BASE_LINE_WIDTH_CIRCLE * settings.lineWidthCircle;
     for (let i = 0; i < 256; i++) {
       let value = bufferData[i];
       if (value >= threshold) {
-        const barWidth = BASE_LINE_WIDTH_CIRCLE * settings.lineWidthCircle;
-        ctx.fillRect(
-          0,
-          radius,
-          barWidth,
-          -value / barLengthFactor
-        );
+        // グラデーション設定
+        if (gradientType === "rainbow") {
+          const hue = (i / 256) * 360;
+          ctx.fillStyle = `hsla(${hue}, 100%, 60%, ${settings.opacity})`;
+        } else if (gradientType === "angular") {
+          const angle = (i / 256) * 360;
+          const r2 = Math.round(127.5 + 127.5 * Math.cos((angle * Math.PI) / 180));
+          const g2 = Math.round(127.5 + 127.5 * Math.cos(((angle - 120) * Math.PI) / 180));
+          const b2 = Math.round(127.5 + 127.5 * Math.cos(((angle - 240) * Math.PI) / 180));
+          ctx.fillStyle = `rgba(${r2}, ${g2}, ${b2}, ${settings.opacity})`;
+        } else if (gradientType === "radial") {
+          const t = value / 255;
+          const r2 = Math.round(pr + (255 - pr) * t);
+          const g2 = Math.round(pg + (255 - pg) * t);
+          const b2 = Math.round(pb + (255 - pb) * t);
+          ctx.fillStyle = `rgba(${r2}, ${g2}, ${b2}, ${settings.opacity})`;
+        } else {
+          ctx.fillStyle = `rgba(${pr}, ${pg}, ${pb}, ${settings.opacity})`;
+        }
+
+        ctx.strokeStyle = ctx.fillStyle;
+
+        if (shapeVariant === "mirror") {
+          // 内側 + 外側の両方向
+          if (barStyle === "line") {
+            ctx.beginPath();
+            ctx.moveTo(0, radius);
+            ctx.lineTo(0, radius - value / barLengthFactor);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(0, radius);
+            ctx.lineTo(0, radius + value / barLengthFactor);
+            ctx.stroke();
+          } else if (barStyle === "dot") {
+            ctx.beginPath();
+            ctx.arc(0, radius - value / barLengthFactor, barWidth / 2, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.beginPath();
+            ctx.arc(0, radius + value / barLengthFactor, barWidth / 2, 0, Math.PI * 2);
+            ctx.fill();
+          } else {
+            ctx.fillRect(0, radius, barWidth, -value / barLengthFactor);
+            ctx.fillRect(0, radius, barWidth, value / barLengthFactor);
+          }
+        } else if (shapeVariant === "donut") {
+          // 外側のみ（内側は空洞）
+          const outerRadius = Math.abs(radius) + value / barLengthFactor;
+          if (barStyle === "line") {
+            ctx.beginPath();
+            ctx.moveTo(0, -Math.abs(radius));
+            ctx.lineTo(0, -outerRadius);
+            ctx.stroke();
+          } else if (barStyle === "dot") {
+            ctx.beginPath();
+            ctx.arc(0, -outerRadius, barWidth / 2, 0, Math.PI * 2);
+            ctx.fill();
+          } else {
+            ctx.fillRect(0, -outerRadius, barWidth, value / barLengthFactor);
+          }
+        } else if (shapeVariant === "filled") {
+          // 塗りつぶし風に広いバー
+          const filledWidth = barWidth * 2;
+          ctx.fillRect(0, radius, filledWidth, -value / barLengthFactor);
+        } else if (shapeVariant === "outline") {
+          // 円の輪郭線のみ（バー高さは0、径だけ脈動）
+          const pulseRadius = Math.abs(radius) + value * 0.3;
+          ctx.beginPath();
+          ctx.arc(0, 0, pulseRadius, 0, Math.PI * 2);
+          ctx.stroke();
+        } else {
+          // classic（デフォルト）
+          if (barStyle === "line") {
+            ctx.beginPath();
+            ctx.moveTo(0, radius);
+            ctx.lineTo(0, radius - value / barLengthFactor);
+            ctx.stroke();
+          } else if (barStyle === "dot") {
+            ctx.beginPath();
+            ctx.arc(0, radius - value / barLengthFactor, barWidth / 2, 0, Math.PI * 2);
+            ctx.fill();
+          } else {
+            ctx.fillRect(0, radius, barWidth, -value / barLengthFactor);
+          }
+        }
         ctx.rotate(((180 / 128) * Math.PI) / 180);
       }
     }
@@ -2414,15 +2502,103 @@ export function renderFrameSync(
     ctx.stroke();
   } else if (mode === 2) {
     analyser.getByteFrequencyData(bufferData);
-    ctx.fillStyle = `rgba(${pr}, ${pg}, ${pb}, ${settings.opacity})`;
+    const specSens = settings.sensitivity ?? 1;
+    if (specSens !== 1) { for (let i = 0; i < bufferData.length; i++) bufferData[i] = Math.max(0, Math.min(255, bufferData[i] * specSens)); }
+
+    const shapeVariant = settings.circleShapeVariant ?? "classic";
+    const gradientType = settings.circleGradient ?? "none";
+    const barStyle = settings.circleBarStyle ?? "rect";
+
     ctx.save();
     ctx.scale(0.5, 0.5);
     ctx.translate(canvasWidth, canvasHeight);
     const bass = Math.floor(bufferData[1]);
     const radius = -(bass * 0.25 + 200);
+
+    const barWidth = BASE_LINE_WIDTH_CIRCLE * settings.lineWidthCircle;
     for (let i = 0; i < 256; i++) {
-      if (bufferData[i] > 0) {
-        ctx.fillRect(0, radius, BASE_LINE_WIDTH_CIRCLE * settings.lineWidthCircle, -bufferData[i]);
+      let value = bufferData[i];
+      if (value > 0) {
+        // グラデーション設定
+        if (gradientType === "rainbow") {
+          const hue = (i / 256) * 360;
+          ctx.fillStyle = `hsla(${hue}, 100%, 60%, ${settings.opacity})`;
+        } else if (gradientType === "angular") {
+          const angle = (i / 256) * 360;
+          const r2 = Math.round(127.5 + 127.5 * Math.cos((angle * Math.PI) / 180));
+          const g2 = Math.round(127.5 + 127.5 * Math.cos(((angle - 120) * Math.PI) / 180));
+          const b2 = Math.round(127.5 + 127.5 * Math.cos(((angle - 240) * Math.PI) / 180));
+          ctx.fillStyle = `rgba(${r2}, ${g2}, ${b2}, ${settings.opacity})`;
+        } else if (gradientType === "radial") {
+          const t = value / 255;
+          const r2 = Math.round(pr + (255 - pr) * t);
+          const g2 = Math.round(pg + (255 - pg) * t);
+          const b2 = Math.round(pb + (255 - pb) * t);
+          ctx.fillStyle = `rgba(${r2}, ${g2}, ${b2}, ${settings.opacity})`;
+        } else {
+          ctx.fillStyle = `rgba(${pr}, ${pg}, ${pb}, ${settings.opacity})`;
+        }
+
+        ctx.strokeStyle = ctx.fillStyle;
+
+        if (shapeVariant === "mirror") {
+          if (barStyle === "line") {
+            ctx.beginPath();
+            ctx.moveTo(0, radius);
+            ctx.lineTo(0, radius - value);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(0, radius);
+            ctx.lineTo(0, radius + value);
+            ctx.stroke();
+          } else if (barStyle === "dot") {
+            ctx.beginPath();
+            ctx.arc(0, radius - value, barWidth / 2, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.beginPath();
+            ctx.arc(0, radius + value, barWidth / 2, 0, Math.PI * 2);
+            ctx.fill();
+          } else {
+            ctx.fillRect(0, radius, barWidth, -value);
+            ctx.fillRect(0, radius, barWidth, value);
+          }
+        } else if (shapeVariant === "donut") {
+          const outerRadius = Math.abs(radius) + value;
+          if (barStyle === "line") {
+            ctx.beginPath();
+            ctx.moveTo(0, -Math.abs(radius));
+            ctx.lineTo(0, -outerRadius);
+            ctx.stroke();
+          } else if (barStyle === "dot") {
+            ctx.beginPath();
+            ctx.arc(0, -outerRadius, barWidth / 2, 0, Math.PI * 2);
+            ctx.fill();
+          } else {
+            ctx.fillRect(0, -outerRadius, barWidth, value);
+          }
+        } else if (shapeVariant === "filled") {
+          const filledWidth = barWidth * 2;
+          ctx.fillRect(0, radius, filledWidth, -value);
+        } else if (shapeVariant === "outline") {
+          const pulseRadius = Math.abs(radius) + value * 0.3;
+          ctx.beginPath();
+          ctx.arc(0, 0, pulseRadius, 0, Math.PI * 2);
+          ctx.stroke();
+        } else {
+          // classic
+          if (barStyle === "line") {
+            ctx.beginPath();
+            ctx.moveTo(0, radius);
+            ctx.lineTo(0, radius - value);
+            ctx.stroke();
+          } else if (barStyle === "dot") {
+            ctx.beginPath();
+            ctx.arc(0, radius - value, barWidth / 2, 0, Math.PI * 2);
+            ctx.fill();
+          } else {
+            ctx.fillRect(0, radius, barWidth, -value);
+          }
+        }
         ctx.rotate(((180 / 128) * Math.PI) / 180);
       }
     }

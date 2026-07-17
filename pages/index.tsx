@@ -863,9 +863,9 @@ const Home: NextPage = () => {
   const [audioFadeInSecStr, setAudioFadeInSecStr] = useState<string>("0");
   const [audioFadeOutSecStr, setAudioFadeOutSecStr] = useState<string>("0");
 
-  type WeatherAdjust = { angleDeg: number; amount: number; color: string };
-  const DEFAULT_RAIN_WEATHER: WeatherAdjust = { angleDeg: 22, amount: 0.7, color: "#6ba3ff" };
-  const DEFAULT_SNOW_WEATHER: WeatherAdjust = { angleDeg: 10, amount: 0.6, color: "#ffffff" };
+  type WeatherAdjust = { angleDeg: number; amount: number; color: string; variant: string; wind: number; size: number; speed: number; opacity: number };
+  const DEFAULT_RAIN_WEATHER: WeatherAdjust = { angleDeg: 180, amount: 0.7, color: "#6ba3ff", variant: "rain", wind: 0, size: 1.0, speed: 1.0, opacity: 1.0 };
+  const DEFAULT_SNOW_WEATHER: WeatherAdjust = { angleDeg: 180, amount: 0.6, color: "#ffffff", variant: "snow", wind: 0, size: 1.0, speed: 1.0, opacity: 1.0 };
   const DEFAULT_WATER_RIPPLE_COLOR = "#d4f7ff";
   const DEFAULT_WATER_RIPPLE_INTENSITY = 0.5;
   const DEFAULT_WATER_RIPPLE_VARIANT: WaterRippleVariant = "ripple";
@@ -949,6 +949,9 @@ const Home: NextPage = () => {
   const [lineWidthSymWave, setLineWidthSymWave] = useState<number>(3.6);    // mode5
   const [dotSizeLevel, setDotSizeLevel] = useState<number>(SPECTRUM_DOT_SIZE_DEFAULT); // mode4
   const [circleRotationRpm, setCircleRotationRpm] = useState<number | null>(null); // mode2: null=OFF, 0=停止
+  const [circleShapeVariant, setCircleShapeVariant] = useState<"classic" | "mirror" | "donut" | "filled" | "outline">("classic"); // mode2
+  const [circleGradient, setCircleGradient] = useState<"none" | "radial" | "angular" | "rainbow">("none"); // mode2
+  const [circleBarStyle, setCircleBarStyle] = useState<"rect" | "line" | "dot">("rect"); // mode2
   type LoudnessParams = { gain: number; gamma: number; attack: number; release: number };
   type WmpTrailParams = { trailLength: number; trailDecay: number; additive: number };
   const DEFAULT_LOUDNESS_PARAMS: LoudnessParams = { gain: 1.35, gamma: 0.82, attack: 0.22, release: 0.08 };
@@ -1056,11 +1059,21 @@ const Home: NextPage = () => {
       base.weatherAngleDeg = rainWeather.angleDeg;
       base.weatherAmount = rainWeather.amount;
       base.weatherColor = rainWeather.color;
+      base.weatherVariant = rainWeather.variant as any;
+      base.weatherWind = rainWeather.wind;
+      base.weatherSize = rainWeather.size;
+      base.weatherSpeed = rainWeather.speed;
+      base.weatherOpacity = rainWeather.opacity;
       base.rainAudioSensitivity = rainAudioSensitivity;
     } else if (effectType === "snow") {
       base.weatherAngleDeg = snowWeather.angleDeg;
       base.weatherAmount = snowWeather.amount;
       base.weatherColor = snowWeather.color;
+      base.weatherVariant = snowWeather.variant as any;
+      base.weatherWind = snowWeather.wind;
+      base.weatherSize = snowWeather.size;
+      base.weatherSpeed = snowWeather.speed;
+      base.weatherOpacity = snowWeather.opacity;
     } else if (effectType === "space" || effectType === "spaceConstant" || effectType === "spaceAudio") {
       base.effectTintColor = spaceParticleColor;
       base.spaceDirection = spaceDirection;
@@ -1442,6 +1455,9 @@ const Home: NextPage = () => {
         spectrumColorHex,
         spectrumRainbowColorful,
         circleRotationRpm,
+        circleShapeVariant,
+        circleGradient,
+        circleBarStyle,
         loudnessParamsByMode,
         wmpTrailParamsByMode,
         subtitleEnabled,
@@ -1734,6 +1750,18 @@ const Home: NextPage = () => {
             }
           }
         }
+        if (c.circleShapeVariant !== undefined && ["classic", "mirror", "donut", "filled", "outline"].includes(c.circleShapeVariant)) {
+          mwvSetItem("common_circleShapeVariant", c.circleShapeVariant);
+          setCircleShapeVariant(c.circleShapeVariant);
+        }
+        if (c.circleGradient !== undefined && ["none", "radial", "angular", "rainbow"].includes(c.circleGradient)) {
+          mwvSetItem("common_circleGradient", c.circleGradient);
+          setCircleGradient(c.circleGradient);
+        }
+        if (c.circleBarStyle !== undefined && ["rect", "line", "dot"].includes(c.circleBarStyle)) {
+          mwvSetItem("common_circleBarStyle", c.circleBarStyle);
+          setCircleBarStyle(c.circleBarStyle);
+        }
         if (c.loudnessParamsByMode && typeof c.loudnessParamsByMode === "object") {
           const src = c.loudnessParamsByMode as Record<string, LoudnessParams>;
           const next: Record<number, LoudnessParams> = {};
@@ -1865,9 +1893,14 @@ const Home: NextPage = () => {
             typeof rw.color === "string"
           ) {
             setRainWeather({
-              angleDeg: Math.max(-90, Math.min(90, rw.angleDeg)),
+              angleDeg: Math.max(0, Math.min(360, rw.angleDeg)),
               amount: Math.max(0.05, Math.min(1, rw.amount)),
               color: /^#[0-9a-fA-F]{6}$/.test(rw.color) ? rw.color : DEFAULT_RAIN_WEATHER.color,
+              variant: rw.variant || DEFAULT_RAIN_WEATHER.variant,
+              wind: typeof rw.wind === "number" ? Math.max(0, Math.min(5, rw.wind)) : DEFAULT_RAIN_WEATHER.wind,
+              size: typeof rw.size === "number" ? Math.max(0.2, Math.min(10, rw.size)) : DEFAULT_RAIN_WEATHER.size,
+              speed: typeof rw.speed === "number" ? Math.max(0.1, Math.min(3, rw.speed)) : DEFAULT_RAIN_WEATHER.speed,
+              opacity: typeof rw.opacity === "number" ? Math.max(0, Math.min(1, rw.opacity)) : DEFAULT_RAIN_WEATHER.opacity,
             });
           }
         }
@@ -1890,7 +1923,7 @@ const Home: NextPage = () => {
           setWaterRippleColorInput(hx);
           mwvSetItem("common_waterRippleColor", hx);
         }
-        if (c.waterRippleVariant === "ripple" || c.waterRippleVariant === "heart" || c.waterRippleVariant === "firework") {
+        if (c.waterRippleVariant === "ripple" || c.waterRippleVariant === "heart" || c.waterRippleVariant === "firework" || c.waterRippleVariant === "star" || c.waterRippleVariant === "paw") {
           setWaterRippleVariant(c.waterRippleVariant);
           mwvSetItem("common_waterRippleVariant", c.waterRippleVariant);
         }
@@ -1911,9 +1944,14 @@ const Home: NextPage = () => {
             typeof sw.color === "string"
           ) {
             setSnowWeather({
-              angleDeg: Math.max(-90, Math.min(90, sw.angleDeg)),
+              angleDeg: Math.max(0, Math.min(360, sw.angleDeg)),
               amount: Math.max(0.05, Math.min(1, sw.amount)),
               color: /^#[0-9a-fA-F]{6}$/.test(sw.color) ? sw.color : DEFAULT_SNOW_WEATHER.color,
+              variant: sw.variant || DEFAULT_SNOW_WEATHER.variant,
+              wind: typeof sw.wind === "number" ? Math.max(0, Math.min(5, sw.wind)) : DEFAULT_SNOW_WEATHER.wind,
+              size: typeof sw.size === "number" ? Math.max(0.2, Math.min(10, sw.size)) : DEFAULT_SNOW_WEATHER.size,
+              speed: typeof sw.speed === "number" ? Math.max(0.1, Math.min(3, sw.speed)) : DEFAULT_SNOW_WEATHER.speed,
+              opacity: typeof sw.opacity === "number" ? Math.max(0, Math.min(1, sw.opacity)) : DEFAULT_SNOW_WEATHER.opacity,
             });
           }
         }
@@ -3193,6 +3231,18 @@ const Home: NextPage = () => {
         }
       }
     }
+    const savedCircleShapeVariant = mwvGetItem("common_circleShapeVariant");
+    if (savedCircleShapeVariant && ["classic", "mirror", "donut", "filled", "outline"].includes(savedCircleShapeVariant)) {
+      setCircleShapeVariant(savedCircleShapeVariant as typeof circleShapeVariant);
+    }
+    const savedCircleGradient = mwvGetItem("common_circleGradient");
+    if (savedCircleGradient && ["none", "radial", "angular", "rainbow"].includes(savedCircleGradient)) {
+      setCircleGradient(savedCircleGradient as typeof circleGradient);
+    }
+    const savedCircleBarStyle = mwvGetItem("common_circleBarStyle");
+    if (savedCircleBarStyle && ["rect", "line", "dot"].includes(savedCircleBarStyle)) {
+      setCircleBarStyle(savedCircleBarStyle as typeof circleBarStyle);
+    }
 
     try {
       const savedLp = mwvGetItem("common_loudnessParamsByMode");
@@ -3344,9 +3394,14 @@ const Home: NextPage = () => {
           typeof p?.color === "string"
         ) {
           setRainWeather({
-            angleDeg: Math.max(-90, Math.min(90, p.angleDeg)),
+            angleDeg: Math.max(0, Math.min(360, p.angleDeg)),
             amount: Math.max(0.05, Math.min(1, p.amount)),
             color: /^#[0-9a-fA-F]{6}$/.test(p.color) ? p.color : DEFAULT_RAIN_WEATHER.color,
+            variant: p.variant || DEFAULT_RAIN_WEATHER.variant,
+            wind: typeof p.wind === "number" ? Math.max(0, Math.min(5, p.wind)) : DEFAULT_RAIN_WEATHER.wind,
+            size: typeof p.size === "number" ? Math.max(0.2, Math.min(10, p.size)) : DEFAULT_RAIN_WEATHER.size,
+            speed: typeof p.speed === "number" ? Math.max(0.1, Math.min(3, p.speed)) : DEFAULT_RAIN_WEATHER.speed,
+            opacity: typeof p.opacity === "number" ? Math.max(0, Math.min(1, p.opacity)) : DEFAULT_RAIN_WEATHER.opacity,
           });
         }
       }
@@ -3370,9 +3425,14 @@ const Home: NextPage = () => {
           typeof p?.color === "string"
         ) {
           setSnowWeather({
-            angleDeg: Math.max(-90, Math.min(90, p.angleDeg)),
+            angleDeg: Math.max(0, Math.min(360, p.angleDeg)),
             amount: Math.max(0.05, Math.min(1, p.amount)),
             color: /^#[0-9a-fA-F]{6}$/.test(p.color) ? p.color : DEFAULT_SNOW_WEATHER.color,
+            variant: p.variant || DEFAULT_SNOW_WEATHER.variant,
+            wind: typeof p.wind === "number" ? Math.max(0, Math.min(5, p.wind)) : DEFAULT_SNOW_WEATHER.wind,
+            size: typeof p.size === "number" ? Math.max(0.2, Math.min(10, p.size)) : DEFAULT_SNOW_WEATHER.size,
+            speed: typeof p.speed === "number" ? Math.max(0.1, Math.min(3, p.speed)) : DEFAULT_SNOW_WEATHER.speed,
+            opacity: typeof p.opacity === "number" ? Math.max(0, Math.min(1, p.opacity)) : DEFAULT_SNOW_WEATHER.opacity,
           });
         }
       }
@@ -3580,6 +3640,9 @@ const Home: NextPage = () => {
       lineWidthSymWave,
       dotSizeLevel,
       circleRotationRpm,
+      circleShapeVariant,
+      circleGradient,
+      circleBarStyle,
       loudnessParams: loudnessParamsByMode[mode] ?? defaultLoudnessParamsRef.current,
       wmpTrailParams: wmpTrailParamsByMode[mode] ?? defaultWmpTrailParamsForMode,
       glycoColorSet,
@@ -5573,6 +5636,9 @@ const Home: NextPage = () => {
           lineWidthSymWave,
           dotSizeLevel,
           circleRotationRpm,
+          circleShapeVariant,
+          circleGradient,
+          circleBarStyle,
           glycoColorSet,
           glycoRotationDeg,
           spectrumColorHex,
@@ -6303,31 +6369,102 @@ const Home: NextPage = () => {
                     <Typography variant="subtitle2" sx={{ mb: 1.5, fontWeight: 600 }}>
                       {t("displayVolume.spectrumTitle")}
                     </Typography>
-                    <Box sx={{ mb: 2 }}>
-                      <Typography gutterBottom>{t("displayVolume.opacity", { value: spectrumOpacityPercent })}</Typography>
-                      <Slider
-                        value={spectrumOpacityPercent}
-                        min={0}
-                        max={100}
-                        step={5}
-                        onChange={(_, v) => setSpectrumOpacityPercent(v as number)}
-                      />
-                    </Box>
-                    <Box sx={{ mb: 2 }}>
-                      <Typography gutterBottom>{t("spectrumWave.sensitivity", { value: spectrumSensitivity.toFixed(1) })}</Typography>
-                      <Slider
-                        value={spectrumSensitivity}
-                        min={0}
-                        max={2}
-                        step={0.1}
-                        marks={[
-                          { value: 0, label: "0" },
-                          { value: 1, label: "1" },
-                          { value: 2, label: "2" },
-                        ]}
-                        onChange={(_, v) => setSpectrumSensitivity(v as number)}
-                      />
-                    </Box>
+                    {/* 円形スペクトラム用パラメータ */}
+                    {mode === 2 && (
+                      <Box sx={{ mb: 2 }}>
+                        <Typography gutterBottom>{t("spectrum.circleShapeVariant")}</Typography>
+                        <FormControl size="small" fullWidth sx={{ mb: 2 }}>
+                          <Select
+                            value={circleShapeVariant}
+                            onChange={(e) => setCircleShapeVariant(e.target.value as typeof circleShapeVariant)}
+                          >
+                            <MenuItem value="classic">{t("spectrum.circleShapeClassic")}</MenuItem>
+                            <MenuItem value="mirror">{t("spectrum.circleShapeMirror")}</MenuItem>
+                            <MenuItem value="donut">{t("spectrum.circleShapeDonut")}</MenuItem>
+                            <MenuItem value="filled">{t("spectrum.circleShapeFilled")}</MenuItem>
+                            <MenuItem value="outline">{t("spectrum.circleShapeOutline")}</MenuItem>
+                          </Select>
+                        </FormControl>
+                        <Typography gutterBottom>{t("spectrum.circleGradient")}</Typography>
+                        <FormControl size="small" fullWidth sx={{ mb: 2 }}>
+                          <Select
+                            value={circleGradient}
+                            onChange={(e) => setCircleGradient(e.target.value as typeof circleGradient)}
+                          >
+                            <MenuItem value="none">{t("spectrum.circleGradientNone")}</MenuItem>
+                            <MenuItem value="radial">{t("spectrum.circleGradientRadial")}</MenuItem>
+                            <MenuItem value="angular">{t("spectrum.circleGradientAngular")}</MenuItem>
+                            <MenuItem value="rainbow">{t("spectrum.circleGradientRainbow")}</MenuItem>
+                          </Select>
+                        </FormControl>
+                        <Typography gutterBottom>{t("spectrum.circleBarStyle")}</Typography>
+                        <FormControl size="small" fullWidth sx={{ mb: 2 }}>
+                          <Select
+                            value={circleBarStyle}
+                            onChange={(e) => setCircleBarStyle(e.target.value as typeof circleBarStyle)}
+                          >
+                            <MenuItem value="rect">{t("spectrum.circleBarRect")}</MenuItem>
+                            <MenuItem value="line">{t("spectrum.circleBarLine")}</MenuItem>
+                            <MenuItem value="dot">{t("spectrum.circleBarDot")}</MenuItem>
+                          </Select>
+                        </FormControl>
+                        <Box sx={{ mb: 2 }}>
+                          <Typography gutterBottom>{t("displayVolume.opacity", { value: spectrumOpacityPercent })}</Typography>
+                          <Slider
+                            value={spectrumOpacityPercent}
+                            min={0}
+                            max={100}
+                            step={5}
+                            onChange={(_, v) => setSpectrumOpacityPercent(v as number)}
+                          />
+                        </Box>
+                        <Box sx={{ mb: 2 }}>
+                          <Typography gutterBottom>{t("spectrumWave.sensitivity", { value: spectrumSensitivity.toFixed(1) })}</Typography>
+                          <Slider
+                            value={spectrumSensitivity}
+                            min={0}
+                            max={2}
+                            step={0.1}
+                            marks={[
+                              { value: 0, label: "0" },
+                              { value: 1, label: "1" },
+                              { value: 2, label: "2" },
+                            ]}
+                            onChange={(_, v) => setSpectrumSensitivity(v as number)}
+                          />
+                        </Box>
+                      </Box>
+                    )}
+                    {/* 非円形モード用の透過率・感度 */}
+                    {mode !== 2 && (
+                      <>
+                        <Box sx={{ mb: 2 }}>
+                          <Typography gutterBottom>{t("displayVolume.opacity", { value: spectrumOpacityPercent })}</Typography>
+                          <Slider
+                            value={spectrumOpacityPercent}
+                            min={0}
+                            max={100}
+                            step={5}
+                            onChange={(_, v) => setSpectrumOpacityPercent(v as number)}
+                          />
+                        </Box>
+                        <Box sx={{ mb: 2 }}>
+                          <Typography gutterBottom>{t("spectrumWave.sensitivity", { value: spectrumSensitivity.toFixed(1) })}</Typography>
+                          <Slider
+                            value={spectrumSensitivity}
+                            min={0}
+                            max={2}
+                            step={0.1}
+                            marks={[
+                              { value: 0, label: "0" },
+                              { value: 1, label: "1" },
+                              { value: 2, label: "2" },
+                            ]}
+                            onChange={(_, v) => setSpectrumSensitivity(v as number)}
+                          />
+                        </Box>
+                      </>
+                    )}
                     <Divider sx={{ my: 2 }} />
                     <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600 }}>
                       {t("spectrumWave.title")}
@@ -6982,9 +7119,6 @@ const Home: NextPage = () => {
                   </Button>
                 </Box>
                 <Box sx={{ display: "flex", gap: 1, justifyContent: "center", flexWrap: "wrap", alignItems: "center", mt: 1 }}>
-                  <Button variant={effectType === "snow" ? "contained" : "outlined"} onClick={() => setEffectType("snow")} size="small">
-                    {t("effect.snow")}
-                  </Button>
                   <Button
                     variant={effectType === "waterRipple" ? "contained" : "outlined"}
                     onClick={() => setEffectType("waterRipple")}
@@ -7365,16 +7499,34 @@ const Home: NextPage = () => {
                     )}
                     {effectType === "rain" && (
                       <Box sx={{ width: "100%", maxWidth: 440, mt: 2, mx: "auto" }}>
+                        {/* 種類選択 */}
+                        <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1, mb: 2 }}>
+                          <Typography variant="caption" color="textSecondary">
+                            {t("effect.weatherType")}
+                          </Typography>
+                          {(["rain", "snow", "heart", "star", "paw"] as const).map((v) => (
+                            <Button
+                              key={v}
+                              variant={rainWeather.variant === v ? "contained" : "outlined"}
+                              onClick={() => setRainWeather((p) => ({ ...p, variant: v }))}
+                              size="small"
+                            >
+                              {t(`effect.weatherVariant${v.charAt(0).toUpperCase() + v.slice(1)}`)}
+                            </Button>
+                          ))}
+                        </Box>
+                        {/* 角度 */}
                         <Typography variant="caption" color="textSecondary" display="block">
                           {t("effect.weatherAngle", { value: rainWeather.angleDeg })}
                         </Typography>
                         <Slider
                           value={rainWeather.angleDeg}
-                          min={-75}
-                          max={75}
+                          min={0}
+                          max={360}
                           step={1}
                           onChange={(_, v) => setRainWeather((p) => ({ ...p, angleDeg: v as number }))}
                         />
+                        {/* 量 */}
                         <Typography variant="caption" color="textSecondary" display="block" sx={{ mt: 1 }}>
                           {t("effect.weatherAmount", { value: Math.round(rainWeather.amount * 100) })}
                         </Typography>
@@ -7385,6 +7537,51 @@ const Home: NextPage = () => {
                           step={0.05}
                           onChange={(_, v) => setRainWeather((p) => ({ ...p, amount: v as number }))}
                         />
+                        {/* 風の揺らぎ */}
+                        <Typography variant="caption" color="textSecondary" display="block" sx={{ mt: 1 }}>
+                          {t("effect.weatherWind", { value: rainWeather.wind.toFixed(1) })}
+                        </Typography>
+                        <Slider
+                          value={rainWeather.wind}
+                          min={0}
+                          max={5}
+                          step={0.1}
+                          onChange={(_, v) => setRainWeather((p) => ({ ...p, wind: v as number }))}
+                        />
+                        {/* 大きさ */}
+                        <Typography variant="caption" color="textSecondary" display="block" sx={{ mt: 1 }}>
+                          {t("effect.weatherSize", { value: rainWeather.size.toFixed(1) })}
+                        </Typography>
+                        <Slider
+                          value={rainWeather.size}
+                          min={0.2}
+                          max={10.0}
+                          step={0.1}
+                          onChange={(_, v) => setRainWeather((p) => ({ ...p, size: v as number }))}
+                        />
+                        {/* スピード */}
+                        <Typography variant="caption" color="textSecondary" display="block" sx={{ mt: 1 }}>
+                          {t("effect.weatherSpeed", { value: rainWeather.speed.toFixed(1) })}
+                        </Typography>
+                        <Slider
+                          value={rainWeather.speed}
+                          min={0.1}
+                          max={3.0}
+                          step={0.1}
+                          onChange={(_, v) => setRainWeather((p) => ({ ...p, speed: v as number }))}
+                        />
+                        {/* 透過率 */}
+                        <Typography variant="caption" color="textSecondary" display="block" sx={{ mt: 1 }}>
+                          {t("effect.weatherOpacity", { value: Math.round(rainWeather.opacity * 100) })}
+                        </Typography>
+                        <Slider
+                          value={rainWeather.opacity}
+                          min={0}
+                          max={1}
+                          step={0.05}
+                          onChange={(_, v) => setRainWeather((p) => ({ ...p, opacity: v as number }))}
+                        />
+                        {/* 色 */}
                         <Box sx={{ mt: 1.5 }}>
                           <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 0.5 }}>
                             {t("effect.weatherColor")}
@@ -7553,6 +7750,20 @@ const Home: NextPage = () => {
                             size="small"
                           >
                             {t("effect.waterRippleVariantFirework")}
+                          </Button>
+                          <Button
+                            variant={waterRippleVariant === "star" ? "contained" : "outlined"}
+                            onClick={() => setWaterRippleVariant("star")}
+                            size="small"
+                          >
+                            {t("effect.waterRippleVariantStar")}
+                          </Button>
+                          <Button
+                            variant={waterRippleVariant === "paw" ? "contained" : "outlined"}
+                            onClick={() => setWaterRippleVariant("paw")}
+                            size="small"
+                          >
+                            {t("effect.waterRippleVariantPaw")}
                           </Button>
                         </Box>
                         <Typography variant="caption" color="textSecondary" display="block">
